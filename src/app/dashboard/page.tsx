@@ -1,23 +1,29 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { supabase } from '@/lib/supabase'
+import { supabase, Mission, MissionData } from '@/lib/supabase'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Users, FolderOpen, Boxes, Lightbulb, TrendingUp } from 'lucide-react'
+import { Users, FolderOpen, Boxes, Lightbulb, TrendingUp, DoorOpen, Camera } from 'lucide-react'
 
 interface Stats {
   totalUsers: number
-  totalInspections: number
-  totalObjects: number
+  totalMissions: number
+  totalRooms: number
+  totalPhotos: number
   pendingSuggestions: number
+  missionsThisMonth: number
+  activeUsers: number
 }
 
 export default function DashboardPage() {
   const [stats, setStats] = useState<Stats>({
     totalUsers: 0,
-    totalInspections: 0,
-    totalObjects: 0,
+    totalMissions: 0,
+    totalRooms: 0,
+    totalPhotos: 0,
     pendingSuggestions: 0,
+    missionsThisMonth: 0,
+    activeUsers: 0,
   })
   const [loading, setLoading] = useState(true)
 
@@ -28,15 +34,38 @@ export default function DashboardPage() {
         .from('profiles')
         .select('*', { count: 'exact', head: true })
 
-      // Count inspections
-      const { count: inspectionsCount } = await supabase
-        .from('inspections')
-        .select('*', { count: 'exact', head: true })
+      // Count missions
+      const { data: missions } = await supabase
+        .from('missions')
+        .select('*')
+        .is('deleted_at', null)
 
-      // Count object templates
-      const { count: objectsCount } = await supabase
-        .from('object_templates')
+      let totalRooms = 0
+      let totalPhotos = 0
+      
+      if (missions) {
+        missions.forEach((m: Mission) => {
+          const data = m.data as MissionData
+          totalRooms += data.rooms?.length || 0
+          data.rooms?.forEach(room => {
+            totalPhotos += (room.wallPhotos?.length || 0)
+            totalPhotos += (room.floorPhotos?.length || 0)
+            totalPhotos += (room.ceilingPhotos?.length || 0)
+            totalPhotos += (room.equipmentPhotos?.length || 0)
+          })
+        })
+      }
+
+      // Missions this month
+      const startOfMonth = new Date()
+      startOfMonth.setDate(1)
+      startOfMonth.setHours(0, 0, 0, 0)
+      
+      const { count: missionsThisMonth } = await supabase
+        .from('missions')
         .select('*', { count: 'exact', head: true })
+        .gte('created_at', startOfMonth.toISOString())
+        .is('deleted_at', null)
 
       // Count pending suggestions
       const { count: suggestionsCount } = await supabase
@@ -44,11 +73,19 @@ export default function DashboardPage() {
         .select('*', { count: 'exact', head: true })
         .eq('status', 'pending')
 
+      // Count active workspaces (as proxy for active users)
+      const { count: activeWorkspaces } = await supabase
+        .from('workspace_members')
+        .select('user_id', { count: 'exact', head: true })
+
       setStats({
         totalUsers: usersCount || 0,
-        totalInspections: inspectionsCount || 0,
-        totalObjects: objectsCount || 0,
+        totalMissions: missions?.length || 0,
+        totalRooms,
+        totalPhotos,
         pendingSuggestions: suggestionsCount || 0,
+        missionsThisMonth: missionsThisMonth || 0,
+        activeUsers: activeWorkspaces || 0,
       })
       setLoading(false)
     }
@@ -66,28 +103,28 @@ export default function DashboardPage() {
       bgColor: 'bg-blue-100',
     },
     {
-      title: 'Inspections',
-      value: stats.totalInspections,
-      description: 'États des lieux créés',
+      title: 'Missions',
+      value: stats.totalMissions,
+      description: `${stats.missionsThisMonth} ce mois`,
       icon: FolderOpen,
       color: 'text-green-600',
       bgColor: 'bg-green-100',
     },
     {
-      title: 'Objets',
-      value: stats.totalObjects,
-      description: 'Templates validés',
-      icon: Boxes,
+      title: 'Pièces',
+      value: stats.totalRooms,
+      description: 'Total inspectées',
+      icon: DoorOpen,
       color: 'text-purple-600',
       bgColor: 'bg-purple-100',
     },
     {
-      title: 'Suggestions',
-      value: stats.pendingSuggestions,
-      description: 'En attente de validation',
-      icon: Lightbulb,
-      color: 'text-orange-600',
-      bgColor: 'bg-orange-100',
+      title: 'Photos',
+      value: stats.totalPhotos,
+      description: 'Total capturées',
+      icon: Camera,
+      color: 'text-teal-600',
+      bgColor: 'bg-teal-100',
     },
   ]
 
