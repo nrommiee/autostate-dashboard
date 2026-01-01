@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { supabase } from '@/lib/supabase';
 import { useRouter, useParams } from 'next/navigation';
 import { ArrowLeft, Upload, Save, FileText, X, Loader2 } from 'lucide-react';
 import Link from 'next/link';
@@ -74,8 +74,6 @@ export default function EnergyFormEditorPage() {
   const [fieldMapping, setFieldMapping] = useState<Record<string, string>>({});
   const [version, setVersion] = useState(1);
   const [isActive, setIsActive] = useState(true);
-
-  const supabase = createClientComponentClient();
 
   // Load existing template if editing
   useEffect(() => {
