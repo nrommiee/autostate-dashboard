@@ -1,5 +1,4 @@
 'use client'
-
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
@@ -12,7 +11,8 @@ import {
   LayoutDashboard,
   Boxes,
   Lightbulb,
-  ChevronRight
+  ChevronRight,
+  FileText
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -46,6 +46,11 @@ const navItems: NavItem[] = [
     href: '/dashboard/suggestions',
     icon: <Lightbulb className="h-4 w-4" />,
   },
+  {
+    title: 'Formulaires Énergie',
+    href: '/dashboard/energy-forms',
+    icon: <FileText className="h-4 w-4" />,
+  },
 ]
 
 export default function DashboardLayout({
@@ -76,6 +81,7 @@ export default function DashboardLayout({
       if (profile) {
         setUser(profile)
       }
+
       setLoading(false)
     }
 
@@ -152,6 +158,7 @@ export default function DashboardLayout({
               </p>
             </div>
           </div>
+
           <Button 
             variant="outline" 
             className="w-full justify-start gap-2"
