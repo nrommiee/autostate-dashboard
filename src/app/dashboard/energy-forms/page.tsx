@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { supabase } from '@/lib/supabase';
 import { Plus, Upload, Trash2, Edit, FileText, ChevronRight } from 'lucide-react';
 import Link from 'next/link';
 
@@ -25,7 +25,6 @@ export default function EnergyFormsPage() {
   const [templates, setTemplates] = useState<EnergyFormTemplate[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const supabase = createClientComponentClient();
 
   useEffect(() => {
     fetchTemplates();
