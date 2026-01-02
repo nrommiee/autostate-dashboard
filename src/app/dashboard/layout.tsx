@@ -12,7 +12,9 @@ import {
   Boxes,
   Lightbulb,
   ChevronRight,
-  FileText
+  FileText,
+  Gauge,
+  AlertCircle
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -23,6 +25,7 @@ interface NavItem {
   title: string
   href: string
   icon: React.ReactNode
+  badge?: number
 }
 
 const navItems: NavItem[] = [
@@ -51,6 +54,16 @@ const navItems: NavItem[] = [
     href: '/dashboard/energy-forms',
     icon: <FileText className="h-4 w-4" />,
   },
+  {
+    title: 'Modèles compteurs',
+    href: '/dashboard/meters',
+    icon: <Gauge className="h-4 w-4" />,
+  },
+  {
+    title: 'Non reconnus',
+    href: '/dashboard/unrecognized',
+    icon: <AlertCircle className="h-4 w-4" />,
+  },
 ]
 
 export default function DashboardLayout({
@@ -61,6 +74,7 @@ export default function DashboardLayout({
   const router = useRouter()
   const [user, setUser] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
+  const [unrecognizedCount, setUnrecognizedCount] = useState(0)
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -81,6 +95,14 @@ export default function DashboardLayout({
       if (profile) {
         setUser(profile)
       }
+
+      // Get unrecognized meters count
+      const { count } = await supabase
+        .from('unrecognized_meters')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'pending')
+      
+      setUnrecognizedCount(count || 0)
 
       setLoading(false)
     }
@@ -133,7 +155,13 @@ export default function DashboardLayout({
               )}
             >
               {item.icon}
-              {item.title}
+              <span className="flex-1">{item.title}</span>
+              {/* Badge for unrecognized meters */}
+              {item.href === '/dashboard/unrecognized' && unrecognizedCount > 0 && (
+                <span className="bg-orange-100 text-orange-700 text-xs font-semibold px-2 py-0.5 rounded-full">
+                  {unrecognizedCount}
+                </span>
+              )}
             </Link>
           ))}
         </nav>
