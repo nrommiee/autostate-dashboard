@@ -248,3 +248,351 @@ export interface Workspace {
   owner_id: string
   created_at: string
 }
+
+
+// ============================================
+// Meter Scan Types - Add to src/lib/supabase.ts
+// ============================================
+
+// ============================================
+// Meter Model
+// ============================================
+
+export type MeterType = 
+  | 'water_general' 
+  | 'water_passage' 
+  | 'electricity' 
+  | 'gas' 
+  | 'oil_tank' 
+  | 'calorimeter' 
+  | 'other';
+
+export type MeterFieldType = 
+  | 'serialNumber'
+  | 'ean'
+  | 'readingSingle'
+  | 'readingDay'
+  | 'readingNight'
+  | 'readingExclusiveNight'
+  | 'readingProduction'
+  | 'subscribedPower'
+  | 'custom';
+
+export interface MeterZone {
+  id: string;
+  fieldType: MeterFieldType;
+  label: string;
+  position?: {
+    x: number;      // 0-1 relative
+    y: number;
+    width: number;
+    height: number;
+  };
+  backgroundColor?: string;
+  textColor?: string;
+  digitCount?: number;
+  hasDecimals: boolean;
+  decimalDigits?: number;
+  combinationFormula?: string;
+}
+
+export interface MeterModel {
+  id: string;
+  name: string;
+  manufacturer: string;
+  meter_type: MeterType;
+  unit: string;
+  ai_description: string;
+  ai_analysis_data: Record<string, any>;
+  reference_photos: string[];
+  zones: MeterZone[];
+  is_active: boolean;
+  is_verified: boolean;
+  usage_count: number;
+  success_count: number;
+  fail_count: number;
+  total_scans: number;
+  avg_confidence: number;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// Computed stats for meter model
+export interface MeterModelStats {
+  successRate: number;
+  avgConfidence: number;
+  totalScans: number;
+  isReliable: boolean;  // successRate > 80% && totalScans > 10
+}
+
+export function computeMeterModelStats(model: MeterModel): MeterModelStats {
+  const successRate = model.total_scans > 0 
+    ? (model.success_count / model.total_scans) * 100 
+    : 0;
+  
+  return {
+    successRate: Math.round(successRate * 10) / 10,
+    avgConfidence: Math.round(model.avg_confidence * 100),
+    totalScans: model.total_scans,
+    isReliable: successRate > 80 && model.total_scans > 10
+  };
+}
+
+// ============================================
+// Unrecognized Meter
+// ============================================
+
+export type UnrecognizedMeterStatus = 'pending' | 'processed' | 'linked' | 'ignored';
+
+export interface UnrecognizedMeterUserData {
+  type: MeterType;
+  serialNumber?: string;
+  readings: string[];
+  eanCode?: string;
+}
+
+export interface UnrecognizedMeterDeviceInfo {
+  appVersion: string;
+  deviceModel: string;
+  osVersion: string;
+}
+
+export interface UnrecognizedMeter {
+  id: string;
+  photo_url: string;
+  photo_path: string;
+  ai_response: Record<string, any>;
+  ai_detected_type: string | null;
+  ai_confidence: number;
+  ai_extracted_data: Record<string, any>;
+  user_data: UnrecognizedMeterUserData | null;
+  has_user_data: boolean;
+  user_id: string | null;
+  inspection_id: string | null;
+  device_info: UnrecognizedMeterDeviceInfo;
+  flash_used: boolean;
+  scan_attempts: number;
+  status: UnrecognizedMeterStatus;
+  processed_by: string | null;
+  processed_at: string | null;
+  linked_model_id: string | null;
+  admin_notes: string | null;
+  created_at: string;
+}
+
+// ============================================
+// Meter Scan Log
+// ============================================
+
+export interface MeterScanFieldModification {
+  fieldType: MeterFieldType;
+  originalValue: string;
+  modifiedValue: string;
+}
+
+export interface MeterScanLog {
+  id: string;
+  user_id: string | null;
+  inspection_id: string | null;
+  was_successful: boolean;
+  confidence: number | null;
+  detected_type: string | null;
+  model_id: string | null;
+  scan_duration_ms: number | null;
+  flash_used: boolean;
+  lighting_condition: 'excellent' | 'good' | 'low' | 'veryLow' | null;
+  fields_modified: MeterScanFieldModification[];
+  had_modifications: boolean;
+  device_info: UnrecognizedMeterDeviceInfo;
+  created_at: string;
+}
+
+// ============================================
+// Field Modification Stats
+// ============================================
+
+export interface MeterFieldModificationStats {
+  id: string;
+  model_id: string;
+  field_type: string;
+  total_extractions: number;
+  modification_count: number;
+  modification_rate: number;
+  alert_threshold: number;
+  alert_triggered: boolean;
+  last_updated: string;
+}
+
+// ============================================
+// KPIs
+// ============================================
+
+export interface MeterScanKPIs {
+  total_scans: number;
+  successful_scans: number;
+  success_rate: number;
+  avg_confidence: number;
+  avg_scan_duration_ms: number;
+  flash_usage_rate: number;
+  modification_rate: number;
+  unique_users: number;
+}
+
+// ============================================
+// Meter Type Helpers
+// ============================================
+
+export const METER_TYPE_CONFIG: Record<MeterType, {
+  label: string;
+  unit: string;
+  icon: string;
+  color: string;
+}> = {
+  water_general: {
+    label: 'Eau - Général',
+    unit: 'm³',
+    icon: '💧',
+    color: '#06B6D4'  // cyan
+  },
+  water_passage: {
+    label: 'Eau - Passage',
+    unit: 'm³',
+    icon: '💧',
+    color: '#06B6D4'
+  },
+  electricity: {
+    label: 'Électricité',
+    unit: 'kWh',
+    icon: '⚡',
+    color: '#EAB308'  // yellow
+  },
+  gas: {
+    label: 'Gaz',
+    unit: 'm³',
+    icon: '🔥',
+    color: '#F97316'  // orange
+  },
+  oil_tank: {
+    label: 'Mazout',
+    unit: 'L',
+    icon: '🛢️',
+    color: '#78716C'  // stone
+  },
+  calorimeter: {
+    label: 'Calorimètre',
+    unit: 'kWh',
+    icon: '🌡️',
+    color: '#EF4444'  // red
+  },
+  other: {
+    label: 'Autre',
+    unit: '',
+    icon: '📊',
+    color: '#6B7280'  // gray
+  }
+};
+
+export const METER_FIELD_CONFIG: Record<MeterFieldType, {
+  label: string;
+  icon: string;
+  isReading: boolean;
+}> = {
+  serialNumber: {
+    label: 'Numéro de compteur',
+    icon: '🔢',
+    isReading: false
+  },
+  ean: {
+    label: 'Code EAN',
+    icon: '📊',
+    isReading: false
+  },
+  readingSingle: {
+    label: 'Index unique',
+    icon: '📈',
+    isReading: true
+  },
+  readingDay: {
+    label: 'Index jour / heures pleines',
+    icon: '☀️',
+    isReading: true
+  },
+  readingNight: {
+    label: 'Index nuit / heures creuses',
+    icon: '🌙',
+    isReading: true
+  },
+  readingExclusiveNight: {
+    label: 'Index exclusif nuit',
+    icon: '🌃',
+    isReading: true
+  },
+  readingProduction: {
+    label: 'Index production',
+    icon: '⬆️',
+    isReading: true
+  },
+  subscribedPower: {
+    label: 'Puissance souscrite',
+    icon: '⚡',
+    isReading: false
+  },
+  custom: {
+    label: 'Champ personnalisé',
+    icon: '✏️',
+    isReading: false
+  }
+};
+
+// ============================================
+// Form helpers for creating/editing meter models
+// ============================================
+
+export interface MeterModelFormData {
+  name: string;
+  manufacturer: string;
+  meter_type: MeterType;
+  unit: string;
+  zones: MeterZone[];
+  reference_photos: File[];  // For upload
+}
+
+export function createEmptyZone(fieldType: MeterFieldType = 'serialNumber'): MeterZone {
+  return {
+    id: crypto.randomUUID(),
+    fieldType,
+    label: METER_FIELD_CONFIG[fieldType].label,
+    hasDecimals: false
+  };
+}
+
+export function validateMeterModel(data: MeterModelFormData): string[] {
+  const errors: string[] = [];
+  
+  if (!data.name.trim()) {
+    errors.push('Le nom du modèle est requis');
+  }
+  
+  if (!data.meter_type) {
+    errors.push('Le type de compteur est requis');
+  }
+  
+  if (data.zones.length === 0) {
+    errors.push('Au moins une zone doit être définie');
+  }
+  
+  // Check for required fields based on type
+  const hasSerialZone = data.zones.some(z => z.fieldType === 'serialNumber');
+  const hasReadingZone = data.zones.some(z => METER_FIELD_CONFIG[z.fieldType].isReading);
+  
+  if (!hasSerialZone && !hasReadingZone) {
+    errors.push('Au moins un numéro de série ou un index est requis');
+  }
+  
+  if (data.reference_photos.length === 0) {
+    errors.push('Au moins une photo de référence est requise');
+  }
+  
+  return errors;
+}
