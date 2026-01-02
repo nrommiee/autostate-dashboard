@@ -9,8 +9,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { QRCodeSVG } from 'qrcode.react'
 import { Smartphone, RefreshCw } from 'lucide-react'
 
-const SUPER_ADMIN_EMAILS = process.env.NEXT_PUBLIC_SUPER_ADMIN_EMAILS?.split(',') || []
-
 export default function LoginPage() {
   const router = useRouter()
   const [email, setEmail] = useState('')
@@ -29,12 +27,6 @@ export default function LoginPage() {
     e.preventDefault()
     setLoading(true)
     setError('')
-
-    if (!SUPER_ADMIN_EMAILS.includes(email)) {
-      setError('Accès non autorisé. Seuls les super admins peuvent se connecter.')
-      setLoading(false)
-      return
-    }
 
     const { data, error: authError } = await supabase.auth.signInWithPassword({
       email,
@@ -91,13 +83,6 @@ export default function LoginPage() {
           if (data.status === 'approved') {
             setQrStatus('approved')
             clearInterval(pollInterval)
-            
-            // Vérifier que c'est un super admin
-            if (!SUPER_ADMIN_EMAILS.includes(data.user_email)) {
-              setError('Accès non autorisé. Seuls les super admins peuvent se connecter.')
-              setQrStatus('error')
-              return
-            }
             
             // Créer la session via l'API
             const response = await fetch('/api/qr-auth', {
@@ -173,7 +158,7 @@ export default function LoginPage() {
           </div>
           <CardTitle className="text-2xl">AutoState Admin</CardTitle>
           <CardDescription>
-            Connectez-vous avec votre compte super admin
+            Connectez-vous avec votre compte
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -184,7 +169,7 @@ export default function LoginPage() {
               <Input
                 id="email"
                 type="email"
-                placeholder="admin@example.com"
+                placeholder="votre@email.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
