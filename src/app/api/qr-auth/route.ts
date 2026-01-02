@@ -3,8 +3,6 @@
 import { createAdminClient } from '@/lib/supabase'
 import { NextRequest, NextResponse } from 'next/server'
 
-const SUPER_ADMIN_EMAILS = process.env.NEXT_PUBLIC_SUPER_ADMIN_EMAILS?.split(',') || []
-
 export async function POST(request: NextRequest) {
   try {
     const { userId, email } = await request.json()
@@ -13,14 +11,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { success: false, error: 'Missing userId or email' },
         { status: 400 }
-      )
-    }
-
-    // Vérifier que l'email est un super admin autorisé
-    if (!SUPER_ADMIN_EMAILS.includes(email)) {
-      return NextResponse.json(
-        { success: false, error: 'Accès non autorisé. Seuls les super admins peuvent se connecter.' },
-        { status: 403 }
       )
     }
 
