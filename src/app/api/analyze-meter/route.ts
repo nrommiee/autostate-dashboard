@@ -8,108 +8,74 @@ const anthropic = new Anthropic({
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { photos, existingType, userCorrections } = body
+    const { photo, photos, mode, userCorrections } = body
 
-    if (!photos || photos.length === 0) {
+    // Support both single photo and array
+    const photoData = photo || (photos && photos[0])
+    
+    if (!photoData) {
       return NextResponse.json(
-        { error: 'Au moins une photo requise' },
+        { error: 'Photo requise' },
         { status: 400 }
       )
     }
 
-    // Build image content
-    const imageContent = photos.slice(0, 4).map((photo: string) => ({
-      type: 'image' as const,
-      source: {
-        type: 'base64' as const,
-        media_type: 'image/jpeg' as const,
-        data: photo,
-      },
-    }))
-
-    // Build prompt based on whether we have user corrections
+    // Build prompt based on mode and corrections
     let prompt = ''
     
     if (userCorrections) {
       // Regeneration with user corrections
-      prompt = `Tu es un expert en compteurs d'énergie belges. L'utilisateur a corrigé ton analyse précédente.
+      prompt = `Tu es un expert en compteurs d'énergie. L'utilisateur a corrigé ton analyse précédente.
 
-CORRECTIONS DE L'UTILISATEUR:
-${userCorrections.analysis ? `- Analyse corrigée: "${userCorrections.analysis}"` : ''}
-${userCorrections.name ? `- Nom du modèle: ${userCorrections.name}` : ''}
-${userCorrections.manufacturer ? `- Fabricant: ${userCorrections.manufacturer}` : ''}
-${userCorrections.meterType ? `- Type: ${userCorrections.meterType}` : ''}
+CORRECTIONS:
+- Type: ${userCorrections.type || 'non spécifié'}
+- Numéro de compteur: ${userCorrections.serialNumber || 'non spécifié'}
+- Index: ${userCorrections.index || 'non spécifié'}
+- Modèle: ${userCorrections.model || 'non spécifié'}
 
-En tenant compte de ces corrections, ré-analyse la/les photo(s) et affine ton analyse.
+En tenant compte de ces corrections, affine ton analyse.
 
-Réponds en JSON strict:
-{
-  "name": "nom du modèle de compteur",
-  "manufacturer": "fabricant",
-  "meterType": "water_general|water_passage|electricity|gas|oil_tank|calorimeter|other",
-  "description": "description technique courte pour le formulaire",
-  "rawAnalysis": "analyse détaillée du compteur visible sur la photo, incluant: apparence physique, type d'affichage, disposition des éléments, numéros visibles, particularités de lecture",
-  "suggestedZones": [
-    {
-      "fieldType": "serialNumber|ean|readingSingle|readingDay|readingNight|readingExclusiveNight|readingProduction|subscribedPower",
-      "label": "libellé descriptif",
-      "hasDecimals": true/false,
-      "decimalDigits": 3
-    }
-  ]
-}`
+Réponds UNIQUEMENT avec ce format exact (pas de JSON, juste ce texte):
+
+TYPE: [type de compteur: Gaz, Eau, Électricité, Mazout, ou Calorimètre]
+NUMÉRO DE COMPTEUR: [numéro] ([où il se trouve sur le compteur])
+INDEX: [valeur avec unité] ([explication: rouleaux noirs/rouges, décimales, comment lire])
+MODÈLE: [fabricant et modèle]`
+
     } else {
-      // Initial analysis
-      prompt = `Tu es un expert en compteurs d'énergie belges (eau, électricité, gaz, mazout, calorimètres).
+      // Initial analysis - simplified format
+      prompt = `Tu es un expert en compteurs d'énergie belges.
 
-Analyse cette/ces photo(s) de compteur et identifie:
-1. Le MODÈLE et FABRICANT (ex: "Itron Aquadis+", "Siconia S442")
-2. Le TYPE de compteur
-3. Les ZONES DE LECTURE visibles (numéro de série, index, code EAN...)
-4. Les CARACTÉRISTIQUES visuelles (affichage à rouleaux, LCD, aiguilles, couleurs...)
+Analyse cette photo de compteur et donne-moi UNIQUEMENT ces informations dans ce format exact:
 
-${existingType ? `L'utilisateur pense que c'est un compteur de type: ${existingType}` : ''}
+TYPE: [type de compteur: Gaz, Eau, Électricité, Mazout, ou Calorimètre]
+NUMÉRO DE COMPTEUR: [numéro que tu vois] ([où il se trouve: ex "étiquette bleue en bas à droite"])
+INDEX: [valeur lue avec unité] ([explication de lecture: ex "rouleaux noirs sans décimales" ou "5 rouleaux noirs + 3 rouges = décimales"])
+MODÈLE: [fabricant et modèle si visible]
 
-Réponds en JSON strict:
-{
-  "name": "nom du modèle de compteur (ex: Itron Aquadis+)",
-  "manufacturer": "fabricant (ex: Itron, Siconia, Elster)",
-  "meterType": "water_general|water_passage|electricity|gas|oil_tank|calorimeter|other",
-  "description": "description technique courte pour le formulaire",
-  "rawAnalysis": "analyse détaillée du compteur visible sur la photo, incluant: apparence physique, type d'affichage (rouleaux noirs/rouges, LCD, aiguilles), disposition des éléments, numéros visibles, particularités de lecture des index",
-  "suggestedZones": [
-    {
-      "fieldType": "serialNumber|ean|readingSingle|readingDay|readingNight|readingExclusiveNight|readingProduction|subscribedPower",
-      "label": "libellé descriptif (ex: Numéro de série, Index principal)",
-      "hasDecimals": true/false,
-      "decimalDigits": 3
-    }
-  ]
-}
+IMPORTANT:
+- Sois précis sur les valeurs que tu lis
+- Explique comment tu lis l'index (décimales ou pas)
+- Si tu ne vois pas une information, écris "Non visible"
 
-IMPORTANT pour suggestedZones:
-- serialNumber: numéro de série/compteur
-- ean: code EAN 18 chiffres (électricité/gaz)
-- readingSingle: index unique (compteurs simples)
-- readingDay: index jour/heures pleines (bi-horaire)
-- readingNight: index nuit/heures creuses
-- readingProduction: index injection (panneaux solaires)
-- subscribedPower: puissance souscrite (kVA)
-
-Pour les décimales:
-- Compteurs eau: souvent 3 décimales (rouleaux rouges)
-- Compteurs électricité: généralement pas de décimales visibles
-- Si cadran avec aiguilles rouges = décimales`
+Réponds UNIQUEMENT avec ce format, rien d'autre.`
     }
 
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
-      max_tokens: 2048,
+      max_tokens: 1024,
       messages: [
         {
           role: 'user',
           content: [
-            ...imageContent,
+            {
+              type: 'image',
+              source: {
+                type: 'base64',
+                media_type: 'image/jpeg',
+                data: photoData,
+              },
+            },
             {
               type: 'text',
               text: prompt,
@@ -123,34 +89,8 @@ Pour les décimales:
     const textContent = response.content.find(c => c.type === 'text')
     const responseText = textContent && 'text' in textContent ? textContent.text : ''
 
-    // Parse JSON from response
-    let result = {
-      name: '',
-      manufacturer: '',
-      meterType: 'other',
-      description: '',
-      rawAnalysis: responseText,
-      suggestedZones: [],
-    }
-
-    try {
-      // Try to extract JSON from response
-      const jsonMatch = responseText.match(/\{[\s\S]*\}/)
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0])
-        result = {
-          name: parsed.name || '',
-          manufacturer: parsed.manufacturer || '',
-          meterType: parsed.meterType || 'other',
-          description: parsed.description || '',
-          rawAnalysis: parsed.rawAnalysis || responseText,
-          suggestedZones: parsed.suggestedZones || [],
-        }
-      }
-    } catch (parseError) {
-      console.error('JSON parse error:', parseError)
-      // Keep rawAnalysis as the full response if parsing fails
-    }
+    // Parse the simplified format
+    const result = parseSimpleFormat(responseText)
 
     return NextResponse.json(result)
 
@@ -161,4 +101,53 @@ Pour les décimales:
       { status: 500 }
     )
   }
+}
+
+function parseSimpleFormat(text: string) {
+  const result = {
+    type: '',
+    serialNumber: '',
+    serialNumberLocation: '',
+    index: '',
+    indexUnit: '',
+    indexNote: '',
+    model: '',
+    rawResponse: text,
+  }
+
+  // Parse TYPE
+  const typeMatch = text.match(/TYPE:\s*(.+?)(?:\n|$)/i)
+  if (typeMatch) {
+    result.type = typeMatch[1].trim()
+  }
+
+  // Parse NUMÉRO DE COMPTEUR
+  const serialMatch = text.match(/NUMÉRO DE COMPTEUR:\s*([^\(]+)(?:\(([^\)]+)\))?/i)
+  if (serialMatch) {
+    result.serialNumber = serialMatch[1].trim()
+    result.serialNumberLocation = serialMatch[2]?.trim() || ''
+  }
+
+  // Parse INDEX
+  const indexMatch = text.match(/INDEX:\s*([^\(]+)(?:\(([^\)]+)\))?/i)
+  if (indexMatch) {
+    const indexPart = indexMatch[1].trim()
+    // Extract number and unit
+    const unitMatch = indexPart.match(/^([\d\s,\.]+)\s*(.*)$/)
+    if (unitMatch) {
+      result.index = unitMatch[1].trim()
+      result.indexUnit = unitMatch[2].trim()
+    } else {
+      result.index = indexPart
+    }
+    result.indexNote = indexMatch[2]?.trim() || ''
+  }
+
+  // Parse MODÈLE
+  const modelMatch = text.match(/MODÈLE:\s*(.+?)(?:\n|$)/i)
+  if (modelMatch) {
+    result.model = modelMatch[1].trim()
+  }
+
+  return result
 }
