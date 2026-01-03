@@ -8,7 +8,7 @@ const anthropic = new Anthropic({
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { photo, name, manufacturer, meterType, zones, userAnalysis } = body
+    const { photo, name, manufacturer, meterType, zones, analysis } = body
 
     if (!photo || !name || !meterType) {
       return NextResponse.json(
@@ -17,40 +17,81 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Build zones description
-    const zonesDescription = zones.map((zone: any) => {
-      const position = zone.position
-      return `- ${zone.label || zone.fieldType}: position (${position.x.toFixed(1)}%, ${position.y.toFixed(1)}%), taille (${position.width.toFixed(1)}% x ${position.height.toFixed(1)}%)${zone.hasDecimals ? `, ${zone.decimalDigits} décimales` : ''}`
+    // Build zones description with user notes
+    const zonesDescription = zones.map((zone: any, index: number) => {
+      const fieldLabels: Record<string, string> = {
+        serialNumber: 'Numéro de compteur',
+        ean: 'Code EAN',
+        readingSingle: 'Index',
+        readingDay: 'Index jour',
+        readingNight: 'Index nuit',
+        readingProduction: 'Index production',
+        subscribedPower: 'Puissance souscrite',
+      }
+      
+      let zoneDesc = `Zone ${index + 1} - ${fieldLabels[zone.fieldType] || zone.fieldType}:`
+      
+      if (zone.position) {
+        zoneDesc += ` position relative (${zone.position.x?.toFixed(0)}%, ${zone.position.y?.toFixed(0)}%)`
+      } else if (zone.path) {
+        zoneDesc += ` tracé libre`
+      }
+      
+      if (zone.note) {
+        zoneDesc += `\n   Note utilisateur: "${zone.note}"`
+      }
+      
+      return zoneDesc
     }).join('\n')
 
     // Build the prompt
-    const prompt = `Tu es un expert en reconnaissance de compteurs d'énergie. 
+    const prompt = `Tu es un expert en reconnaissance de compteurs d'énergie.
 
-Voici les informations validées par l'utilisateur pour ce modèle de compteur:
+L'utilisateur a créé un modèle de compteur avec ces informations validées:
+
+INFORMATIONS DU MODÈLE:
 - Nom: ${name}
 - Fabricant: ${manufacturer || 'Non spécifié'}
 - Type: ${meterType}
-- Zones de lecture définies:
-${zonesDescription}
 
-${userAnalysis ? `Analyse utilisateur: ${userAnalysis}` : ''}
+ANALYSE DE L'UTILISATEUR:
+- Type détecté: ${analysis?.type || 'Non spécifié'}
+- Numéro de compteur: ${analysis?.serialNumber || 'Non spécifié'} (${analysis?.serialNumberLocation || ''})
+- Index: ${analysis?.index || 'Non spécifié'} ${analysis?.indexUnit || ''}
+- Note sur l'index: ${analysis?.indexNote || 'Aucune'}
 
-En te basant sur la photo et ces informations, génère une DESCRIPTION TECHNIQUE PRÉCISE qui servira à Claude pour reconnaître ce type de compteur lors de futurs scans.
+ZONES DÉFINIES PAR L'UTILISATEUR:
+${zonesDescription || 'Aucune zone définie'}
+
+En te basant sur la photo et TOUTES ces informations, génère une DESCRIPTION TECHNIQUE COMPLÈTE qui servira à Claude pour reconnaître ce type de compteur lors de futurs scans.
 
 La description doit inclure:
-1. Caractéristiques visuelles distinctives (forme, couleur, disposition)
-2. Type d'affichage (rouleaux mécaniques, LCD, aiguilles...)
-3. Emplacement typique des informations (numéro de série en haut, index au centre...)
-4. Particularités de lecture (chiffres noirs = entiers, rouges = décimales...)
-5. Marques ou logos identifiables
+1. IDENTIFICATION VISUELLE
+   - Forme et couleur du boîtier
+   - Marques/logos visibles
+   - Caractéristiques distinctives
 
-IMPORTANT: Cette description sera utilisée par l'IA pour la reconnaissance automatique. Sois précis et factuel.
+2. NUMÉRO DE COMPTEUR
+   - Où le trouver (position, couleur de l'étiquette, format)
+   - Format typique (nombre de chiffres, préfixe)
 
-Réponds avec UNIQUEMENT la description, sans introduction ni conclusion.`
+3. LECTURE DE L'INDEX
+   - Type d'affichage (rouleaux mécaniques, LCD, aiguilles)
+   - Comment distinguer les entiers des décimales
+   - Unité de mesure
+   - Conseils de lecture
+
+4. ZONES DE RÉFÉRENCE
+   - Reprendre les notes utilisateur pour chaque zone
+   - Positions relatives pour guider la lecture
+
+IMPORTANT: Cette description sera utilisée par l'IA pour la reconnaissance automatique. Sois précis, structuré et inclus les notes de l'utilisateur.
+
+Réponds avec UNIQUEMENT la description technique, sans introduction ni conclusion.`
 
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
-      max_tokens: 1024,
+      max_tokens: 2048,
       messages: [
         {
           role: 'user',
