@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
+import { logClaudeUsage, extractClaudeTokens } from '@/lib/api-logger'
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -83,6 +84,17 @@ Réponds UNIQUEMENT avec ce format, rien d'autre.`
           ],
         },
       ],
+    })
+
+    // 📊 Logger l'utilisation
+    const tokens = extractClaudeTokens(response)
+    await logClaudeUsage({
+      functionName: 'analyze-meter',
+      inputTokens: tokens.inputTokens,
+      outputTokens: tokens.outputTokens,
+      metadata: { 
+        hasCorrections: !!userCorrections,
+      }
     })
 
     // Extract text from response
