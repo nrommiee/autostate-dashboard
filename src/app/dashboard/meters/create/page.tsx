@@ -613,7 +613,7 @@ function StepZones({ primaryPhoto, zones, setZones, onNext, onBack, onAISuggest 
                       height: `${zone.height}%`, 
                       borderColor: zone.color, 
                       backgroundColor: `${zone.color}20`,
-                      ringColor: zone.color
+                      boxShadow: selectedZoneId === zone.id ? `0 0 0 2px white, 0 0 0 4px ${zone.color}` : undefined
                     }}
                     onClick={(e) => { e.stopPropagation(); setSelectedZoneId(zone.id); }}
                   >
