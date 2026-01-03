@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { supabase } from '@/lib/supabase';
 import {
   UnrecognizedMeterWithUser,
   MeterModelWithStats,
@@ -198,7 +198,6 @@ function LinkToModelModal({
 
 export default function UnrecognizedMetersPage() {
   const router = useRouter();
-  const supabase = createClientComponentClient();
 
   const [meters, setMeters] = useState<UnrecognizedMeterWithUser[]>([]);
   const [models, setModels] = useState<MeterModelWithStats[]>([]);

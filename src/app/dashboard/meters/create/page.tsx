@@ -4,7 +4,7 @@ import { useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { supabase } from '@/lib/supabase';
 import {
   MeterType,
   MeterSubType,
@@ -502,7 +502,6 @@ function StepDescription({ formData, setFormData, zones, onBack, onSave, saving 
 
 export default function CreateMeterPage() {
   const router = useRouter();
-  const supabase = createClientComponentClient();
   
   const [currentStep, setCurrentStep] = useState<Step>('info');
   const [saving, setSaving] = useState(false);

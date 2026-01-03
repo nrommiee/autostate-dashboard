@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { supabase } from '@/lib/supabase';
 import {
   MeterModel,
   MeterModelPhoto,
@@ -97,7 +97,6 @@ function RecentScans({ scans }: { scans: MeterScan[] }) {
 export default function MeterDetailPage() {
   const params = useParams();
   const router = useRouter();
-  const supabase = createClientComponentClient();
   const modelId = params.id as string;
 
   const [model, setModel] = useState<MeterModel | null>(null);

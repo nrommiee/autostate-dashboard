@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { supabase } from '@/lib/supabase';
 import { 
   MeterModelWithStats, 
   MeterType,
@@ -147,7 +147,6 @@ export default function MetersPage() {
   const [sortBy, setSortBy] = useState<'name' | 'success_rate' | 'usage_count' | 'created_at'>('success_rate');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
 
-  const supabase = createClientComponentClient();
 
   useEffect(() => {
     fetchModels();

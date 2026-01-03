@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { supabase } from '@/lib/supabase';
 import {
   MeterScanWithDetails,
   AdminVerdict,
@@ -253,7 +253,6 @@ export default function ScansPage() {
   const searchParams = useSearchParams();
   const modelFilter = searchParams.get('model');
   
-  const supabase = createClientComponentClient();
   
   const [scans, setScans] = useState<MeterScanWithDetails[]>([]);
   const [loading, setLoading] = useState(true);
