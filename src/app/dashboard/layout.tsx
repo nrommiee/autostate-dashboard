@@ -62,7 +62,7 @@ const navItems: NavItem[] = [
   },
   {
     title: 'Non reconnus',
-    href: '/dashboard/unrecognized',
+    href: '/dashboard/meters/unrecognized',
     icon: <AlertCircle className="h-4 w-4" />,
   },
   {
