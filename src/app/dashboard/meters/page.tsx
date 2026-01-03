@@ -1,55 +1,80 @@
-'use client'
+"use client"
 
 import { useEffect, useState } from 'react'
-import { createAdminClient } from '@/lib/supabase'
-import { 
-  MeterModel, 
-  MeterType, 
-  METER_TYPE_CONFIG,
-  computeMeterModelStats 
-} from '@/lib/supabase'
-import { Card } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
+import Link from 'next/link'
+import { Plus, Search, Gauge, Droplet, Zap, Flame, Fuel, Thermometer, MoreHorizontal, CheckCircle, XCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import Link from 'next/link'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 
-export default function MeterModelsPage() {
+// Types
+interface MeterModel {
+  id: string
+  name: string
+  manufacturer: string | null
+  meter_type: string
+  unit: string | null
+  ai_description: string | null
+  zones: any[]
+  reference_photos: string[]
+  is_active: boolean
+  usage_count: number
+  success_count: number
+  fail_count: number
+  avg_confidence: number | null
+  created_at: string
+}
+
+// Config des types
+const METER_TYPE_CONFIG: Record<string, { label: string; icon: any; color: string }> = {
+  water_general: { label: 'Eau - Général', icon: Droplet, color: 'text-cyan-500 bg-cyan-50' },
+  water_passage: { label: 'Eau - Passage', icon: Droplet, color: 'text-blue-500 bg-blue-50' },
+  electricity: { label: 'Électricité', icon: Zap, color: 'text-yellow-500 bg-yellow-50' },
+  gas: { label: 'Gaz', icon: Flame, color: 'text-orange-500 bg-orange-50' },
+  oil_tank: { label: 'Cuve mazout', icon: Fuel, color: 'text-amber-700 bg-amber-50' },
+  calorimeter: { label: 'Calorimètre', icon: Thermometer, color: 'text-red-500 bg-red-50' },
+  other: { label: 'Autre', icon: Gauge, color: 'text-gray-500 bg-gray-50' },
+}
+
+export default function MetersPage() {
   const [models, setModels] = useState<MeterModel[]>([])
   const [loading, setLoading] = useState(true)
-  const [search, setSearch] = useState('')
-  const [filterType, setFilterType] = useState<MeterType | 'all'>('all')
-  const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'inactive'>('all')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [filterType, setFilterType] = useState<string>('all')
+  const [filterActive, setFilterActive] = useState<string>('all')
 
+  // Fetch models
   useEffect(() => {
-    loadModels()
+    fetchModels()
   }, [])
 
-  async function loadModels() {
-    setLoading(true)
+  const fetchModels = async () => {
     try {
-      const supabase = createAdminClient()
-      const { data, error } = await supabase
-        .from('meter_models')
-        .select('*')
-        .order('usage_count', { ascending: false })
-
-      if (error) throw error
-      setModels(data || [])
+      const response = await fetch('/api/meter-models')
+      if (response.ok) {
+        const data = await response.json()
+        setModels(data)
+      }
     } catch (error) {
-      console.error('Error loading meter models:', error)
+      console.error('Error fetching models:', error)
     } finally {
       setLoading(false)
     }
   }
 
+  // Filter models
   const filteredModels = models.filter(model => {
-    // Search filter
-    if (search) {
-      const searchLower = search.toLowerCase()
-      if (!model.name.toLowerCase().includes(searchLower) &&
-          !model.manufacturer.toLowerCase().includes(searchLower)) {
+    // Search
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase()
+      if (!model.name.toLowerCase().includes(query) && 
+          !model.manufacturer?.toLowerCase().includes(query)) {
         return false
       }
     }
@@ -59,220 +84,201 @@ export default function MeterModelsPage() {
       return false
     }
     
-    // Status filter
-    if (filterStatus === 'active' && !model.is_active) return false
-    if (filterStatus === 'inactive' && model.is_active) return false
+    // Active filter
+    if (filterActive === 'active' && !model.is_active) return false
+    if (filterActive === 'inactive' && model.is_active) return false
     
     return true
   })
 
-  // Group by type for summary
-  const typeStats = models.reduce((acc, model) => {
-    if (!acc[model.meter_type]) {
-      acc[model.meter_type] = { count: 0, totalScans: 0 }
-    }
-    acc[model.meter_type].count++
-    acc[model.meter_type].totalScans += model.total_scans
-    return acc
-  }, {} as Record<string, { count: number; totalScans: number }>)
+  // Stats by type
+  const statsByType = Object.entries(METER_TYPE_CONFIG).map(([type, config]) => {
+    const count = models.filter(m => m.meter_type === type).length
+    const totalScans = models
+      .filter(m => m.meter_type === type)
+      .reduce((sum, m) => sum + m.usage_count, 0)
+    return { type, ...config, count, totalScans }
+  }).filter(s => s.count > 0)
+
+  // Calculate success rate
+  const getSuccessRate = (model: MeterModel) => {
+    const total = model.success_count + model.fail_count
+    if (total === 0) return null
+    return Math.round((model.success_count / total) * 100)
+  }
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Modèles de compteurs</h1>
-          <p className="text-gray-500">
-            {models.length} modèle{models.length > 1 ? 's' : ''} configuré{models.length > 1 ? 's' : ''}
-          </p>
+          <p className="text-gray-500">{models.length} modèle(s) enregistré(s)</p>
         </div>
         <Link href="/dashboard/meters/create">
-          <Button>
-            <span className="mr-2">+</span>
+          <Button className="bg-teal-600 hover:bg-teal-700">
+            <Plus className="w-4 h-4 mr-2" />
             Nouveau modèle
           </Button>
         </Link>
       </div>
 
       {/* Stats cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
-        {Object.entries(METER_TYPE_CONFIG).map(([type, config]) => {
-          const stats = typeStats[type] || { count: 0, totalScans: 0 }
-          return (
-            <Card 
-              key={type} 
-              className={`p-4 cursor-pointer transition-all hover:shadow-md ${
-                filterType === type ? 'ring-2 ring-blue-500' : ''
-              }`}
-              onClick={() => setFilterType(filterType === type ? 'all' : type as MeterType)}
-            >
-              <div className="text-2xl mb-1">{config.icon}</div>
-              <div className="font-medium text-sm">{config.label}</div>
-              <div className="text-2xl font-bold">{stats.count}</div>
-              <div className="text-xs text-gray-500">{stats.totalScans} scans</div>
-            </Card>
-          )
-        })}
-      </div>
+      {statsByType.length > 0 && (
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+          {statsByType.map(stat => {
+            const Icon = stat.icon
+            return (
+              <div 
+                key={stat.type}
+                className="bg-white rounded-lg border p-4 cursor-pointer hover:border-teal-300 transition-colors"
+                onClick={() => setFilterType(stat.type)}
+              >
+                <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${stat.color}`}>
+                  <Icon className="w-5 h-5" />
+                </div>
+                <p className="mt-3 font-semibold text-lg">{stat.count}</p>
+                <p className="text-sm text-gray-500">{stat.label}</p>
+                <p className="text-xs text-gray-400 mt-1">{stat.totalScans} scans</p>
+              </div>
+            )
+          })}
+        </div>
+      )}
 
       {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-4">
-        <Input
-          placeholder="Rechercher par nom ou fabricant..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="max-w-sm"
-        />
+      <div className="flex gap-4">
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+          <Input
+            placeholder="Rechercher un modèle..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-10"
+          />
+        </div>
         
-        <Tabs value={filterStatus} onValueChange={(v) => setFilterStatus(v as any)}>
-          <TabsList>
-            <TabsTrigger value="all">Tous</TabsTrigger>
-            <TabsTrigger value="active">Actifs</TabsTrigger>
-            <TabsTrigger value="inactive">Inactifs</TabsTrigger>
-          </TabsList>
-        </Tabs>
+        <Select value={filterType} onValueChange={setFilterType}>
+          <SelectTrigger className="w-48">
+            <SelectValue placeholder="Type" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Tous les types</SelectItem>
+            {Object.entries(METER_TYPE_CONFIG).map(([value, config]) => (
+              <SelectItem key={value} value={value}>{config.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         
-        {filterType !== 'all' && (
-          <Button variant="outline" size="sm" onClick={() => setFilterType('all')}>
-            ✕ {METER_TYPE_CONFIG[filterType].label}
-          </Button>
-        )}
+        <Select value={filterActive} onValueChange={setFilterActive}>
+          <SelectTrigger className="w-36">
+            <SelectValue placeholder="Statut" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Tous</SelectItem>
+            <SelectItem value="active">Actifs</SelectItem>
+            <SelectItem value="inactive">Inactifs</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       {/* Models list */}
       {loading ? (
-        <div className="text-center py-12 text-gray-500">Chargement...</div>
+        <div className="text-center py-12 text-gray-500">
+          Chargement...
+        </div>
       ) : filteredModels.length === 0 ? (
-        <Card className="p-12 text-center">
-          <div className="text-4xl mb-4">📊</div>
-          <div className="font-medium text-lg mb-2">Aucun modèle trouvé</div>
+        <div className="text-center py-12">
+          <Gauge className="w-12 h-12 mx-auto text-gray-300 mb-4" />
           <p className="text-gray-500 mb-4">
-            {search || filterType !== 'all' 
-              ? 'Essayez de modifier vos filtres' 
-              : 'Créez votre premier modèle de compteur'}
+            {models.length === 0 
+              ? "Aucun modèle créé" 
+              : "Aucun résultat pour cette recherche"
+            }
           </p>
-          {!search && filterType === 'all' && (
+          {models.length === 0 && (
             <Link href="/dashboard/meters/create">
-              <Button>Créer un modèle</Button>
+              <Button>
+                <Plus className="w-4 h-4 mr-2" />
+                Créer un modèle
+              </Button>
             </Link>
           )}
-        </Card>
+        </div>
       ) : (
-        <div className="grid gap-4">
-          {filteredModels.map((model) => (
-            <MeterModelCard key={model.id} model={model} onRefresh={loadModels} />
-          ))}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {filteredModels.map(model => {
+            const typeConfig = METER_TYPE_CONFIG[model.meter_type] || METER_TYPE_CONFIG.other
+            const Icon = typeConfig.icon
+            const successRate = getSuccessRate(model)
+            
+            return (
+              <div 
+                key={model.id}
+                className="bg-white rounded-lg border p-4 hover:border-teal-300 transition-colors"
+              >
+                <div className="flex items-start justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${typeConfig.color}`}>
+                      <Icon className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="font-semibold">{model.name}</h3>
+                      <p className="text-sm text-gray-500">{model.manufacturer || 'Fabricant inconnu'}</p>
+                    </div>
+                  </div>
+                  
+                  {model.is_active ? (
+                    <span className="flex items-center gap-1 text-xs text-green-600 bg-green-50 px-2 py-1 rounded-full">
+                      <CheckCircle className="w-3 h-3" />
+                      Actif
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1 text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded-full">
+                      <XCircle className="w-3 h-3" />
+                      Inactif
+                    </span>
+                  )}
+                </div>
+
+                {/* Photo preview */}
+                {model.reference_photos && model.reference_photos.length > 0 && (
+                  <div className="mt-3">
+                    <img 
+                      src={model.reference_photos[0]} 
+                      alt={model.name}
+                      className="w-full h-32 object-cover rounded-lg"
+                    />
+                  </div>
+                )}
+
+                {/* Zones count */}
+                <div className="mt-3 flex items-center gap-4 text-sm text-gray-500">
+                  <span>{model.zones?.length || 0} zone(s)</span>
+                  <span>•</span>
+                  <span>{model.unit || 'Unité non définie'}</span>
+                </div>
+
+                {/* Stats */}
+                <div className="mt-3 pt-3 border-t flex items-center justify-between text-sm">
+                  <span className="text-gray-500">
+                    {model.usage_count} scan(s)
+                  </span>
+                  {successRate !== null && (
+                    <span className={`font-medium ${
+                      successRate >= 80 ? 'text-green-600' :
+                      successRate >= 60 ? 'text-yellow-600' :
+                      'text-red-600'
+                    }`}>
+                      {successRate}% réussite
+                    </span>
+                  )}
+                </div>
+              </div>
+            )
+          })}
         </div>
       )}
     </div>
-  )
-}
-
-// Model card component
-function MeterModelCard({ 
-  model, 
-  onRefresh 
-}: { 
-  model: MeterModel
-  onRefresh: () => void 
-}) {
-  const config = METER_TYPE_CONFIG[model.meter_type]
-  const stats = computeMeterModelStats(model)
-  
-  async function toggleActive() {
-    try {
-      const supabase = createAdminClient()
-      await supabase
-        .from('meter_models')
-        .update({ is_active: !model.is_active })
-        .eq('id', model.id)
-      onRefresh()
-    } catch (error) {
-      console.error('Error toggling model:', error)
-    }
-  }
-
-  return (
-    <Card className={`p-4 ${!model.is_active ? 'opacity-60' : ''}`}>
-      <div className="flex items-start gap-4">
-        {/* Type icon */}
-        <div 
-          className="w-12 h-12 rounded-lg flex items-center justify-center text-2xl"
-          style={{ backgroundColor: config.color + '20' }}
-        >
-          {config.icon}
-        </div>
-        
-        {/* Info */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            <h3 className="font-semibold truncate">{model.name}</h3>
-            {model.is_verified && (
-              <Badge variant="secondary" className="bg-green-100 text-green-700">
-                ✓ Vérifié
-              </Badge>
-            )}
-            {!model.is_active && (
-              <Badge variant="secondary" className="bg-gray-100 text-gray-600">
-                Inactif
-              </Badge>
-            )}
-          </div>
-          
-          <div className="text-sm text-gray-500 mb-2">
-            {model.manufacturer || 'Fabricant inconnu'} • {config.label} • {model.unit}
-          </div>
-          
-          <div className="text-sm text-gray-600 line-clamp-2">
-            {model.ai_description || 'Aucune description'}
-          </div>
-          
-          {/* Zones preview */}
-          <div className="flex flex-wrap gap-1 mt-2">
-            {model.zones.map((zone: any) => (
-              <Badge key={zone.id} variant="outline" className="text-xs">
-                {zone.label}
-              </Badge>
-            ))}
-          </div>
-        </div>
-        
-        {/* Stats */}
-        <div className="text-right space-y-1">
-          <div className="text-2xl font-bold">{model.usage_count}</div>
-          <div className="text-xs text-gray-500">utilisations</div>
-          
-          {model.total_scans > 0 && (
-            <>
-              <div 
-                className={`text-lg font-semibold ${
-                  stats.successRate >= 80 ? 'text-green-600' : 
-                  stats.successRate >= 60 ? 'text-yellow-600' : 'text-red-600'
-                }`}
-              >
-                {stats.successRate}%
-              </div>
-              <div className="text-xs text-gray-500">succès</div>
-            </>
-          )}
-        </div>
-        
-        {/* Actions */}
-        <div className="flex flex-col gap-2">
-          <Link href={`/dashboard/meters/${model.id}`}>
-            <Button variant="outline" size="sm">
-              Modifier
-            </Button>
-          </Link>
-          <Button 
-            variant="ghost" 
-            size="sm"
-            onClick={toggleActive}
-          >
-            {model.is_active ? 'Désactiver' : 'Activer'}
-          </Button>
-        </div>
-      </div>
-    </Card>
   )
 }
