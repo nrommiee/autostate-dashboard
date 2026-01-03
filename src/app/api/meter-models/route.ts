@@ -6,7 +6,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
-// GET - List all meter models
+// GET - Liste des modèles
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
@@ -16,21 +16,27 @@ export async function GET(request: NextRequest) {
     let query = supabase
       .from('meter_models')
       .select('*')
-      .order('usage_count', { ascending: false })
+      .order('created_at', { ascending: false })
 
     if (type) {
       query = query.eq('meter_type', type)
     }
 
-    if (active === 'true') {
-      query = query.eq('is_active', true)
+    if (active !== null) {
+      query = query.eq('is_active', active === 'true')
     }
 
     const { data, error } = await query
 
-    if (error) throw error
+    if (error) {
+      console.error('Supabase error:', error)
+      return NextResponse.json(
+        { error: error.message },
+        { status: 500 }
+      )
+    }
 
-    return NextResponse.json(data)
+    return NextResponse.json(data || [])
 
   } catch (error) {
     console.error('Get meter models error:', error)
@@ -41,66 +47,70 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST - Create new meter model
+// POST - Créer un modèle
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-
+    
     const {
       name,
       manufacturer,
       meter_type,
       unit,
       ai_description,
-      ai_analysis_data,
-      reference_photos,
       zones,
-      is_verified,
-      is_active,
-      from_unrecognized_id
+      reference_photos,
+      is_active = true,
+      from_unrecognized_id,
     } = body
 
-    // Validate required fields
     if (!name || !meter_type) {
       return NextResponse.json(
-        { error: 'Nom et type sont requis' },
+        { error: 'Nom et type requis' },
         { status: 400 }
       )
     }
 
-    // Insert meter model
+    // Create the model
     const { data, error } = await supabase
       .from('meter_models')
       .insert({
         name,
-        manufacturer: manufacturer || '',
+        manufacturer: manufacturer || null,
         meter_type,
-        unit: unit || 'm³',
-        ai_description: ai_description || '',
-        ai_analysis_data: ai_analysis_data || {},
-        reference_photos: reference_photos || [],
+        unit: unit || null,
+        ai_description: ai_description || null,
         zones: zones || [],
-        is_verified: is_verified || false,
-        is_active: is_active !== false
+        reference_photos: reference_photos || [],
+        is_active,
+        usage_count: 0,
+        success_count: 0,
+        fail_count: 0,
+        avg_confidence: null,
       })
       .select()
       .single()
 
-    if (error) throw error
+    if (error) {
+      console.error('Supabase insert error:', error)
+      return NextResponse.json(
+        { error: error.message },
+        { status: 500 }
+      )
+    }
 
     // If created from unrecognized meter, update its status
     if (from_unrecognized_id) {
       await supabase
         .from('unrecognized_meters')
-        .update({
+        .update({ 
           status: 'processed',
           linked_model_id: data.id,
-          processed_at: new Date().toISOString()
         })
         .eq('id', from_unrecognized_id)
     }
 
-    return NextResponse.json(data)
+    return NextResponse.json(data, { status: 201 })
 
   } catch (error) {
     console.error('Create meter model error:', error)
