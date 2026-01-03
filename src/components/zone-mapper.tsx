@@ -1,7 +1,7 @@
 "use client"
 
-import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { Trash2, Move, Plus } from 'lucide-react'
+import React, { useState, useRef, useCallback, useEffect } from 'react'
+import { Trash2, Plus, Square, Pencil, Check, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -10,21 +10,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Input } from '@/components/ui/input'
-import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
 
 // Types
 export interface Zone {
   id: string
   fieldType: string
-  label: string
-  x: number      // percentage 0-100
-  y: number      // percentage 0-100
-  width: number  // percentage 0-100
-  height: number // percentage 0-100
-  hasDecimals: boolean
-  decimalDigits?: number
+  note: string  // Aide pour Claude
+  // Pour rectangle
+  x?: number
+  y?: number
+  width?: number
+  height?: number
+  // Pour crayon libre (path SVG)
+  path?: string
+  drawMode: 'rectangle' | 'freehand'
 }
 
 interface ZoneMapperProps {
@@ -34,245 +35,210 @@ interface ZoneMapperProps {
   fieldTypes: { value: string; label: string; icon: string }[]
 }
 
-type DrawingState = {
-  isDrawing: boolean
-  startX: number
-  startY: number
-  currentX: number
-  currentY: number
+// Couleurs par type de champ
+const ZONE_COLORS: Record<string, { bg: string; border: string }> = {
+  serialNumber: { bg: 'rgba(59, 130, 246, 0.3)', border: 'rgb(59, 130, 246)' },
+  ean: { bg: 'rgba(168, 85, 247, 0.3)', border: 'rgb(168, 85, 247)' },
+  readingSingle: { bg: 'rgba(34, 197, 94, 0.3)', border: 'rgb(34, 197, 94)' },
+  readingDay: { bg: 'rgba(251, 191, 36, 0.3)', border: 'rgb(251, 191, 36)' },
+  readingNight: { bg: 'rgba(99, 102, 241, 0.3)', border: 'rgb(99, 102, 241)' },
+  readingExclusiveNight: { bg: 'rgba(79, 70, 229, 0.3)', border: 'rgb(79, 70, 229)' },
+  readingProduction: { bg: 'rgba(249, 115, 22, 0.3)', border: 'rgb(249, 115, 22)' },
+  subscribedPower: { bg: 'rgba(239, 68, 68, 0.3)', border: 'rgb(239, 68, 68)' },
+  custom: { bg: 'rgba(156, 163, 175, 0.3)', border: 'rgb(156, 163, 175)' },
 }
 
 export function ZoneMapper({ imageUrl, zones, onZonesChange, fieldTypes }: ZoneMapperProps) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null)
-  const [drawing, setDrawing] = useState<DrawingState>({
-    isDrawing: false,
-    startX: 0,
-    startY: 0,
-    currentX: 0,
-    currentY: 0,
+  const [imageSize, setImageSize] = useState({ width: 0, height: 0 })
+  
+  // État pour la création de zone
+  const [isCreating, setIsCreating] = useState(false)
+  const [newZone, setNewZone] = useState<Partial<Zone>>({
+    fieldType: '',
+    note: '',
+    drawMode: 'rectangle',
   })
-  const [mode, setMode] = useState<'select' | 'draw'>('draw')
-  const [dragging, setDragging] = useState<{ zoneId: string; offsetX: number; offsetY: number } | null>(null)
+  
+  // État pour le dessin
+  const [isDrawing, setIsDrawing] = useState(false)
+  const [drawStart, setDrawStart] = useState({ x: 0, y: 0 })
+  const [currentRect, setCurrentRect] = useState<{ x: number; y: number; width: number; height: number } | null>(null)
+  const [freehandPoints, setFreehandPoints] = useState<{ x: number; y: number }[]>([])
+  
+  // État pour le redimensionnement
+  const [resizing, setResizing] = useState<{ zoneId: string; handle: string } | null>(null)
+  const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null)
 
-  // Convert pixel coordinates to percentage
-  const toPercentage = useCallback((pixelX: number, pixelY: number) => {
-    if (!containerRef.current) return { x: 0, y: 0 }
-    const rect = containerRef.current.getBoundingClientRect()
-    return {
-      x: Math.max(0, Math.min(100, (pixelX / rect.width) * 100)),
-      y: Math.max(0, Math.min(100, (pixelY / rect.height) * 100)),
-    }
-  }, [])
-
-  // Get mouse position relative to container
+  // Obtenir la position relative en pourcentage
   const getRelativePosition = useCallback((e: React.MouseEvent) => {
     if (!containerRef.current) return { x: 0, y: 0 }
     const rect = containerRef.current.getBoundingClientRect()
     return {
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top,
+      x: Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100)),
+      y: Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100)),
     }
   }, [])
 
-  // Start drawing a new zone
+  // Démarrer le dessin
   const handleMouseDown = (e: React.MouseEvent) => {
-    if (mode !== 'draw') return
+    if (!isCreating || !newZone.fieldType) return
     
     const pos = getRelativePosition(e)
-    const pct = toPercentage(pos.x, pos.y)
+    setIsDrawing(true)
+    setDrawStart(pos)
     
-    setDrawing({
-      isDrawing: true,
-      startX: pct.x,
-      startY: pct.y,
-      currentX: pct.x,
-      currentY: pct.y,
-    })
-    setSelectedZoneId(null)
+    if (newZone.drawMode === 'rectangle') {
+      setCurrentRect({ x: pos.x, y: pos.y, width: 0, height: 0 })
+    } else {
+      setFreehandPoints([pos])
+    }
   }
 
-  // Update drawing rectangle
+  // Continuer le dessin
   const handleMouseMove = (e: React.MouseEvent) => {
-    if (drawing.isDrawing) {
-      const pos = getRelativePosition(e)
-      const pct = toPercentage(pos.x, pos.y)
-      setDrawing(prev => ({
-        ...prev,
-        currentX: pct.x,
-        currentY: pct.y,
-      }))
-    }
+    if (!isDrawing) return
     
-    if (dragging) {
-      const pos = getRelativePosition(e)
-      const pct = toPercentage(pos.x, pos.y)
-      
-      onZonesChange(zones.map(z => {
-        if (z.id === dragging.zoneId) {
-          return {
-            ...z,
-            x: Math.max(0, Math.min(100 - z.width, pct.x - dragging.offsetX)),
-            y: Math.max(0, Math.min(100 - z.height, pct.y - dragging.offsetY)),
-          }
-        }
-        return z
-      }))
-    }
-  }
-
-  // Finish drawing
-  const handleMouseUp = () => {
-    if (drawing.isDrawing) {
-      const width = Math.abs(drawing.currentX - drawing.startX)
-      const height = Math.abs(drawing.currentY - drawing.startY)
-      
-      // Only create zone if it's big enough (at least 3% in each dimension)
-      if (width > 3 && height > 3) {
-        const newZone: Zone = {
-          id: `zone-${Date.now()}`,
-          fieldType: 'serialNumber',
-          label: 'Nouvelle zone',
-          x: Math.min(drawing.startX, drawing.currentX),
-          y: Math.min(drawing.startY, drawing.currentY),
-          width,
-          height,
-          hasDecimals: false,
-        }
-        onZonesChange([...zones, newZone])
-        setSelectedZoneId(newZone.id)
-      }
-      
-      setDrawing({
-        isDrawing: false,
-        startX: 0,
-        startY: 0,
-        currentX: 0,
-        currentY: 0,
+    const pos = getRelativePosition(e)
+    
+    if (newZone.drawMode === 'rectangle') {
+      setCurrentRect({
+        x: Math.min(drawStart.x, pos.x),
+        y: Math.min(drawStart.y, pos.y),
+        width: Math.abs(pos.x - drawStart.x),
+        height: Math.abs(pos.y - drawStart.y),
       })
+    } else {
+      setFreehandPoints(prev => [...prev, pos])
     }
-    
-    setDragging(null)
   }
 
-  // Select a zone
-  const handleZoneClick = (e: React.MouseEvent, zoneId: string) => {
-    e.stopPropagation()
-    setSelectedZoneId(zoneId)
+  // Terminer le dessin
+  const handleMouseUp = () => {
+    if (!isDrawing) return
+    setIsDrawing(false)
     
-    if (mode === 'select') {
-      const zone = zones.find(z => z.id === zoneId)
-      if (zone) {
-        const pos = getRelativePosition(e)
-        const pct = toPercentage(pos.x, pos.y)
-        setDragging({
-          zoneId,
-          offsetX: pct.x - zone.x,
-          offsetY: pct.y - zone.y,
-        })
+    // Vérifier que la zone est assez grande
+    if (newZone.drawMode === 'rectangle' && currentRect) {
+      if (currentRect.width > 2 && currentRect.height > 2) {
+        setNewZone(prev => ({
+          ...prev,
+          x: currentRect.x,
+          y: currentRect.y,
+          width: currentRect.width,
+          height: currentRect.height,
+        }))
       }
+    } else if (newZone.drawMode === 'freehand' && freehandPoints.length > 5) {
+      // Convertir les points en path SVG
+      const path = pointsToPath(freehandPoints)
+      setNewZone(prev => ({
+        ...prev,
+        path,
+      }))
     }
   }
 
-  // Delete selected zone
-  const deleteSelectedZone = () => {
-    if (selectedZoneId) {
-      onZonesChange(zones.filter(z => z.id !== selectedZoneId))
+  // Convertir points en path SVG
+  const pointsToPath = (points: { x: number; y: number }[]): string => {
+    if (points.length < 2) return ''
+    let path = `M ${points[0].x} ${points[0].y}`
+    for (let i = 1; i < points.length; i++) {
+      path += ` L ${points[i].x} ${points[i].y}`
+    }
+    path += ' Z' // Fermer le path
+    return path
+  }
+
+  // Valider la zone en cours de création
+  const validateZone = () => {
+    if (!newZone.fieldType) return
+    
+    const hasShape = (newZone.drawMode === 'rectangle' && newZone.x !== undefined) ||
+                     (newZone.drawMode === 'freehand' && newZone.path)
+    
+    if (!hasShape) return
+    
+    const zone: Zone = {
+      id: `zone-${Date.now()}`,
+      fieldType: newZone.fieldType,
+      note: newZone.note || '',
+      drawMode: newZone.drawMode || 'rectangle',
+      ...(newZone.drawMode === 'rectangle' ? {
+        x: newZone.x,
+        y: newZone.y,
+        width: newZone.width,
+        height: newZone.height,
+      } : {
+        path: newZone.path,
+      }),
+    }
+    
+    onZonesChange([...zones, zone])
+    resetCreation()
+  }
+
+  // Annuler la création
+  const resetCreation = () => {
+    setIsCreating(false)
+    setNewZone({
+      fieldType: '',
+      note: '',
+      drawMode: 'rectangle',
+    })
+    setCurrentRect(null)
+    setFreehandPoints([])
+    setIsDrawing(false)
+  }
+
+  // Supprimer une zone
+  const deleteZone = (zoneId: string) => {
+    onZonesChange(zones.filter(z => z.id !== zoneId))
+    if (selectedZoneId === zoneId) {
       setSelectedZoneId(null)
     }
   }
 
-  // Update zone properties
-  const updateZone = (zoneId: string, updates: Partial<Zone>) => {
-    onZonesChange(zones.map(z => z.id === zoneId ? { ...z, ...updates } : z))
+  // Commencer une nouvelle zone
+  const startNewZone = () => {
+    setIsCreating(true)
+    setSelectedZoneId(null)
   }
 
-  const selectedZone = zones.find(z => z.id === selectedZoneId)
-
-  // Get drawing rectangle coordinates
-  const getDrawingRect = () => {
-    if (!drawing.isDrawing) return null
-    return {
-      x: Math.min(drawing.startX, drawing.currentX),
-      y: Math.min(drawing.startY, drawing.currentY),
-      width: Math.abs(drawing.currentX - drawing.startX),
-      height: Math.abs(drawing.currentY - drawing.startY),
-    }
+  // Obtenir le label du type de champ
+  const getFieldLabel = (fieldType: string) => {
+    return fieldTypes.find(f => f.value === fieldType)?.label || fieldType
   }
 
-  const drawingRect = getDrawingRect()
-
-  // Zone colors based on field type
-  const getZoneColor = (fieldType: string) => {
-    const colors: Record<string, string> = {
-      serialNumber: 'rgba(59, 130, 246, 0.5)',      // blue
-      ean: 'rgba(168, 85, 247, 0.5)',               // purple
-      readingSingle: 'rgba(34, 197, 94, 0.5)',     // green
-      readingDay: 'rgba(251, 191, 36, 0.5)',       // yellow
-      readingNight: 'rgba(99, 102, 241, 0.5)',     // indigo
-      readingExclusiveNight: 'rgba(79, 70, 229, 0.5)', // darker indigo
-      readingProduction: 'rgba(249, 115, 22, 0.5)', // orange
-      subscribedPower: 'rgba(239, 68, 68, 0.5)',   // red
-      custom: 'rgba(156, 163, 175, 0.5)',          // gray
-    }
-    return colors[fieldType] || colors.custom
+  // Obtenir l'icône du type de champ
+  const getFieldIcon = (fieldType: string) => {
+    return fieldTypes.find(f => f.value === fieldType)?.icon || '📋'
   }
 
-  const getZoneBorderColor = (fieldType: string) => {
-    const colors: Record<string, string> = {
-      serialNumber: 'rgb(59, 130, 246)',
-      ean: 'rgb(168, 85, 247)',
-      readingSingle: 'rgb(34, 197, 94)',
-      readingDay: 'rgb(251, 191, 36)',
-      readingNight: 'rgb(99, 102, 241)',
-      readingExclusiveNight: 'rgb(79, 70, 229)',
-      readingProduction: 'rgb(249, 115, 22)',
-      subscribedPower: 'rgb(239, 68, 68)',
-      custom: 'rgb(156, 163, 175)',
+  // Obtenir les couleurs de la zone
+  const getZoneColors = (fieldType: string) => {
+    return ZONE_COLORS[fieldType] || ZONE_COLORS.custom
+  }
+
+  // Vérifier si la zone a une forme dessinée
+  const hasDrawnShape = () => {
+    if (newZone.drawMode === 'rectangle') {
+      return newZone.x !== undefined && newZone.width && newZone.width > 2
     }
-    return colors[fieldType] || colors.custom
+    return !!newZone.path
   }
 
   return (
-    <div className="space-y-4">
-      {/* Toolbar */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Button
-            variant={mode === 'draw' ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => setMode('draw')}
-          >
-            <Plus className="w-4 h-4 mr-1" />
-            Dessiner
-          </Button>
-          <Button
-            variant={mode === 'select' ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => setMode('select')}
-          >
-            <Move className="w-4 h-4 mr-1" />
-            Déplacer
-          </Button>
-        </div>
-        
-        {selectedZoneId && (
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={deleteSelectedZone}
-          >
-            <Trash2 className="w-4 h-4 mr-1" />
-            Supprimer
-          </Button>
-        )}
-      </div>
-
-      {/* Image with zones overlay */}
-      <div className="flex gap-4">
+    <div className="flex gap-6">
+      {/* Image avec zones */}
+      <div className="flex-1">
         <div
           ref={containerRef}
-          className="relative flex-1 border rounded-lg overflow-hidden cursor-crosshair select-none"
+          className={`relative border-2 rounded-lg overflow-hidden select-none ${
+            isCreating && newZone.fieldType 
+              ? 'cursor-crosshair border-teal-500' 
+              : 'border-gray-200'
+          }`}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
@@ -284,67 +250,226 @@ export function ZoneMapper({ imageUrl, zones, onZonesChange, fieldTypes }: ZoneM
             alt="Compteur"
             className="w-full h-auto pointer-events-none"
             draggable={false}
+            onLoad={(e) => {
+              const img = e.target as HTMLImageElement
+              setImageSize({ width: img.naturalWidth, height: img.naturalHeight })
+            }}
           />
           
-          {/* Existing zones */}
-          {zones.map(zone => (
-            <div
-              key={zone.id}
-              className={`absolute border-2 transition-all ${
-                selectedZoneId === zone.id 
-                  ? 'ring-2 ring-offset-2 ring-teal-500' 
-                  : ''
-              }`}
-              style={{
-                left: `${zone.x}%`,
-                top: `${zone.y}%`,
-                width: `${zone.width}%`,
-                height: `${zone.height}%`,
-                backgroundColor: getZoneColor(zone.fieldType),
-                borderColor: getZoneBorderColor(zone.fieldType),
-                cursor: mode === 'select' ? 'move' : 'pointer',
-              }}
-              onClick={(e) => handleZoneClick(e, zone.id)}
-            >
-              <span 
-                className="absolute -top-6 left-0 text-xs font-medium px-1 py-0.5 rounded whitespace-nowrap"
-                style={{ 
-                  backgroundColor: getZoneBorderColor(zone.fieldType),
-                  color: 'white',
+          {/* Zones existantes */}
+          {zones.map(zone => {
+            const colors = getZoneColors(zone.fieldType)
+            
+            if (zone.drawMode === 'freehand' && zone.path) {
+              return (
+                <svg
+                  key={zone.id}
+                  className="absolute inset-0 w-full h-full pointer-events-none"
+                  viewBox="0 0 100 100"
+                  preserveAspectRatio="none"
+                >
+                  <path
+                    d={zone.path}
+                    fill={colors.bg}
+                    stroke={colors.border}
+                    strokeWidth="0.5"
+                    className={selectedZoneId === zone.id ? 'animate-pulse' : ''}
+                  />
+                </svg>
+              )
+            }
+            
+            return (
+              <div
+                key={zone.id}
+                className={`absolute border-2 transition-all ${
+                  selectedZoneId === zone.id ? 'ring-2 ring-teal-500 ring-offset-2' : ''
+                }`}
+                style={{
+                  left: `${zone.x}%`,
+                  top: `${zone.y}%`,
+                  width: `${zone.width}%`,
+                  height: `${zone.height}%`,
+                  backgroundColor: colors.bg,
+                  borderColor: colors.border,
                 }}
+                onClick={() => setSelectedZoneId(zone.id)}
               >
-                {zone.label || fieldTypes.find(f => f.value === zone.fieldType)?.label}
-              </span>
-            </div>
-          ))}
+                <span
+                  className="absolute -top-6 left-0 text-xs font-medium px-2 py-0.5 rounded whitespace-nowrap"
+                  style={{ backgroundColor: colors.border, color: 'white' }}
+                >
+                  {getFieldIcon(zone.fieldType)} {getFieldLabel(zone.fieldType)}
+                </span>
+              </div>
+            )
+          })}
           
-          {/* Drawing preview */}
-          {drawingRect && (
+          {/* Zone en cours de dessin (rectangle) */}
+          {isDrawing && newZone.drawMode === 'rectangle' && currentRect && (
             <div
               className="absolute border-2 border-dashed border-teal-500 bg-teal-500/20 pointer-events-none"
               style={{
-                left: `${drawingRect.x}%`,
-                top: `${drawingRect.y}%`,
-                width: `${drawingRect.width}%`,
-                height: `${drawingRect.height}%`,
+                left: `${currentRect.x}%`,
+                top: `${currentRect.y}%`,
+                width: `${currentRect.width}%`,
+                height: `${currentRect.height}%`,
               }}
             />
           )}
+          
+          {/* Zone en cours de dessin (crayon) */}
+          {isDrawing && newZone.drawMode === 'freehand' && freehandPoints.length > 1 && (
+            <svg
+              className="absolute inset-0 w-full h-full pointer-events-none"
+              viewBox="0 0 100 100"
+              preserveAspectRatio="none"
+            >
+              <path
+                d={pointsToPath(freehandPoints)}
+                fill="rgba(20, 184, 166, 0.2)"
+                stroke="rgb(20, 184, 166)"
+                strokeWidth="0.5"
+                strokeDasharray="2,2"
+              />
+            </svg>
+          )}
+          
+          {/* Zone validée en attente (preview) */}
+          {isCreating && !isDrawing && newZone.drawMode === 'rectangle' && newZone.x !== undefined && (
+            <div
+              className="absolute border-2 border-teal-500 bg-teal-500/30 pointer-events-none"
+              style={{
+                left: `${newZone.x}%`,
+                top: `${newZone.y}%`,
+                width: `${newZone.width}%`,
+                height: `${newZone.height}%`,
+              }}
+            >
+              <span className="absolute -top-6 left-0 text-xs font-medium px-2 py-0.5 rounded whitespace-nowrap bg-teal-500 text-white">
+                {getFieldIcon(newZone.fieldType || '')} {getFieldLabel(newZone.fieldType || '')}
+              </span>
+            </div>
+          )}
+          
+          {isCreating && !isDrawing && newZone.drawMode === 'freehand' && newZone.path && (
+            <svg
+              className="absolute inset-0 w-full h-full pointer-events-none"
+              viewBox="0 0 100 100"
+              preserveAspectRatio="none"
+            >
+              <path
+                d={newZone.path}
+                fill="rgba(20, 184, 166, 0.3)"
+                stroke="rgb(20, 184, 166)"
+                strokeWidth="0.5"
+              />
+            </svg>
+          )}
+          
+          {/* Message si en mode création */}
+          {isCreating && newZone.fieldType && !hasDrawnShape() && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/10 pointer-events-none">
+              <div className="bg-white px-4 py-2 rounded-lg shadow-lg text-sm">
+                {newZone.drawMode === 'rectangle' 
+                  ? '🖱️ Cliquez et glissez pour dessiner un rectangle'
+                  : '✏️ Dessinez librement la zone'
+                }
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Zone properties panel */}
-        {selectedZone && (
-          <div className="w-72 border rounded-lg p-4 space-y-4 bg-gray-50">
-            <h4 className="font-medium">Propriétés de la zone</h4>
-            
+        {/* Liste des zones créées */}
+        {zones.length > 0 && (
+          <div className="mt-4">
+            <h4 className="text-sm font-medium text-gray-700 mb-2">Zones créées :</h4>
             <div className="space-y-2">
-              <Label>Type de champ</Label>
+              {zones.map(zone => {
+                const colors = getZoneColors(zone.fieldType)
+                return (
+                  <div
+                    key={zone.id}
+                    className={`flex items-center justify-between p-2 rounded-lg border cursor-pointer transition-all ${
+                      selectedZoneId === zone.id 
+                        ? 'border-teal-500 bg-teal-50' 
+                        : 'border-gray-200 hover:border-gray-300'
+                    }`}
+                    onClick={() => setSelectedZoneId(zone.id)}
+                  >
+                    <div className="flex items-center gap-2">
+                      <div 
+                        className="w-3 h-3 rounded"
+                        style={{ backgroundColor: colors.border }}
+                      />
+                      <span className="text-sm">
+                        {getFieldIcon(zone.fieldType)} {getFieldLabel(zone.fieldType)}
+                      </span>
+                      {zone.note && (
+                        <span className="text-xs text-gray-400">
+                          (avec note)
+                        </span>
+                      )}
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        deleteZone(zone.id)
+                      }}
+                      className="h-8 w-8 p-0 text-red-500 hover:text-red-700 hover:bg-red-50"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Panneau de création/édition */}
+      <div className="w-80 shrink-0">
+        {!isCreating ? (
+          /* Bouton pour créer une nouvelle zone */
+          <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
+            <Button onClick={startNewZone} className="w-full">
+              <Plus className="w-4 h-4 mr-2" />
+              Ajouter une zone
+            </Button>
+            <p className="text-xs text-gray-500 mt-3">
+              Définissez les zones de lecture pour aider Claude à reconnaître ce compteur
+            </p>
+          </div>
+        ) : (
+          /* Formulaire de création */
+          <div className="border rounded-lg p-4 space-y-4 bg-gray-50">
+            <div className="flex items-center justify-between">
+              <h4 className="font-medium">Nouvelle zone</h4>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={resetCreation}
+                className="h-8 w-8 p-0"
+              >
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+
+            {/* Étape 1: Type de champ */}
+            <div className="space-y-2">
+              <Label className="text-sm">
+                <span className="bg-teal-100 text-teal-700 text-xs px-2 py-0.5 rounded mr-2">1</span>
+                Type de champ
+              </Label>
               <Select
-                value={selectedZone.fieldType}
-                onValueChange={(value) => updateZone(selectedZone.id, { fieldType: value })}
+                value={newZone.fieldType}
+                onValueChange={(value) => setNewZone(prev => ({ ...prev, fieldType: value }))}
               >
                 <SelectTrigger>
-                  <SelectValue />
+                  <SelectValue placeholder="Sélectionner..." />
                 </SelectTrigger>
                 <SelectContent>
                   {fieldTypes.map(type => (
@@ -359,56 +484,131 @@ export function ZoneMapper({ imageUrl, zones, onZonesChange, fieldTypes }: ZoneM
               </Select>
             </div>
 
-            <div className="space-y-2">
-              <Label>Libellé personnalisé</Label>
-              <Input
-                value={selectedZone.label}
-                onChange={(e) => updateZone(selectedZone.id, { label: e.target.value })}
-                placeholder="Ex: Index principal"
-              />
-            </div>
-
-            <div className="flex items-center justify-between">
-              <Label>Décimales</Label>
-              <Switch
-                checked={selectedZone.hasDecimals}
-                onCheckedChange={(checked) => updateZone(selectedZone.id, { 
-                  hasDecimals: checked,
-                  decimalDigits: checked ? 3 : undefined,
-                })}
-              />
-            </div>
-
-            {selectedZone.hasDecimals && (
+            {/* Étape 2: Mode de dessin */}
+            {newZone.fieldType && (
               <div className="space-y-2">
-                <Label>Nombre de décimales</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  max={5}
-                  value={selectedZone.decimalDigits || 3}
-                  onChange={(e) => updateZone(selectedZone.id, { 
-                    decimalDigits: parseInt(e.target.value) || 3 
-                  })}
-                />
+                <Label className="text-sm">
+                  <span className="bg-teal-100 text-teal-700 text-xs px-2 py-0.5 rounded mr-2">2</span>
+                  Mode de dessin
+                </Label>
+                <div className="flex gap-2">
+                  <Button
+                    variant={newZone.drawMode === 'rectangle' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => {
+                      setNewZone(prev => ({ ...prev, drawMode: 'rectangle', path: undefined }))
+                      setCurrentRect(null)
+                      setFreehandPoints([])
+                    }}
+                    className="flex-1"
+                  >
+                    <Square className="w-4 h-4 mr-1" />
+                    Rectangle
+                  </Button>
+                  <Button
+                    variant={newZone.drawMode === 'freehand' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => {
+                      setNewZone(prev => ({ 
+                        ...prev, 
+                        drawMode: 'freehand', 
+                        x: undefined, 
+                        y: undefined, 
+                        width: undefined, 
+                        height: undefined 
+                      }))
+                      setCurrentRect(null)
+                      setFreehandPoints([])
+                    }}
+                    className="flex-1"
+                  >
+                    <Pencil className="w-4 h-4 mr-1" />
+                    Crayon
+                  </Button>
+                </div>
+                
+                {!hasDrawnShape() && (
+                  <p className="text-xs text-gray-500">
+                    Dessinez la zone sur l'image à gauche
+                  </p>
+                )}
+                
+                {hasDrawnShape() && (
+                  <div className="flex items-center gap-2 text-xs text-green-600 bg-green-50 p-2 rounded">
+                    <Check className="w-4 h-4" />
+                    Zone dessinée
+                  </div>
+                )}
               </div>
             )}
 
-            <div className="pt-2 border-t text-xs text-gray-500">
-              <p>Position: {selectedZone.x.toFixed(1)}%, {selectedZone.y.toFixed(1)}%</p>
-              <p>Taille: {selectedZone.width.toFixed(1)}% × {selectedZone.height.toFixed(1)}%</p>
-            </div>
+            {/* Étape 3: Note pour Claude */}
+            {newZone.fieldType && hasDrawnShape() && (
+              <div className="space-y-2">
+                <Label className="text-sm">
+                  <span className="bg-teal-100 text-teal-700 text-xs px-2 py-0.5 rounded mr-2">3</span>
+                  Aide pour Claude
+                  <span className="text-gray-400 font-normal ml-1">(optionnel)</span>
+                </Label>
+                <Textarea
+                  value={newZone.note}
+                  onChange={(e) => setNewZone(prev => ({ ...prev, note: e.target.value }))}
+                  placeholder="Ex: Rouleaux noirs = entiers, rouge = décimales. Lire 00001875 comme 1,875 m³"
+                  className="text-sm min-h-[80px]"
+                />
+                <p className="text-xs text-gray-500">
+                  Expliquez comment lire cette zone (décimales, format, etc.)
+                </p>
+              </div>
+            )}
+
+            {/* Bouton valider */}
+            {newZone.fieldType && hasDrawnShape() && (
+              <Button 
+                onClick={validateZone}
+                className="w-full bg-teal-600 hover:bg-teal-700"
+              >
+                <Check className="w-4 h-4 mr-2" />
+                Valider cette zone
+              </Button>
+            )}
+          </div>
+        )}
+
+        {/* Info zone sélectionnée */}
+        {selectedZoneId && !isCreating && (
+          <div className="mt-4 border rounded-lg p-4 bg-white">
+            <h4 className="font-medium mb-2">Zone sélectionnée</h4>
+            {(() => {
+              const zone = zones.find(z => z.id === selectedZoneId)
+              if (!zone) return null
+              return (
+                <div className="space-y-2 text-sm">
+                  <p>
+                    <span className="text-gray-500">Type:</span>{' '}
+                    {getFieldIcon(zone.fieldType)} {getFieldLabel(zone.fieldType)}
+                  </p>
+                  {zone.note && (
+                    <p>
+                      <span className="text-gray-500">Note:</span>{' '}
+                      <span className="text-gray-700">{zone.note}</span>
+                    </p>
+                  )}
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => deleteZone(zone.id)}
+                    className="w-full mt-2"
+                  >
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Supprimer cette zone
+                  </Button>
+                </div>
+              )
+            })()}
           </div>
         )}
       </div>
-
-      {/* Instructions */}
-      <p className="text-sm text-gray-500">
-        {mode === 'draw' 
-          ? '🎯 Cliquez et glissez sur l\'image pour dessiner une zone de lecture'
-          : '✋ Cliquez sur une zone et glissez pour la déplacer'
-        }
-      </p>
     </div>
   )
 }
