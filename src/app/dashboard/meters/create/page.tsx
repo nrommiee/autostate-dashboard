@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback } from 'react'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { ArrowLeft, Upload, Sparkles, Loader2, Check, X, RefreshCw } from 'lucide-react'
 import Link from 'next/link'
@@ -28,28 +28,28 @@ const METER_TYPES = [
   { value: 'other', label: 'Autre', icon: '📊', unit: '' },
 ]
 
-// Types de champs
+// Types de champs pour les zones
 const FIELD_TYPES = [
   { value: 'serialNumber', label: 'Numéro de compteur', icon: '🔢' },
   { value: 'ean', label: 'Code EAN', icon: '📊' },
-  { value: 'readingSingle', label: 'Index unique', icon: '📈' },
-  { value: 'readingDay', label: 'Index jour / heures pleines', icon: '☀️' },
-  { value: 'readingNight', label: 'Index nuit / heures creuses', icon: '🌙' },
-  { value: 'readingExclusiveNight', label: 'Index exclusif nuit', icon: '🌑' },
+  { value: 'readingSingle', label: 'Index', icon: '📈' },
+  { value: 'readingDay', label: 'Index jour', icon: '☀️' },
+  { value: 'readingNight', label: 'Index nuit', icon: '🌙' },
   { value: 'readingProduction', label: 'Index production', icon: '⬆️' },
   { value: 'subscribedPower', label: 'Puissance souscrite', icon: '⚡' },
-  { value: 'custom', label: 'Champ personnalisé', icon: '✏️' },
 ]
 
 // Étapes du workflow
 type Step = 'upload' | 'analyze' | 'zones' | 'review'
 
 interface AnalysisResult {
-  name: string
-  manufacturer: string
-  meterType: string
-  description: string
-  rawAnalysis: string
+  type: string
+  serialNumber: string
+  serialNumberLocation: string
+  index: string
+  indexUnit: string
+  indexNote: string
+  model: string
 }
 
 export default function CreateMeterModelPage() {
@@ -65,7 +65,15 @@ export default function CreateMeterModelPage() {
   // Analysis state
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null)
-  const [editedAnalysis, setEditedAnalysis] = useState('')
+  const [editableAnalysis, setEditableAnalysis] = useState({
+    type: '',
+    serialNumber: '',
+    serialNumberLocation: '',
+    index: '',
+    indexUnit: '',
+    indexNote: '',
+    model: '',
+  })
   const [analysisModified, setAnalysisModified] = useState(false)
   
   // Form state
@@ -103,37 +111,29 @@ export default function CreateMeterModelPage() {
     }
   }
 
-  // Analyze with Claude
+  // Analyze with Claude (simplified format)
   const analyzeWithClaude = async (includeCorrections: boolean = false) => {
     if (photos.length === 0) return
     
     setIsAnalyzing(true)
     
     try {
-      // Convert photos to base64
-      const photoPromises = photos.slice(0, 4).map(photo => {
-        return new Promise<string>((resolve) => {
-          const reader = new FileReader()
-          reader.onloadend = () => {
-            const base64 = (reader.result as string).split(',')[1]
-            resolve(base64)
-          }
-          reader.readAsDataURL(photo.file)
-        })
+      // Convert photo to base64
+      const photo = photos[0]
+      const base64 = await new Promise<string>((resolve) => {
+        const reader = new FileReader()
+        reader.onloadend = () => resolve((reader.result as string).split(',')[1])
+        reader.readAsDataURL(photo.file)
       })
       
-      const base64Photos = await Promise.all(photoPromises)
+      // Build request
+      const requestBody: any = { 
+        photo: base64,
+        mode: 'simple', // Mode simplifié
+      }
       
-      // Build request with optional corrections
-      const requestBody: any = { photos: base64Photos }
-      
-      if (includeCorrections && analysisModified) {
-        requestBody.userCorrections = {
-          analysis: editedAnalysis,
-          name: formData.name,
-          manufacturer: formData.manufacturer,
-          meterType: formData.meterType,
-        }
+      if (includeCorrections) {
+        requestBody.userCorrections = editableAnalysis
       }
       
       const response = await fetch('/api/analyze-meter', {
@@ -147,32 +147,29 @@ export default function CreateMeterModelPage() {
       const result = await response.json()
       
       setAnalysis(result)
-      setEditedAnalysis(result.rawAnalysis)
+      setEditableAnalysis({
+        type: result.type || '',
+        serialNumber: result.serialNumber || '',
+        serialNumberLocation: result.serialNumberLocation || '',
+        index: result.index || '',
+        indexUnit: result.indexUnit || '',
+        indexNote: result.indexNote || '',
+        model: result.model || '',
+      })
       setAnalysisModified(false)
       
       // Update form with AI suggestions
-      setFormData({
-        name: result.name || '',
-        manufacturer: result.manufacturer || '',
-        meterType: result.meterType || '',
-        unit: METER_TYPES.find(t => t.value === result.meterType)?.unit || '',
-      })
+      const meterType = METER_TYPES.find(t => 
+        t.label.toLowerCase().includes(result.type?.toLowerCase()) ||
+        result.type?.toLowerCase().includes(t.value.replace('_', ' '))
+      )
       
-      // Auto-create zones from AI suggestions if available
-      if (result.suggestedZones && result.suggestedZones.length > 0) {
-        const newZones: Zone[] = result.suggestedZones.map((zone: any, index: number) => ({
-          id: `zone-${Date.now()}-${index}`,
-          fieldType: zone.fieldType,
-          label: zone.label || '',
-          x: 10 + (index * 5), // Default positions (will be adjusted by user)
-          y: 10 + (index * 15),
-          width: 30,
-          height: 10,
-          hasDecimals: zone.hasDecimals || false,
-          decimalDigits: zone.decimalDigits,
-        }))
-        setZones(newZones)
-      }
+      setFormData({
+        name: result.model || '',
+        manufacturer: result.model?.split(' ')[0] || '',
+        meterType: meterType?.value || '',
+        unit: result.indexUnit || meterType?.unit || '',
+      })
       
       setCurrentStep('analyze')
       
@@ -184,15 +181,19 @@ export default function CreateMeterModelPage() {
     }
   }
 
-  // Regenerate analysis with user corrections
-  const regenerateAnalysis = () => {
-    analyzeWithClaude(true)
-  }
-
-  // Handle analysis text change
-  const handleAnalysisChange = (value: string) => {
-    setEditedAnalysis(value)
-    setAnalysisModified(value !== analysis?.rawAnalysis)
+  // Check if analysis was modified
+  const checkAnalysisModified = (field: string, value: string) => {
+    const newAnalysis = { ...editableAnalysis, [field]: value }
+    setEditableAnalysis(newAnalysis)
+    
+    if (analysis) {
+      const isModified = 
+        newAnalysis.type !== analysis.type ||
+        newAnalysis.serialNumber !== analysis.serialNumber ||
+        newAnalysis.index !== analysis.index ||
+        newAnalysis.model !== analysis.model
+      setAnalysisModified(isModified)
+    }
   }
 
   // Generate final description
@@ -200,7 +201,6 @@ export default function CreateMeterModelPage() {
     setIsGeneratingFinal(true)
     
     try {
-      // Convert first photo to base64
       const photo = photos[0]
       const base64 = await new Promise<string>((resolve) => {
         const reader = new FileReader()
@@ -218,12 +218,12 @@ export default function CreateMeterModelPage() {
           meterType: formData.meterType,
           zones: zones.map(z => ({
             fieldType: z.fieldType,
-            label: z.label,
-            position: { x: z.x, y: z.y, width: z.width, height: z.height },
-            hasDecimals: z.hasDecimals,
-            decimalDigits: z.decimalDigits,
+            note: z.note,
+            position: z.drawMode === 'rectangle' 
+              ? { x: z.x, y: z.y, width: z.width, height: z.height }
+              : { path: z.path },
           })),
-          userAnalysis: editedAnalysis,
+          analysis: editableAnalysis,
         }),
       })
       
@@ -250,12 +250,12 @@ export default function CreateMeterModelPage() {
       const uploadedUrls: string[] = []
       
       for (const photo of photos) {
-        const formData = new FormData()
-        formData.append('file', photo.file)
+        const formDataUpload = new FormData()
+        formDataUpload.append('file', photo.file)
         
         const uploadResponse = await fetch('/api/upload-meter-photo', {
           method: 'POST',
-          body: formData,
+          body: formDataUpload,
         })
         
         if (uploadResponse.ok) {
@@ -277,23 +277,29 @@ export default function CreateMeterModelPage() {
           zones: zones.map(z => ({
             id: z.id,
             fieldType: z.fieldType,
-            label: z.label,
-            position: { x: z.x, y: z.y, width: z.width, height: z.height },
-            hasDecimals: z.hasDecimals,
-            decimalDigits: z.decimalDigits,
+            note: z.note,
+            drawMode: z.drawMode,
+            ...(z.drawMode === 'rectangle' ? {
+              position: { x: z.x, y: z.y, width: z.width, height: z.height },
+            } : {
+              path: z.path,
+            }),
           })),
           reference_photos: uploadedUrls,
           is_active: true,
         }),
       })
       
-      if (!response.ok) throw new Error('Sauvegarde échouée')
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.message || 'Sauvegarde échouée')
+      }
       
       router.push('/dashboard/meters')
       
     } catch (error) {
       console.error('Save error:', error)
-      alert('Erreur lors de la sauvegarde.')
+      alert('Erreur lors de la sauvegarde: ' + (error as Error).message)
     } finally {
       setIsSaving(false)
     }
@@ -305,16 +311,16 @@ export default function CreateMeterModelPage() {
     setFormData(prev => ({
       ...prev,
       meterType: value,
-      unit: type?.unit || '',
+      unit: type?.unit || prev.unit,
     }))
   }
 
   // Step indicators
   const steps = [
-    { key: 'upload', label: '1. Photos', icon: Upload },
-    { key: 'analyze', label: '2. Analyse', icon: Sparkles },
-    { key: 'zones', label: '3. Zones', icon: Check },
-    { key: 'review', label: '4. Validation', icon: Check },
+    { key: 'upload', label: '1. Photo' },
+    { key: 'analyze', label: '2. Analyse' },
+    { key: 'zones', label: '3. Zones' },
+    { key: 'review', label: '4. Validation' },
   ]
 
   const currentStepIndex = steps.findIndex(s => s.key === currentStep)
@@ -335,19 +341,20 @@ export default function CreateMeterModelPage() {
       </div>
 
       {/* Step indicator */}
-      <div className="flex items-center justify-between max-w-2xl">
+      <div className="flex items-center gap-2">
         {steps.map((step, index) => (
           <div key={step.key} className="flex items-center">
-            <div className={`flex items-center gap-2 px-4 py-2 rounded-full ${
-              index <= currentStepIndex 
-                ? 'bg-teal-100 text-teal-700' 
-                : 'bg-gray-100 text-gray-400'
+            <div className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
+              index < currentStepIndex 
+                ? 'bg-teal-500 text-white'
+                : index === currentStepIndex 
+                  ? 'bg-teal-100 text-teal-700 ring-2 ring-teal-500' 
+                  : 'bg-gray-100 text-gray-400'
             }`}>
-              <step.icon className="w-4 h-4" />
-              <span className="text-sm font-medium">{step.label}</span>
+              {step.label}
             </div>
             {index < steps.length - 1 && (
-              <div className={`w-8 h-0.5 mx-2 ${
+              <div className={`w-8 h-0.5 mx-1 ${
                 index < currentStepIndex ? 'bg-teal-500' : 'bg-gray-200'
               }`} />
             )}
@@ -362,9 +369,9 @@ export default function CreateMeterModelPage() {
         {currentStep === 'upload' && (
           <div className="space-y-6">
             <div>
-              <h2 className="text-lg font-semibold mb-2">Photos de référence</h2>
+              <h2 className="text-lg font-semibold mb-2">Photo du compteur</h2>
               <p className="text-gray-500">
-                Ajoutez des photos claires du compteur sous différents angles
+                Prenez une photo claire et bien cadrée du compteur
               </p>
             </div>
 
@@ -374,7 +381,7 @@ export default function CreateMeterModelPage() {
                   <img
                     src={photo.preview}
                     alt={`Photo ${index + 1}`}
-                    className={`w-40 h-40 object-cover rounded-lg border-2 cursor-pointer ${
+                    className={`w-48 h-48 object-cover rounded-lg border-2 cursor-pointer ${
                       selectedPhotoIndex === index ? 'border-teal-500' : 'border-gray-200'
                     }`}
                     onClick={() => setSelectedPhotoIndex(index)}
@@ -388,33 +395,35 @@ export default function CreateMeterModelPage() {
                 </div>
               ))}
 
-              <label className="w-40 h-40 border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-teal-500 hover:bg-teal-50 transition-colors">
-                <Upload className="w-8 h-8 text-gray-400" />
-                <span className="text-sm text-gray-500 mt-2">Ajouter</span>
-                <input
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  className="hidden"
-                  onChange={handlePhotoUpload}
-                />
-              </label>
+              {photos.length === 0 && (
+                <label className="w-48 h-48 border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-teal-500 hover:bg-teal-50 transition-colors">
+                  <Upload className="w-10 h-10 text-gray-400" />
+                  <span className="text-sm text-gray-500 mt-2">Ajouter une photo</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handlePhotoUpload}
+                  />
+                </label>
+              )}
             </div>
 
             <div className="flex justify-end">
               <Button
                 onClick={() => analyzeWithClaude(false)}
                 disabled={photos.length === 0 || isAnalyzing}
+                size="lg"
                 className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600"
               >
                 {isAnalyzing ? (
                   <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    <Loader2 className="w-5 h-5 mr-2 animate-spin" />
                     Analyse en cours...
                   </>
                 ) : (
                   <>
-                    <Sparkles className="w-4 h-4 mr-2" />
+                    <Sparkles className="w-5 h-5 mr-2" />
                     Analyser avec Claude
                   </>
                 )}
@@ -424,19 +433,19 @@ export default function CreateMeterModelPage() {
         )}
 
         {/* STEP 2: Analyze & Edit */}
-        {currentStep === 'analyze' && analysis && (
+        {currentStep === 'analyze' && (
           <div className="space-y-6">
             <div className="flex items-start justify-between">
               <div>
-                <h2 className="text-lg font-semibold mb-2">Analyse Claude</h2>
+                <h2 className="text-lg font-semibold mb-2">Analyse du compteur</h2>
                 <p className="text-gray-500">
-                  Vérifiez et corrigez l'analyse si nécessaire
+                  Vérifiez et corrigez si nécessaire
                 </p>
               </div>
               
               {analysisModified && (
                 <Button
-                  onClick={regenerateAnalysis}
+                  onClick={() => analyzeWithClaude(true)}
                   disabled={isAnalyzing}
                   variant="outline"
                   className="border-purple-300 text-purple-600 hover:bg-purple-50"
@@ -446,79 +455,143 @@ export default function CreateMeterModelPage() {
                   ) : (
                     <RefreshCw className="w-4 h-4 mr-2" />
                   )}
-                  Régénérer l'analyse
+                  Régénérer
                 </Button>
               )}
             </div>
 
-            {/* Editable analysis */}
-            <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
-              <div className="flex items-center gap-2 mb-3">
-                <Sparkles className="w-4 h-4 text-purple-500" />
-                <span className="font-medium text-purple-700">Analyse (modifiable)</span>
-                {analysisModified && (
-                  <span className="text-xs bg-orange-100 text-orange-600 px-2 py-0.5 rounded-full">
-                    Modifié
-                  </span>
-                )}
+            <div className="grid grid-cols-2 gap-6">
+              {/* Photo preview */}
+              <div>
+                <img
+                  src={photos[0]?.preview}
+                  alt="Compteur"
+                  className="w-full rounded-lg border"
+                />
               </div>
-              <Textarea
-                value={editedAnalysis}
-                onChange={(e) => handleAnalysisChange(e.target.value)}
-                className="min-h-[120px] bg-white"
-              />
+
+              {/* Analysis fields */}
+              <div className="space-y-4">
+                {/* Type */}
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <Label className="text-sm text-gray-500">TYPE</Label>
+                  <Input
+                    value={editableAnalysis.type}
+                    onChange={(e) => checkAnalysisModified('type', e.target.value)}
+                    className="mt-1 text-lg font-semibold border-0 bg-transparent p-0 h-auto focus-visible:ring-0"
+                    placeholder="Gaz, Eau, Électricité..."
+                  />
+                </div>
+
+                {/* Numéro de compteur */}
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <Label className="text-sm text-gray-500">NUMÉRO DE COMPTEUR</Label>
+                  <Input
+                    value={editableAnalysis.serialNumber}
+                    onChange={(e) => checkAnalysisModified('serialNumber', e.target.value)}
+                    className="mt-1 text-lg font-mono border-0 bg-transparent p-0 h-auto focus-visible:ring-0"
+                    placeholder="Ex: 25933911"
+                  />
+                  <Input
+                    value={editableAnalysis.serialNumberLocation}
+                    onChange={(e) => checkAnalysisModified('serialNumberLocation', e.target.value)}
+                    className="mt-2 text-sm text-gray-500 border-0 bg-transparent p-0 h-auto focus-visible:ring-0"
+                    placeholder="Où se trouve-t-il ? (ex: étiquette bleue en bas)"
+                  />
+                </div>
+
+                {/* Index */}
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <Label className="text-sm text-gray-500">INDEX</Label>
+                  <div className="flex items-baseline gap-2 mt-1">
+                    <Input
+                      value={editableAnalysis.index}
+                      onChange={(e) => checkAnalysisModified('index', e.target.value)}
+                      className="text-lg font-mono border-0 bg-transparent p-0 h-auto focus-visible:ring-0 flex-1"
+                      placeholder="Ex: 000001875"
+                    />
+                    <Input
+                      value={editableAnalysis.indexUnit}
+                      onChange={(e) => checkAnalysisModified('indexUnit', e.target.value)}
+                      className="text-lg border-0 bg-transparent p-0 h-auto focus-visible:ring-0 w-16"
+                      placeholder="m³"
+                    />
+                  </div>
+                  <Textarea
+                    value={editableAnalysis.indexNote}
+                    onChange={(e) => checkAnalysisModified('indexNote', e.target.value)}
+                    className="mt-2 text-sm text-gray-500 border-0 bg-transparent p-0 min-h-0 focus-visible:ring-0 resize-none"
+                    placeholder="Comment lire l'index ? (rouleaux noirs/rouges, décimales...)"
+                    rows={2}
+                  />
+                </div>
+
+                {/* Modèle */}
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <Label className="text-sm text-gray-500">MODÈLE</Label>
+                  <Input
+                    value={editableAnalysis.model}
+                    onChange={(e) => checkAnalysisModified('model', e.target.value)}
+                    className="mt-1 text-lg border-0 bg-transparent p-0 h-auto focus-visible:ring-0"
+                    placeholder="Ex: Itron G4 RF1"
+                  />
+                </div>
+              </div>
             </div>
 
             {/* Form fields */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Nom du modèle *</Label>
-                <Input
-                  value={formData.name}
-                  onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                  placeholder="Ex: Itron Aquadis+"
-                />
-              </div>
-              
-              <div className="space-y-2">
-                <Label>Fabricant</Label>
-                <Input
-                  value={formData.manufacturer}
-                  onChange={(e) => setFormData(prev => ({ ...prev, manufacturer: e.target.value }))}
-                  placeholder="Ex: Itron"
-                />
-              </div>
-              
-              <div className="space-y-2">
-                <Label>Type de compteur *</Label>
-                <Select value={formData.meterType} onValueChange={handleMeterTypeChange}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Sélectionner..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {METER_TYPES.map(type => (
-                      <SelectItem key={type.value} value={type.value}>
-                        <span className="flex items-center gap-2">
-                          <span>{type.icon}</span>
-                          <span>{type.label}</span>
-                        </span>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              
-              <div className="space-y-2">
-                <Label>Unité</Label>
-                <Input
-                  value={formData.unit}
-                  onChange={(e) => setFormData(prev => ({ ...prev, unit: e.target.value }))}
-                  placeholder="Ex: m³, kWh"
-                />
+            <div className="border-t pt-6">
+              <h3 className="font-medium mb-4">Informations du modèle</h3>
+              <div className="grid grid-cols-4 gap-4">
+                <div className="space-y-2">
+                  <Label>Nom *</Label>
+                  <Input
+                    value={formData.name}
+                    onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+                    placeholder="Itron G4 RF1"
+                  />
+                </div>
+                
+                <div className="space-y-2">
+                  <Label>Fabricant</Label>
+                  <Input
+                    value={formData.manufacturer}
+                    onChange={(e) => setFormData(prev => ({ ...prev, manufacturer: e.target.value }))}
+                    placeholder="Itron"
+                  />
+                </div>
+                
+                <div className="space-y-2">
+                  <Label>Type *</Label>
+                  <Select value={formData.meterType} onValueChange={handleMeterTypeChange}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Sélectionner..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {METER_TYPES.map(type => (
+                        <SelectItem key={type.value} value={type.value}>
+                          <span className="flex items-center gap-2">
+                            <span>{type.icon}</span>
+                            <span>{type.label}</span>
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                
+                <div className="space-y-2">
+                  <Label>Unité</Label>
+                  <Input
+                    value={formData.unit}
+                    onChange={(e) => setFormData(prev => ({ ...prev, unit: e.target.value }))}
+                    placeholder="m³"
+                  />
+                </div>
               </div>
             </div>
 
-            <div className="flex justify-between">
+            <div className="flex justify-between pt-4">
               <Button variant="outline" onClick={() => setCurrentStep('upload')}>
                 Retour
               </Button>
@@ -526,7 +599,7 @@ export default function CreateMeterModelPage() {
                 onClick={() => setCurrentStep('zones')}
                 disabled={!formData.name || !formData.meterType}
               >
-                Continuer vers les zones
+                Continuer
               </Button>
             </div>
           </div>
@@ -538,7 +611,7 @@ export default function CreateMeterModelPage() {
             <div>
               <h2 className="text-lg font-semibold mb-2">Zones de lecture</h2>
               <p className="text-gray-500">
-                Dessinez les zones sur l'image et assignez-leur un type de champ
+                Dessinez les zones pour indiquer à Claude où trouver les informations
               </p>
             </div>
 
@@ -549,25 +622,7 @@ export default function CreateMeterModelPage() {
               fieldTypes={FIELD_TYPES}
             />
 
-            {/* Photo selector if multiple photos */}
-            {photos.length > 1 && (
-              <div className="flex gap-2">
-                <span className="text-sm text-gray-500 mr-2">Photo:</span>
-                {photos.map((photo, index) => (
-                  <button
-                    key={index}
-                    onClick={() => setSelectedPhotoIndex(index)}
-                    className={`w-12 h-12 rounded border-2 overflow-hidden ${
-                      selectedPhotoIndex === index ? 'border-teal-500' : 'border-gray-200'
-                    }`}
-                  >
-                    <img src={photo.preview} alt="" className="w-full h-full object-cover" />
-                  </button>
-                ))}
-              </div>
-            )}
-
-            <div className="flex justify-between">
+            <div className="flex justify-between pt-4 border-t">
               <Button variant="outline" onClick={() => setCurrentStep('analyze')}>
                 Retour
               </Button>
@@ -581,7 +636,7 @@ export default function CreateMeterModelPage() {
                     Génération...
                   </>
                 ) : (
-                  'Générer la description finale'
+                  'Générer la description'
                 )}
               </Button>
             </div>
@@ -594,15 +649,15 @@ export default function CreateMeterModelPage() {
             <div>
               <h2 className="text-lg font-semibold mb-2">Validation finale</h2>
               <p className="text-gray-500">
-                Vérifiez les informations avant de créer le modèle
+                Vérifiez avant de créer le modèle
               </p>
             </div>
 
-            {/* Summary */}
             <div className="grid grid-cols-2 gap-6">
+              {/* Summary */}
               <div className="space-y-4">
                 <div className="bg-gray-50 rounded-lg p-4">
-                  <h3 className="font-medium mb-3">Informations</h3>
+                  <h3 className="font-medium mb-3">Récapitulatif</h3>
                   <dl className="space-y-2 text-sm">
                     <div className="flex justify-between">
                       <dt className="text-gray-500">Nom:</dt>
@@ -614,7 +669,10 @@ export default function CreateMeterModelPage() {
                     </div>
                     <div className="flex justify-between">
                       <dt className="text-gray-500">Type:</dt>
-                      <dd>{METER_TYPES.find(t => t.value === formData.meterType)?.label}</dd>
+                      <dd>
+                        {METER_TYPES.find(t => t.value === formData.meterType)?.icon}{' '}
+                        {METER_TYPES.find(t => t.value === formData.meterType)?.label}
+                      </dd>
                     </div>
                     <div className="flex justify-between">
                       <dt className="text-gray-500">Unité:</dt>
@@ -622,51 +680,51 @@ export default function CreateMeterModelPage() {
                     </div>
                     <div className="flex justify-between">
                       <dt className="text-gray-500">Zones:</dt>
-                      <dd>{zones.length} zone(s) définie(s)</dd>
+                      <dd>{zones.length} zone(s)</dd>
                     </div>
                   </dl>
                 </div>
 
                 <div className="bg-gray-50 rounded-lg p-4">
-                  <h3 className="font-medium mb-3">Zones de lecture</h3>
+                  <h3 className="font-medium mb-3">Zones définies</h3>
                   <ul className="space-y-2 text-sm">
                     {zones.map(zone => (
-                      <li key={zone.id} className="flex items-center gap-2">
-                        <span className="w-3 h-3 rounded" style={{
-                          backgroundColor: FIELD_TYPES.find(f => f.value === zone.fieldType)?.icon ? '#10b981' : '#6b7280'
-                        }} />
-                        <span>{zone.label || FIELD_TYPES.find(f => f.value === zone.fieldType)?.label}</span>
-                        {zone.hasDecimals && (
-                          <span className="text-xs text-gray-400">({zone.decimalDigits} déc.)</span>
-                        )}
+                      <li key={zone.id} className="flex items-start gap-2">
+                        <span>{FIELD_TYPES.find(f => f.value === zone.fieldType)?.icon}</span>
+                        <div>
+                          <span className="font-medium">
+                            {FIELD_TYPES.find(f => f.value === zone.fieldType)?.label}
+                          </span>
+                          {zone.note && (
+                            <p className="text-gray-500 text-xs mt-0.5">{zone.note}</p>
+                          )}
+                        </div>
                       </li>
                     ))}
                   </ul>
                 </div>
+
+                <img
+                  src={photos[0]?.preview}
+                  alt="Référence"
+                  className="w-full rounded-lg border"
+                />
               </div>
 
-              <div className="space-y-4">
-                <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+              {/* Final description */}
+              <div>
+                <div className="bg-purple-50 border border-purple-200 rounded-lg p-4 h-full">
                   <div className="flex items-center gap-2 mb-3">
                     <Sparkles className="w-4 h-4 text-purple-500" />
                     <span className="font-medium text-purple-700">Description pour Claude</span>
-                    <span className="text-xs text-purple-500">(non modifiable)</span>
                   </div>
-                  <p className="text-sm text-gray-700 whitespace-pre-wrap">
-                    {finalDescription}
+                  <p className="text-xs text-purple-500 mb-3">
+                    Cette description sera utilisée par Claude pour reconnaître ce type de compteur lors des futurs scans. Elle n'est pas modifiable.
                   </p>
-                </div>
-
-                {photos.length > 0 && (
-                  <div>
-                    <h3 className="font-medium mb-2">Photo de référence</h3>
-                    <img
-                      src={photos[0].preview}
-                      alt="Référence"
-                      className="w-full max-w-xs rounded-lg border"
-                    />
+                  <div className="bg-white rounded p-3 text-sm text-gray-700 whitespace-pre-wrap max-h-96 overflow-y-auto">
+                    {finalDescription}
                   </div>
-                )}
+                </div>
               </div>
             </div>
 
