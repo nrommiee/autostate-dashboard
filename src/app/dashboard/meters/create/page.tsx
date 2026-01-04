@@ -125,14 +125,15 @@ export default function CreateMeterModelPage() {
   const [photoUrl, setPhotoUrl] = useState<string | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
 
-  // Informations
+  // Informations - tous vides au départ
   const [name, setName] = useState('')
   const [manufacturer, setManufacturer] = useState('')
-  const [meterType, setMeterType] = useState('gas')
+  const [meterType, setMeterType] = useState<string>('')
   const [customMeterType, setCustomMeterType] = useState('')
-  const [unit, setUnit] = useState('m³')
-  const [displayType, setDisplayType] = useState('mechanical')
+  const [unit, setUnit] = useState('')
+  const [displayType, setDisplayType] = useState('')
   const [keywords, setKeywords] = useState<{ value: string; selected: boolean }[]>([])
+  const [needsAnalysis, setNeedsAnalysis] = useState(false)
 
   // Index de consommation
   const [integerDigits, setIntegerDigits] = useState(5)
@@ -167,18 +168,8 @@ export default function CreateMeterModelPage() {
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
 
-  // Mettre à jour les chiffres depuis les zones
-  useEffect(() => {
-    const indexZone = zones.find(z => z.fieldType === 'readingSingle' || z.fieldType === 'readingDay')
-    if (indexZone && indexZone.extractedValue) {
-      const cleanValue = indexZone.extractedValue.replace(/[^0-9]/g, '')
-      const totalDigits = cleanValue.length
-      if (totalDigits > 0) {
-        const dec = indexZone.decimalDigits || decimalDigits
-        setIntegerDigits(Math.max(1, totalDigits - dec))
-      }
-    }
-  }, [zones])
+  // État pour l'animation pulse après analyse IA
+  const [justAnalyzed, setJustAnalyzed] = useState(false)
 
   // Photo handlers
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -187,6 +178,7 @@ export default function CreateMeterModelPage() {
     if (photoUrl?.startsWith('blob:')) URL.revokeObjectURL(photoUrl)
     setPhotoFile(file)
     setPhotoUrl(URL.createObjectURL(file))
+    setNeedsAnalysis(true)  // Montrer le bouton d'analyse
   }
 
   const removePhoto = () => {
@@ -204,6 +196,7 @@ export default function CreateMeterModelPage() {
     if (!photoFile) return
     setAnalyzing(true)
     setError(null)
+    setJustAnalyzed(false)
 
     try {
       const base64 = await fileToBase64(photoFile)
@@ -227,6 +220,11 @@ export default function CreateMeterModelPage() {
           setMeterType('other')
           setCustomMeterType(result.meterType)
         }
+      }
+      if (result.displayType) {
+        setDisplayType(result.displayType)
+      } else if (!displayType) {
+        setDisplayType('mechanical')  // Défaut si non détecté
       }
       if (result.keywords) {
         setKeywords(result.keywords.map((kw: string) => ({ value: kw, selected: true })))
@@ -258,6 +256,11 @@ export default function CreateMeterModelPage() {
         })
       }
       setZones(newZones)
+      
+      // Déclencher l'animation pulse
+      setJustAnalyzed(true)
+      setNeedsAnalysis(false)
+      setTimeout(() => setJustAnalyzed(false), 2000)
 
     } catch (err: any) {
       setError(err.message || 'Erreur analyse')
@@ -499,75 +502,52 @@ RÈGLES DE LECTURE:`
       const finalDecimalIndicator = decimalIndicator === 'other' ? customDecimalIndicator : decimalIndicator
       const promptText = generatePromptText()
 
-      // Créer le modèle
-      const { data: newModel, error: modelError } = await supabase
-        .from('meter_models')
-        .insert({ 
-          name, 
-          manufacturer: manufacturer || null, 
-          meter_type: finalMeterType, 
-          unit, 
-          display_type: displayType, 
-          keywords: keywords.filter(k => k.selected).map(k => k.value), 
-          reference_photos: [uploadedPhotoUrl], 
-          is_active: true, 
-          is_verified: testHistory.filter(t => t.isValidated).length > 0
-        })
-        .select()
-        .single()
-
-      if (modelError) throw modelError
-
-      // Créer les règles
-      await supabase
-        .from('meter_reading_rules')
-        .insert({
-          model_id: newModel.id,
+      // Utiliser l'API route pour la création (avec service role key)
+      const response = await fetch('/api/create-meter-model', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name,
+          manufacturer: manufacturer || null,
+          meter_type: finalMeterType || 'other',
+          unit: unit || 'm³',
+          display_type: displayType || 'mechanical',
+          keywords: keywords.filter(k => k.selected).map(k => k.value),
+          reference_photos: [uploadedPhotoUrl],
+          is_verified: testHistory.filter(t => t.isValidated).length > 0,
+          // Reading rules
           serial_digits: zones.find(z => z.fieldType === 'serialNumber')?.extractedValue?.replace(/[^0-9]/g, '').length || null,
           reading_integer_digits: integerDigits,
           reading_decimal_digits: decimalDigits,
           decimal_indicator: finalDecimalIndicator,
-          prompt_rules: promptText
+          prompt_rules: promptText,
+          // Zones
+          zones: zones.map(z => ({
+            id: z.id,
+            fieldType: z.fieldType,
+            label: z.label,
+            extractedValue: z.extractedValue,
+            position: z.position,
+            decimalDigits: z.decimalDigits
+          })),
+          // Tests
+          tests: testHistory.map(t => ({
+            extractedSerial: t.extractedSerial,
+            extractedReading: t.extractedReading,
+            correctSerial: t.correctSerial,
+            correctReading: t.correctReading,
+            confidence: t.confidence,
+            isValidated: t.isValidated,
+            isRejected: t.isRejected,
+            rejectionReason: t.rejectionReason
+          }))
         })
+      })
 
-      // Créer les zones
-      for (const zone of zones) {
-        await supabase
-          .from('meter_zones')
-          .insert({
-            model_id: newModel.id,
-            field_type: zone.fieldType,
-            label: zone.label,
-            position: zone.position,
-            extracted_value: zone.extractedValue
-          })
-      }
-
-      // Créer la première version
-      await supabase
-        .from('meter_model_prompts')
-        .insert({
-          model_id: newModel.id,
-          prompt_text: promptText,
-          version: 1,
-          is_active: true
-        })
-
-      // Sauvegarder les tests
-      for (const test of testHistory) {
-        await supabase
-          .from('meter_model_tests')
-          .insert({
-            model_id: newModel.id,
-            extracted_serial: test.extractedSerial,
-            extracted_reading: test.extractedReading,
-            correct_serial: test.correctSerial,
-            correct_reading: test.correctReading,
-            confidence: test.confidence,
-            is_validated: test.isValidated,
-            is_rejected: test.isRejected,
-            rejection_reason: test.rejectionReason
-          })
+      const result = await response.json()
+      
+      if (!response.ok) {
+        throw new Error(result.error || 'Erreur lors de la création')
       }
 
       setSaved(true)
@@ -687,39 +667,63 @@ RÈGLES DE LECTURE:`
                           <X className="h-4 w-4" />
                         </button>
                       </div>
-                      <Button onClick={analyzePhoto} disabled={analyzing} variant="outline" className="w-full gap-2">
-                        {analyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                        {analyzing ? 'Analyse en cours...' : 'Réanalyser la photo'}
-                      </Button>
+                      {needsAnalysis ? (
+                        <Button onClick={analyzePhoto} disabled={analyzing} className="w-full gap-2 bg-teal-600 hover:bg-teal-700">
+                          {analyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                          {analyzing ? 'Analyse en cours...' : 'Analyser cette photo'}
+                        </Button>
+                      ) : (
+                        <Button onClick={analyzePhoto} disabled={analyzing} variant="outline" className="w-full gap-2">
+                          {analyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                          {analyzing ? 'Analyse en cours...' : 'Réanalyser la photo'}
+                        </Button>
+                      )}
                     </div>
                   ) : (
                     <label className="flex flex-col items-center justify-center h-64 border-2 border-dashed rounded-lg cursor-pointer hover:border-teal-500 hover:bg-teal-50 transition-colors">
                       <Upload className="h-10 w-10 text-gray-400 mb-2" />
                       <span className="text-gray-600 font-medium">Cliquez pour ajouter une photo</span>
                       <span className="text-gray-400 text-sm mt-1">JPG, PNG</span>
-                      <input type="file" accept="image/*" onChange={(e) => { handlePhotoUpload(e); setTimeout(analyzePhoto, 500) }} className="hidden" />
+                      <input type="file" accept="image/*" onChange={handlePhotoUpload} className="hidden" />
                     </label>
                   )}
                 </Card>
 
                 {/* Informations à droite */}
-                <Card className="p-4">
-                  <h3 className="font-semibold mb-4">Informations</h3>
+                <Card className={`p-4 transition-all duration-500 ${justAnalyzed ? 'ring-2 ring-teal-500 ring-opacity-50' : ''}`}>
+                  <div className="flex items-center gap-2 mb-4">
+                    <h3 className="font-semibold">Informations</h3>
+                    {justAnalyzed && (
+                      <Badge className="bg-teal-100 text-teal-700 animate-pulse">
+                        <Sparkles className="h-3 w-3 mr-1" /> Rempli par l'IA
+                      </Badge>
+                    )}
+                  </div>
                   <div className="space-y-4">
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <Label className="text-xs text-gray-500">Nom *</Label>
-                        <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="G4 RF1" className="mt-1" />
+                        <Input 
+                          value={name} 
+                          onChange={(e) => setName(e.target.value)} 
+                          placeholder="Ex: G4 RF1" 
+                          className={`mt-1 transition-all ${justAnalyzed && name ? 'ring-2 ring-teal-300 bg-teal-50' : ''}`} 
+                        />
                       </div>
                       <div>
                         <Label className="text-xs text-gray-500">Fabricant</Label>
-                        <Input value={manufacturer} onChange={(e) => setManufacturer(e.target.value)} placeholder="Itron" className="mt-1" />
+                        <Input 
+                          value={manufacturer} 
+                          onChange={(e) => setManufacturer(e.target.value)} 
+                          placeholder="Ex: Itron" 
+                          className={`mt-1 transition-all ${justAnalyzed && manufacturer ? 'ring-2 ring-teal-300 bg-teal-50' : ''}`} 
+                        />
                       </div>
                     </div>
 
                     <div>
                       <Label className="text-xs text-gray-500">Type de compteur *</Label>
-                      <div className="grid grid-cols-4 gap-2 mt-1">
+                      <div className={`grid grid-cols-4 gap-2 mt-1 ${justAnalyzed && meterType ? 'ring-2 ring-teal-300 rounded-lg p-1' : ''}`}>
                         {METER_TYPES.map((type) => (
                           <button
                             key={type.value}
@@ -733,6 +737,9 @@ RÈGLES DE LECTURE:`
                           </button>
                         ))}
                       </div>
+                      {!meterType && !justAnalyzed && (
+                        <p className="text-xs text-gray-400 mt-1">Sélectionnez un type ou analysez la photo</p>
+                      )}
                       {meterType === 'other' && (
                         <Input 
                           value={customMeterType} 
@@ -746,12 +753,19 @@ RÈGLES DE LECTURE:`
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <Label className="text-xs text-gray-500">Unité</Label>
-                        <Input value={unit} onChange={(e) => setUnit(e.target.value)} className="mt-1" />
+                        <Input 
+                          value={unit} 
+                          onChange={(e) => setUnit(e.target.value)} 
+                          placeholder="Ex: m³, kWh, L" 
+                          className={`mt-1 ${justAnalyzed && unit ? 'ring-2 ring-teal-300 bg-teal-50' : ''}`} 
+                        />
                       </div>
                       <div>
                         <Label className="text-xs text-gray-500">Type d'affichage</Label>
                         <Select value={displayType} onValueChange={setDisplayType}>
-                          <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                          <SelectTrigger className={`mt-1 ${justAnalyzed && displayType ? 'ring-2 ring-teal-300 bg-teal-50' : ''}`}>
+                            <SelectValue placeholder="Sélectionner..." />
+                          </SelectTrigger>
                           <SelectContent>
                             {DISPLAY_TYPES.map(d => (
                               <SelectItem key={d.value} value={d.value}>{d.image} {d.label}</SelectItem>
