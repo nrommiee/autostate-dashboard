@@ -1,20 +1,14 @@
 'use client'
 
-import { useState, useCallback } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
-import {
-  MeterType,
-  MeterFieldType,
-  MeterZone,
-  METER_TYPE_CONFIG,
-  METER_FIELD_CONFIG,
-} from '@/lib/supabase'
+import { useState, useRef, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
+import { Textarea } from '@/components/ui/textarea'
 import {
   Select,
   SelectContent,
@@ -22,544 +16,1228 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Separator } from '@/components/ui/separator'
-import { Switch } from '@/components/ui/switch'
-import { X, Upload, Sparkles, Plus, Trash2, ArrowLeft, Loader2 } from 'lucide-react'
-import Link from 'next/link'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import { 
+  ArrowLeft, ArrowRight, Loader2, Save, CheckCircle, Upload, 
+  Sparkles, X, Trash2, Plus, Play, Check, RotateCcw, 
+  AlertTriangle, Move, Edit3, Eye, EyeOff
+} from 'lucide-react'
+import { supabase } from '@/lib/supabase'
 
-// Helper to create empty zone
-function createEmptyZone(fieldType: MeterFieldType = 'serialNumber'): MeterZone {
-  return {
-    id: crypto.randomUUID(),
-    fieldType,
-    label: METER_FIELD_CONFIG[fieldType].label,
-    hasDecimals: false
-  }
+// Types
+const METER_TYPES = [
+  { value: 'gas', label: 'Gaz', icon: '🔥', unit: 'm³' },
+  { value: 'electricity', label: 'Électricité', icon: '⚡', unit: 'kWh' },
+  { value: 'water_general', label: 'Eau générale', icon: '💧', unit: 'm³' },
+  { value: 'water_passage', label: 'Eau passage', icon: '🚿', unit: 'm³' },
+  { value: 'oil_tank', label: 'Mazout', icon: '🛢️', unit: 'L' },
+  { value: 'calorimeter', label: 'Calorimètre', icon: '🌡️', unit: 'kWh' },
+  { value: 'other', label: 'Autre', icon: '📊', unit: '' },
+]
+
+const DISPLAY_TYPES = [
+  { 
+    value: 'mechanical', 
+    label: 'Mécanique', 
+    description: 'Rouleaux à chiffres',
+    image: '🔢'
+  },
+  { 
+    value: 'digital', 
+    label: 'Digital', 
+    description: 'Écran LCD/LED',
+    image: '📟'
+  },
+  { 
+    value: 'dials', 
+    label: 'Cadrans', 
+    description: 'Aiguilles rotatives',
+    image: '🎯'
+  },
+]
+
+const ZONE_TYPES = [
+  { value: 'serialNumber', label: 'N° série', icon: '🔢', color: '#3B82F6' },
+  { value: 'readingSingle', label: 'Index unique', icon: '📊', color: '#10B981' },
+  { value: 'ean', label: 'Code EAN', icon: '📋', color: '#8B5CF6' },
+  { value: 'readingDay', label: 'Index jour', icon: '☀️', color: '#F59E0B' },
+  { value: 'readingNight', label: 'Index nuit', icon: '🌙', color: '#6366F1' },
+]
+
+const DECIMAL_INDICATORS = [
+  { value: 'red_digits', label: 'Chiffres rouges' },
+  { value: 'red_background', label: 'Fond rouge' },
+  { value: 'comma', label: 'Virgule visible' },
+  { value: 'none', label: 'Aucun indicateur' },
+  { value: 'other', label: 'Autre' },
+]
+
+interface Zone {
+  id: string
+  fieldType: string
+  label: string
+  extractedValue: string
+  position: { x: number; y: number; w: number; h: number } | null
+  isValidated: boolean
+  decimalDigits: number
 }
+
+interface TestResult {
+  id: string
+  photoUrl: string
+  timestamp: Date
+  success: boolean
+  confidence: number
+  extractedSerial?: string
+  extractedReading?: string
+  correctSerial?: string
+  correctReading?: string
+  isValidated: boolean
+  isRejected: boolean
+  rejectionReason?: string
+}
+
+const STEPS = [
+  { id: 1, label: 'Photo & Informations', icon: '📷' },
+  { id: 2, label: 'Index & Zones', icon: '🎯' },
+  { id: 3, label: 'Tests', icon: '✅' },
+]
 
 export default function CreateMeterModelPage() {
   const router = useRouter()
-  const searchParams = useSearchParams()
+  const photoContainerRef = useRef<HTMLDivElement>(null)
   
-  // Pre-fill from unrecognized meter if coming from there
-  const fromUnrecognized = searchParams.get('fromUnrecognized')
-  const prefilledPhoto = searchParams.get('photo')
-  const prefilledType = searchParams.get('type') as MeterType | null
+  const [currentStep, setCurrentStep] = useState(1)
+  const [photoFile, setPhotoFile] = useState<File | null>(null)
+  const [photoUrl, setPhotoUrl] = useState<string | null>(null)
+  const [analyzing, setAnalyzing] = useState(false)
 
-  // Form state
+  // Informations
   const [name, setName] = useState('')
   const [manufacturer, setManufacturer] = useState('')
-  const [meterType, setMeterType] = useState<MeterType>(prefilledType || 'water_general')
-  const [unit, setUnit] = useState(prefilledType ? METER_TYPE_CONFIG[prefilledType]?.unit || 'm³' : 'm³')
-  const [aiDescription, setAiDescription] = useState('')
-  const [zones, setZones] = useState<MeterZone[]>([createEmptyZone('serialNumber')])
-  const [isVerified, setIsVerified] = useState(false)
-  
-  // Photos state
-  const [photos, setPhotos] = useState<File[]>([])
-  const [photoUrls, setPhotoUrls] = useState<string[]>(prefilledPhoto ? [prefilledPhoto] : [])
-  
-  // AI analysis state
-  const [analyzing, setAnalyzing] = useState(false)
-  const [aiAnalysis, setAiAnalysis] = useState<any>(null)
-  
-  // Submission state
+  const [meterType, setMeterType] = useState('gas')
+  const [customMeterType, setCustomMeterType] = useState('')
+  const [unit, setUnit] = useState('m³')
+  const [displayType, setDisplayType] = useState('mechanical')
+  const [keywords, setKeywords] = useState<{ value: string; selected: boolean }[]>([])
+
+  // Index de consommation
+  const [integerDigits, setIntegerDigits] = useState(5)
+  const [decimalDigits, setDecimalDigits] = useState(3)
+  const [decimalIndicator, setDecimalIndicator] = useState('red_digits')
+  const [customDecimalIndicator, setCustomDecimalIndicator] = useState('')
+
+  // Zones
+  const [zones, setZones] = useState<Zone[]>([])
+  const [showZonesOnPhoto, setShowZonesOnPhoto] = useState(false)
+  const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null)
+  const [repositioningZoneId, setRepositioningZoneId] = useState<string | null>(null)
+  const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null)
+
+  // Tests
+  const [testPhotoFile, setTestPhotoFile] = useState<File | null>(null)
+  const [testPhotoUrl, setTestPhotoUrl] = useState<string | null>(null)
+  const [testing, setTesting] = useState(false)
+  const [currentTestResult, setCurrentTestResult] = useState<TestResult | null>(null)
+  const [testHistory, setTestHistory] = useState<TestResult[]>([])
+
+  // Modal de correction
+  const [showCorrectionModal, setShowCorrectionModal] = useState(false)
+  const [correctionSerial, setCorrectionSerial] = useState('')
+  const [correctionReading, setCorrectionReading] = useState('')
+  const [correctionReason, setCorrectionReason] = useState('')
+
+  // Validation error
+  const [validationError, setValidationError] = useState<string | null>(null)
+
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [saved, setSaved] = useState(false)
 
-  // Handle photo upload
-  const handlePhotoUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || [])
-    if (files.length === 0) return
-    
-    // Add to photos array
-    setPhotos(prev => [...prev, ...files])
-    
-    // Create preview URLs
-    files.forEach(file => {
-      const url = URL.createObjectURL(file)
-      setPhotoUrls(prev => [...prev, url])
-    })
-  }, [])
-
-  // Remove photo
-  const removePhoto = (index: number) => {
-    setPhotos(prev => prev.filter((_, i) => i !== index))
-    setPhotoUrls(prev => {
-      // Revoke object URL to prevent memory leak
-      if (prev[index]?.startsWith('blob:')) {
-        URL.revokeObjectURL(prev[index])
+  // Mettre à jour les chiffres depuis les zones
+  useEffect(() => {
+    const indexZone = zones.find(z => z.fieldType === 'readingSingle' || z.fieldType === 'readingDay')
+    if (indexZone && indexZone.extractedValue) {
+      const cleanValue = indexZone.extractedValue.replace(/[^0-9]/g, '')
+      const totalDigits = cleanValue.length
+      if (totalDigits > 0) {
+        const dec = indexZone.decimalDigits || decimalDigits
+        setIntegerDigits(Math.max(1, totalDigits - dec))
       }
-      return prev.filter((_, i) => i !== index)
-    })
+    }
+  }, [zones])
+
+  // Photo handlers
+  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (photoUrl?.startsWith('blob:')) URL.revokeObjectURL(photoUrl)
+    setPhotoFile(file)
+    setPhotoUrl(URL.createObjectURL(file))
   }
 
-  // Analyze with Claude
-  const analyzeWithClaude = async () => {
-    if (photoUrls.length === 0) {
-      setError('Veuillez ajouter au moins une photo')
-      return
-    }
+  const removePhoto = () => {
+    if (photoUrl?.startsWith('blob:')) URL.revokeObjectURL(photoUrl)
+    setPhotoFile(null)
+    setPhotoUrl(null)
+    setName('')
+    setManufacturer('')
+    setKeywords([])
+    setZones([])
+  }
 
+  // Analysis
+  const analyzePhoto = async () => {
+    if (!photoFile) return
     setAnalyzing(true)
     setError(null)
 
     try {
-      // Convert photos to base64
-      const photoBase64s = await Promise.all(
-        photos.map(async (file) => {
-          return new Promise<string>((resolve) => {
-            const reader = new FileReader()
-            reader.onloadend = () => {
-              const base64 = (reader.result as string).split(',')[1]
-              resolve(base64)
-            }
-            reader.readAsDataURL(file)
-          })
-        })
-      )
-
-      // Call our API route
+      const base64 = await fileToBase64(photoFile)
       const response = await fetch('/api/analyze-meter', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          photos: photoBase64s,
-          existingType: meterType 
-        })
+        body: JSON.stringify({ photos: [base64] })
       })
 
-      if (!response.ok) {
-        throw new Error('Erreur lors de l\'analyse')
-      }
-
       const result = await response.json()
-      setAiAnalysis(result)
+      if (!response.ok) throw new Error(result.error || 'Erreur analyse')
 
-      // Auto-fill form with AI suggestions
       if (result.name) setName(result.name)
       if (result.manufacturer) setManufacturer(result.manufacturer)
       if (result.meterType) {
-        setMeterType(result.meterType)
-        setUnit(METER_TYPE_CONFIG[result.meterType as MeterType]?.unit || 'm³')
+        const known = METER_TYPES.find(t => t.value === result.meterType)
+        if (known) {
+          setMeterType(result.meterType)
+          setUnit(known.unit)
+        } else {
+          setMeterType('other')
+          setCustomMeterType(result.meterType)
+        }
       }
-      if (result.description) setAiDescription(result.description)
-      if (result.suggestedZones && result.suggestedZones.length > 0) {
-        setZones(result.suggestedZones.map((z: any) => ({
-          id: crypto.randomUUID(),
-          fieldType: z.fieldType,
-          label: z.label || METER_FIELD_CONFIG[z.fieldType as MeterFieldType]?.label,
-          hasDecimals: z.hasDecimals || false,
-          decimalDigits: z.decimalDigits,
-          digitCount: z.digitCount
-        })))
+      if (result.keywords) {
+        setKeywords(result.keywords.map((kw: string) => ({ value: kw, selected: true })))
       }
 
-    } catch (err) {
-      console.error('Analysis error:', err)
-      setError('Erreur lors de l\'analyse Claude. Veuillez réessayer.')
+      // Créer les zones depuis l'analyse
+      const newZones: Zone[] = []
+      if (result.serialNumber) {
+        newZones.push({
+          id: crypto.randomUUID(),
+          fieldType: 'serialNumber',
+          label: 'N° série',
+          extractedValue: result.serialNumber,
+          position: result.serialPosition || null,
+          isValidated: false,
+          decimalDigits: 0
+        })
+      }
+      if (result.reading) {
+        const typeLabel = METER_TYPES.find(t => t.value === result.meterType)?.label?.toLowerCase() || 'compteur'
+        newZones.push({
+          id: crypto.randomUUID(),
+          fieldType: 'readingSingle',
+          label: `Index ${typeLabel}`,
+          extractedValue: result.reading,
+          position: result.readingPosition || null,
+          isValidated: false,
+          decimalDigits: 3
+        })
+      }
+      setZones(newZones)
+
+    } catch (err: any) {
+      setError(err.message || 'Erreur analyse')
     } finally {
       setAnalyzing(false)
     }
   }
 
-  // Add zone
-  const addZone = () => {
-    setZones(prev => [...prev, createEmptyZone('readingSingle')])
+  // Zones
+  const startRepositioning = (zoneId: string) => {
+    setRepositioningZoneId(zoneId)
+    setSelectedZoneId(zoneId)
+    setShowZonesOnPhoto(true)
   }
 
-  // Remove zone
-  const removeZone = (id: string) => {
-    setZones(prev => prev.filter(z => z.id !== id))
+  const handlePhotoMouseDown = (e: React.MouseEvent) => {
+    if (!repositioningZoneId || !photoContainerRef.current) return
+    const rect = photoContainerRef.current.getBoundingClientRect()
+    setDragStart({ x: (e.clientX - rect.left) / rect.width, y: (e.clientY - rect.top) / rect.height })
   }
 
-  // Update zone
-  const updateZone = (id: string, updates: Partial<MeterZone>) => {
-    setZones(prev => prev.map(z => {
-      if (z.id !== id) return z
+  const handlePhotoMouseMove = (e: React.MouseEvent) => {
+    if (!repositioningZoneId || !dragStart || !photoContainerRef.current) return
+    const rect = photoContainerRef.current.getBoundingClientRect()
+    const x = (e.clientX - rect.left) / rect.width
+    const y = (e.clientY - rect.top) / rect.height
+    updateZone(repositioningZoneId, { 
+      position: { 
+        x: Math.min(dragStart.x, x), 
+        y: Math.min(dragStart.y, y), 
+        w: Math.abs(x - dragStart.x), 
+        h: Math.abs(y - dragStart.y) 
+      } 
+    })
+  }
+
+  const handlePhotoMouseUp = () => { 
+    setDragStart(null)
+    setRepositioningZoneId(null) 
+  }
+
+  const addZone = (fieldType: string) => {
+    const config = ZONE_TYPES.find(z => z.value === fieldType)
+    setZones([...zones, { 
+      id: crypto.randomUUID(), 
+      fieldType, 
+      label: config?.label || fieldType,
+      extractedValue: '', 
+      position: null, 
+      isValidated: false,
+      decimalDigits: fieldType.includes('reading') ? 3 : 0
+    }])
+  }
+
+  const removeZone = (id: string) => setZones(zones.filter(z => z.id !== id))
+  
+  const updateZone = (id: string, updates: Partial<Zone>) => {
+    setZones(zones.map(z => z.id === id ? { ...z, ...updates } : z))
+  }
+
+  const validateZone = (id: string) => {
+    updateZone(id, { isValidated: true })
+  }
+
+  const validateAllZones = () => {
+    setZones(zones.map(z => ({ ...z, isValidated: true })))
+  }
+
+  const allZonesValidated = zones.length > 0 && zones.every(z => z.isValidated)
+
+  // Tests
+  const handleTestPhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (testPhotoUrl?.startsWith('blob:')) URL.revokeObjectURL(testPhotoUrl)
+    setTestPhotoFile(file)
+    setTestPhotoUrl(URL.createObjectURL(file))
+    setCurrentTestResult(null)
+  }
+
+  const runTest = async () => {
+    if (!testPhotoFile) return
+    setTesting(true)
+    
+    try {
+      const base64 = await fileToBase64(testPhotoFile)
+      const promptText = generatePromptText()
       
-      // If fieldType changed, update label too
-      if (updates.fieldType && updates.fieldType !== z.fieldType) {
-        return {
-          ...z,
-          ...updates,
-          label: METER_FIELD_CONFIG[updates.fieldType].label
-        }
-      }
+      const response = await fetch('/api/test-meter', { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ 
+          testPhoto: base64, 
+          promptRules: promptText,
+          modelData: { 
+            name, 
+            manufacturer, 
+            meterType: meterType === 'other' ? customMeterType : meterType, 
+            unit, 
+            integerDigits,
+            decimalDigits,
+            decimalIndicator: decimalIndicator === 'other' ? customDecimalIndicator : decimalIndicator
+          } 
+        }) 
+      })
+      const result = await response.json()
       
-      return { ...z, ...updates }
-    }))
+      setCurrentTestResult({ 
+        id: crypto.randomUUID(), 
+        photoUrl: testPhotoUrl!, 
+        timestamp: new Date(), 
+        success: result.success !== false, 
+        confidence: result.confidence || 0.95, 
+        extractedSerial: result.extractedSerial || result.serialNumber, 
+        extractedReading: result.extractedReading || result.reading, 
+        isValidated: false,
+        isRejected: false
+      })
+    } catch (err) {
+      setCurrentTestResult({ 
+        id: crypto.randomUUID(), 
+        photoUrl: testPhotoUrl!, 
+        timestamp: new Date(), 
+        success: false, 
+        confidence: 0, 
+        isValidated: false,
+        isRejected: false
+      })
+    } finally { 
+      setTesting(false) 
+    }
   }
 
-  // Save model
+  const validateTest = () => { 
+    if (!currentTestResult) return
+    const validatedTest = { ...currentTestResult, isValidated: true }
+    setTestHistory([validatedTest, ...testHistory])
+    resetTestPhoto()
+  }
+
+  const openCorrectionModal = () => {
+    if (!currentTestResult) return
+    setCorrectionSerial(currentTestResult.extractedSerial || '')
+    setCorrectionReading(currentTestResult.extractedReading || '')
+    setCorrectionReason('')
+    setShowCorrectionModal(true)
+  }
+
+  const submitCorrection = () => {
+    if (!currentTestResult) return
+    
+    const rejectedTest: TestResult = { 
+      ...currentTestResult, 
+      isValidated: false,
+      isRejected: true,
+      correctSerial: correctionSerial !== currentTestResult.extractedSerial ? correctionSerial : undefined,
+      correctReading: correctionReading !== currentTestResult.extractedReading ? correctionReading : undefined,
+      rejectionReason: correctionReason || undefined
+    }
+    
+    setTestHistory([rejectedTest, ...testHistory])
+    setShowCorrectionModal(false)
+    resetTestPhoto()
+  }
+
+  const resetTestPhoto = () => { 
+    if (testPhotoUrl?.startsWith('blob:')) URL.revokeObjectURL(testPhotoUrl)
+    setTestPhotoFile(null)
+    setTestPhotoUrl(null)
+    setCurrentTestResult(null)
+  }
+
+  // Générer le prompt
+  function generatePromptText(): string {
+    const typeLabel = meterType === 'other' ? customMeterType : METER_TYPES.find(t => t.value === meterType)?.label || meterType
+    
+    const formatExample = 'X'.repeat(integerDigits) + ',' + 'X'.repeat(decimalDigits)
+    
+    let prompt = `MODÈLE: ${manufacturer ? manufacturer + ' ' : ''}${name}
+TYPE: ${typeLabel}
+
+RÈGLES DE LECTURE:`
+
+    const serialZone = zones.find(z => z.fieldType === 'serialNumber')
+    if (serialZone) {
+      const digits = serialZone.extractedValue?.replace(/[^0-9]/g, '').length || 8
+      prompt += `\n- N° série: ${digits} chiffres`
+    }
+
+    prompt += `\n- Index: ${integerDigits} entiers + ${decimalDigits} décimales`
+    prompt += `\n- Format attendu: ${formatExample}`
+
+    if (decimalIndicator === 'red_digits') {
+      prompt += `\n- Les ${decimalDigits} derniers chiffres en ROUGE = décimales`
+    } else if (decimalIndicator === 'red_background') {
+      prompt += `\n- Les ${decimalDigits} derniers chiffres sur FOND ROUGE = décimales`
+    } else if (decimalIndicator === 'comma') {
+      prompt += `\n- Virgule visible entre entiers et décimales`
+    } else if (decimalIndicator === 'other' && customDecimalIndicator) {
+      prompt += `\n- ${customDecimalIndicator}`
+    }
+
+    // Ajouter les corrections des tests
+    const corrections = testHistory.filter(t => t.isRejected && t.correctReading)
+    if (corrections.length > 0) {
+      prompt += `\n\nCORRECTIONS (erreurs à éviter):`
+      corrections.slice(0, 5).forEach(c => {
+        prompt += `\n- "${c.extractedReading}" → "${c.correctReading}"`
+        if (c.rejectionReason) prompt += ` (${c.rejectionReason})`
+      })
+    }
+
+    return prompt
+  }
+
+  // Save
   const handleSave = async () => {
-    // Validation
-    if (!name.trim()) {
-      setError('Le nom du modèle est requis')
-      return
+    if (!name.trim() || !photoUrl || zones.length === 0) { 
+      setError('Complétez tous les champs requis')
+      return 
     }
-    if (zones.length === 0) {
-      setError('Au moins une zone est requise')
-      return
-    }
-    if (photoUrls.length === 0) {
-      setError('Au moins une photo de référence est requise')
-      return
-    }
-
     setSaving(true)
     setError(null)
-
+    
     try {
-      // Upload photos to Supabase Storage
-      const uploadedUrls: string[] = []
-      
-      for (const file of photos) {
+      // Upload photo
+      let uploadedPhotoUrl = photoUrl
+      if (photoFile) {
         const formData = new FormData()
-        formData.append('file', file)
-        
-        const uploadResponse = await fetch('/api/upload-meter-photo', {
-          method: 'POST',
-          body: formData
-        })
-        
-        if (!uploadResponse.ok) {
-          throw new Error('Erreur upload photo')
+        formData.append('file', photoFile)
+        const uploadRes = await fetch('/api/upload-meter-photo', { method: 'POST', body: formData })
+        if (uploadRes.ok) { 
+          const { url } = await uploadRes.json()
+          uploadedPhotoUrl = url 
         }
-        
-        const { url } = await uploadResponse.json()
-        uploadedUrls.push(url)
       }
 
-      // Create meter model
-      const response = await fetch('/api/meter-models', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name,
-          manufacturer,
-          meter_type: meterType,
-          unit,
-          ai_description: aiDescription,
-          ai_analysis_data: aiAnalysis || {},
-          reference_photos: uploadedUrls,
-          zones,
-          is_verified: isVerified,
-          is_active: true,
-          from_unrecognized_id: fromUnrecognized
+      const finalMeterType = meterType === 'other' ? customMeterType : meterType
+      const finalDecimalIndicator = decimalIndicator === 'other' ? customDecimalIndicator : decimalIndicator
+      const promptText = generatePromptText()
+
+      // Créer le modèle
+      const { data: newModel, error: modelError } = await supabase
+        .from('meter_models')
+        .insert({ 
+          name, 
+          manufacturer: manufacturer || null, 
+          meter_type: finalMeterType, 
+          unit, 
+          display_type: displayType, 
+          keywords: keywords.filter(k => k.selected).map(k => k.value), 
+          reference_photos: [uploadedPhotoUrl], 
+          is_active: true, 
+          is_verified: testHistory.filter(t => t.isValidated).length > 0
         })
-      })
+        .select()
+        .single()
 
-      if (!response.ok) {
-        throw new Error('Erreur lors de la création')
+      if (modelError) throw modelError
+
+      // Créer les règles
+      await supabase
+        .from('meter_reading_rules')
+        .insert({
+          model_id: newModel.id,
+          serial_digits: zones.find(z => z.fieldType === 'serialNumber')?.extractedValue?.replace(/[^0-9]/g, '').length || null,
+          reading_integer_digits: integerDigits,
+          reading_decimal_digits: decimalDigits,
+          decimal_indicator: finalDecimalIndicator,
+          prompt_rules: promptText
+        })
+
+      // Créer les zones
+      for (const zone of zones) {
+        await supabase
+          .from('meter_zones')
+          .insert({
+            model_id: newModel.id,
+            field_type: zone.fieldType,
+            label: zone.label,
+            position: zone.position,
+            extracted_value: zone.extractedValue
+          })
       }
 
-      // Redirect to meters list
-      router.push('/dashboard/meters')
+      // Créer la première version
+      await supabase
+        .from('meter_model_prompts')
+        .insert({
+          model_id: newModel.id,
+          prompt_text: promptText,
+          version: 1,
+          is_active: true
+        })
 
-    } catch (err) {
-      console.error('Save error:', err)
-      setError('Erreur lors de la sauvegarde. Veuillez réessayer.')
-    } finally {
-      setSaving(false)
+      // Sauvegarder les tests
+      for (const test of testHistory) {
+        await supabase
+          .from('meter_model_tests')
+          .insert({
+            model_id: newModel.id,
+            extracted_serial: test.extractedSerial,
+            extracted_reading: test.extractedReading,
+            correct_serial: test.correctSerial,
+            correct_reading: test.correctReading,
+            confidence: test.confidence,
+            is_validated: test.isValidated,
+            is_rejected: test.isRejected,
+            rejection_reason: test.rejectionReason
+          })
+      }
+
+      setSaved(true)
+      setTimeout(() => router.push('/dashboard/meters'), 1500)
+    } catch (err: any) { 
+      setError(err.message || 'Erreur lors de la sauvegarde') 
+    } finally { 
+      setSaving(false) 
     }
   }
 
+  // Navigation
+  const canProceed = (step: number): boolean => { 
+    switch (step) { 
+      case 1: return !!photoUrl && !!name.trim()
+      case 2: return allZonesValidated
+      default: return true 
+    } 
+  }
+
+  const goToStep = (step: number) => { 
+    if (step < 1 || step > 3) return
+    
+    if (step > currentStep) {
+      if (!canProceed(currentStep)) {
+        if (currentStep === 2 && !allZonesValidated) {
+          setValidationError('Veuillez valider toutes les zones en cliquant sur "OK" avant de continuer.')
+          return
+        }
+        if (currentStep === 1 && (!photoUrl || !name.trim())) {
+          setValidationError('Veuillez ajouter une photo et un nom.')
+          return
+        }
+        return
+      }
+    }
+    
+    setValidationError(null)
+    setCurrentStep(step) 
+  }
+
+  // Format preview
+  const formatPreview = 'X'.repeat(integerDigits) + ',' + 'X'.repeat(decimalDigits)
+
   return (
-    <div className="p-6 max-w-4xl mx-auto space-y-6">
-      {/* Header */}
-      <div className="flex items-center gap-4">
-        <Link href="/dashboard/meters">
-          <Button variant="ghost" size="icon">
-            <ArrowLeft className="h-5 w-5" />
-          </Button>
-        </Link>
-        <div>
-          <h1 className="text-2xl font-bold">Nouveau modèle de compteur</h1>
-          <p className="text-gray-500">
-            Ajoutez des photos et laissez Claude analyser le compteur
-          </p>
-        </div>
-      </div>
-
-      {/* Error message */}
-      {error && (
-        <Card className="p-4 bg-red-50 border-red-200">
-          <p className="text-red-700">{error}</p>
-        </Card>
-      )}
-
-      {/* From unrecognized banner */}
-      {fromUnrecognized && (
-        <Card className="p-4 bg-blue-50 border-blue-200">
-          <div className="flex items-center gap-2">
-            <span className="text-xl">📸</span>
-            <div>
-              <p className="font-medium text-blue-900">
-                Création depuis un compteur non reconnu
-              </p>
-              <p className="text-sm text-blue-700">
-                La photo a été pré-chargée. Vous pouvez en ajouter d'autres.
-              </p>
-            </div>
-          </div>
-        </Card>
-      )}
-
-      {/* Photos section */}
-      <Card className="p-6">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h2 className="text-lg font-semibold">Photos de référence</h2>
-            <p className="text-sm text-gray-500">
-              Ajoutez des photos claires du compteur sous différents angles
-            </p>
-          </div>
-          <Button
-            onClick={analyzeWithClaude}
-            disabled={analyzing || photoUrls.length === 0}
-            className="gap-2"
-          >
-            {analyzing ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Sparkles className="h-4 w-4" />
-            )}
-            {analyzing ? 'Analyse...' : 'Analyser avec Claude'}
-          </Button>
+    <TooltipProvider>
+      <div className="p-4 md:p-6 max-w-6xl mx-auto">
+        {/* Header */}
+        <div className="flex items-center gap-3 mb-4">
+          <Link href="/dashboard/meters">
+            <Button variant="ghost" size="icon"><ArrowLeft className="h-5 w-5" /></Button>
+          </Link>
+          <h1 className="text-xl font-bold">Nouveau modèle</h1>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {/* Photo previews */}
-          {photoUrls.map((url, index) => (
-            <div key={index} className="relative group">
-              <img
-                src={url}
-                alt={`Photo ${index + 1}`}
-                className="w-full h-32 object-cover rounded-lg border"
-              />
-              <button
-                onClick={() => removePhoto(index)}
-                className="absolute top-2 right-2 p-1 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+        {/* Steps */}
+        <div className="flex items-center justify-between mb-6 overflow-x-auto">
+          {STEPS.map((step, i) => (
+            <div key={step.id} className="flex items-center">
+              <button 
+                onClick={() => goToStep(step.id)} 
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-colors ${
+                  step.id === currentStep ? 'bg-teal-100 text-teal-700' : 
+                  step.id < currentStep ? 'text-green-600' : 'text-gray-400'
+                }`}
               >
-                <X className="h-4 w-4" />
+                <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs ${
+                  step.id === currentStep ? 'bg-teal-600 text-white' : 
+                  step.id < currentStep ? 'bg-green-600 text-white' : 'bg-gray-200'
+                }`}>
+                  {step.id < currentStep ? '✓' : step.id}
+                </span>
+                <span className="hidden sm:inline text-sm font-medium">{step.label}</span>
               </button>
+              {i < STEPS.length - 1 && (
+                <div className={`w-12 md:w-24 h-0.5 mx-2 ${step.id < currentStep ? 'bg-green-500' : 'bg-gray-200'}`} />
+              )}
             </div>
           ))}
-
-          {/* Upload button */}
-          <label className="flex flex-col items-center justify-center h-32 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer hover:border-teal-500 hover:bg-teal-50 transition-colors">
-            <Upload className="h-8 w-8 text-gray-400 mb-2" />
-            <span className="text-sm text-gray-500">Ajouter</span>
-            <input
-              type="file"
-              accept="image/*"
-              multiple
-              onChange={handlePhotoUpload}
-              className="hidden"
-            />
-          </label>
         </div>
 
-        {/* AI Analysis result */}
-        {aiAnalysis && (
-          <div className="mt-4 p-4 bg-purple-50 rounded-lg border border-purple-200">
-            <div className="flex items-center gap-2 mb-2">
-              <Sparkles className="h-4 w-4 text-purple-600" />
-              <span className="font-medium text-purple-900">Analyse Claude</span>
-            </div>
-            <p className="text-sm text-purple-700">
-              {aiAnalysis.rawAnalysis || 'Analyse terminée. Les champs ont été pré-remplis.'}
-            </p>
-          </div>
+        {/* Errors */}
+        {error && (
+          <Card className="p-3 mb-4 bg-red-50 border-red-200 flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-red-600" />
+            <span className="text-red-700 text-sm">{error}</span>
+          </Card>
         )}
-      </Card>
+        {validationError && (
+          <Card className="p-3 mb-4 bg-yellow-50 border-yellow-200 flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-yellow-600" />
+            <span className="text-yellow-700 text-sm">{validationError}</span>
+          </Card>
+        )}
+        {saved && (
+          <Card className="p-4 mb-4 bg-green-50 border-green-200 text-center">
+            <CheckCircle className="h-8 w-8 text-green-600 mx-auto mb-1" />
+            <p className="text-green-700 font-medium">Modèle créé avec succès !</p>
+          </Card>
+        )}
 
-      {/* Basic info */}
-      <Card className="p-6 space-y-4">
-        <h2 className="text-lg font-semibold">Informations générales</h2>
+        {!saved && (
+          <>
+            {/* STEP 1 - PHOTO & INFORMATIONS */}
+            {currentStep === 1 && (
+              <div className="grid md:grid-cols-2 gap-6">
+                {/* Photo à gauche */}
+                <Card className="p-4">
+                  <h3 className="font-semibold text-sm mb-2">Photo de référence</h3>
+                  <p className="text-gray-500 text-xs mb-3">L'IA analyse la photo pour pré-remplir les informations.</p>
+                  
+                  {photoUrl ? (
+                    <div className="space-y-3">
+                      <div className="relative">
+                        <img src={photoUrl} alt="Compteur" className="w-full rounded-lg border" />
+                        <button onClick={removePhoto} className="absolute top-2 right-2 p-1.5 bg-red-500 text-white rounded-full hover:bg-red-600">
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                      <Button onClick={analyzePhoto} disabled={analyzing} variant="outline" className="w-full gap-2">
+                        {analyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                        {analyzing ? 'Analyse en cours...' : 'Réanalyser la photo'}
+                      </Button>
+                    </div>
+                  ) : (
+                    <label className="flex flex-col items-center justify-center h-64 border-2 border-dashed rounded-lg cursor-pointer hover:border-teal-500 hover:bg-teal-50 transition-colors">
+                      <Upload className="h-10 w-10 text-gray-400 mb-2" />
+                      <span className="text-gray-600 font-medium">Cliquez pour ajouter une photo</span>
+                      <span className="text-gray-400 text-sm mt-1">JPG, PNG</span>
+                      <input type="file" accept="image/*" onChange={(e) => { handlePhotoUpload(e); setTimeout(analyzePhoto, 500) }} className="hidden" />
+                    </label>
+                  )}
+                </Card>
 
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label htmlFor="name">Nom du modèle *</Label>
-            <Input
-              id="name"
-              placeholder="ex: Itron Aquadis+"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </div>
+                {/* Informations à droite */}
+                <Card className="p-4">
+                  <h3 className="font-semibold mb-4">Informations</h3>
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <Label className="text-xs text-gray-500">Nom *</Label>
+                        <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="G4 RF1" className="mt-1" />
+                      </div>
+                      <div>
+                        <Label className="text-xs text-gray-500">Fabricant</Label>
+                        <Input value={manufacturer} onChange={(e) => setManufacturer(e.target.value)} placeholder="Itron" className="mt-1" />
+                      </div>
+                    </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="manufacturer">Fabricant</Label>
-            <Input
-              id="manufacturer"
-              placeholder="ex: Itron"
-              value={manufacturer}
-              onChange={(e) => setManufacturer(e.target.value)}
-            />
-          </div>
-        </div>
+                    <div>
+                      <Label className="text-xs text-gray-500">Type de compteur *</Label>
+                      <div className="grid grid-cols-4 gap-2 mt-1">
+                        {METER_TYPES.map((type) => (
+                          <button
+                            key={type.value}
+                            onClick={() => { setMeterType(type.value); if (type.unit) setUnit(type.unit) }}
+                            className={`p-2 rounded-lg border text-center transition-colors ${
+                              meterType === type.value ? 'border-teal-500 bg-teal-50' : 'border-gray-200 hover:border-gray-300'
+                            }`}
+                          >
+                            <span className="text-lg">{type.icon}</span>
+                            <div className="text-xs mt-0.5">{type.label}</div>
+                          </button>
+                        ))}
+                      </div>
+                      {meterType === 'other' && (
+                        <Input 
+                          value={customMeterType} 
+                          onChange={(e) => setCustomMeterType(e.target.value)} 
+                          placeholder="Type personnalisé"
+                          className="mt-2" 
+                        />
+                      )}
+                    </div>
 
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label>Type de compteur *</Label>
-            <Select value={meterType} onValueChange={(v) => {
-              setMeterType(v as MeterType)
-              setUnit(METER_TYPE_CONFIG[v as MeterType]?.unit || 'm³')
-            }}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {Object.entries(METER_TYPE_CONFIG).map(([type, config]) => (
-                  <SelectItem key={type} value={type}>
-                    {config.icon} {config.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <Label className="text-xs text-gray-500">Unité</Label>
+                        <Input value={unit} onChange={(e) => setUnit(e.target.value)} className="mt-1" />
+                      </div>
+                      <div>
+                        <Label className="text-xs text-gray-500">Type d'affichage</Label>
+                        <Select value={displayType} onValueChange={setDisplayType}>
+                          <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {DISPLAY_TYPES.map(d => (
+                              <SelectItem key={d.value} value={d.value}>{d.image} {d.label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="unit">Unité</Label>
-            <Input
-              id="unit"
-              value={unit}
-              onChange={(e) => setUnit(e.target.value)}
-            />
-          </div>
-        </div>
+                    {/* Mini tuto affichage */}
+                    <div className="p-3 bg-gray-50 rounded-lg">
+                      <div className="text-xs text-gray-500 mb-2">Types d'affichage :</div>
+                      <div className="grid grid-cols-3 gap-2">
+                        {DISPLAY_TYPES.map(d => (
+                          <div 
+                            key={d.value} 
+                            className={`p-2 rounded border text-center cursor-pointer transition-colors ${
+                              displayType === d.value ? 'border-teal-500 bg-teal-50' : 'border-gray-200 bg-white'
+                            }`}
+                            onClick={() => setDisplayType(d.value)}
+                          >
+                            <div className="text-2xl mb-1">{d.image}</div>
+                            <div className="text-xs font-medium">{d.label}</div>
+                            <div className="text-xs text-gray-400">{d.description}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
 
-        <div className="space-y-2">
-          <Label htmlFor="description">Description (générée par IA)</Label>
-          <Textarea
-            id="description"
-            placeholder="Description du compteur..."
-            value={aiDescription}
-            onChange={(e) => setAiDescription(e.target.value)}
-            rows={3}
-          />
-        </div>
-
-        <div className="flex items-center gap-3">
-          <Switch
-            checked={isVerified}
-            onCheckedChange={setIsVerified}
-          />
-          <Label>Marquer comme vérifié manuellement</Label>
-        </div>
-      </Card>
-
-      {/* Zones configuration */}
-      <Card className="p-6 space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-lg font-semibold">Zones de lecture</h2>
-            <p className="text-sm text-gray-500">
-              Définissez les champs à extraire de ce compteur
-            </p>
-          </div>
-          <Button variant="outline" onClick={addZone} className="gap-2">
-            <Plus className="h-4 w-4" />
-            Ajouter une zone
-          </Button>
-        </div>
-
-        <div className="space-y-3">
-          {zones.map((zone, index) => (
-            <div
-              key={zone.id}
-              className="flex items-start gap-3 p-4 border rounded-lg bg-gray-50"
-            >
-              <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-3">
-                {/* Field type */}
-                <div className="space-y-1">
-                  <Label className="text-xs">Type de champ</Label>
-                  <Select
-                    value={zone.fieldType}
-                    onValueChange={(v) => updateZone(zone.id, { fieldType: v as MeterFieldType })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {Object.entries(METER_FIELD_CONFIG).map(([type, config]) => (
-                        <SelectItem key={type} value={type}>
-                          {config.icon} {config.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {/* Label */}
-                <div className="space-y-1">
-                  <Label className="text-xs">Libellé</Label>
-                  <Input
-                    value={zone.label}
-                    onChange={(e) => updateZone(zone.id, { label: e.target.value })}
-                    placeholder="Libellé..."
-                  />
-                </div>
-
-                {/* Decimals */}
-                <div className="space-y-1">
-                  <Label className="text-xs">Décimales</Label>
-                  <div className="flex items-center gap-2">
-                    <Switch
-                      checked={zone.hasDecimals}
-                      onCheckedChange={(v) => updateZone(zone.id, { hasDecimals: v })}
-                    />
-                    {zone.hasDecimals && (
-                      <Input
-                        type="number"
-                        min={1}
-                        max={5}
-                        value={zone.decimalDigits || 2}
-                        onChange={(e) => updateZone(zone.id, { decimalDigits: parseInt(e.target.value) })}
-                        className="w-20"
-                      />
+                    {keywords.length > 0 && (
+                      <div>
+                        <Label className="text-xs text-gray-500">Mots-clés détectés</Label>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {keywords.map((kw, i) => (
+                            <Badge 
+                              key={i} 
+                              variant={kw.selected ? 'default' : 'outline'} 
+                              className={`cursor-pointer text-xs ${kw.selected ? 'bg-teal-600' : ''}`}
+                              onClick={() => setKeywords(keywords.map((k, j) => j === i ? { ...k, selected: !k.selected } : k))}
+                            >
+                              {kw.selected && <Check className="h-3 w-3 mr-1" />}
+                              {kw.value}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
                     )}
                   </div>
+                </Card>
+              </div>
+            )}
+
+            {/* STEP 2 - INDEX & ZONES */}
+            {currentStep === 2 && (
+              <div className="grid md:grid-cols-2 gap-6">
+                {/* Photo avec zones */}
+                <Card className="p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="font-semibold text-sm">
+                      Photo
+                      {repositioningZoneId && <span className="text-teal-600 ml-2">— Dessinez la zone</span>}
+                    </h3>
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      onClick={() => setShowZonesOnPhoto(!showZonesOnPhoto)}
+                      className="h-8 text-xs gap-1"
+                    >
+                      {showZonesOnPhoto ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                      {showZonesOnPhoto ? 'Masquer zones' : 'Afficher zones'}
+                    </Button>
+                  </div>
+                  
+                  {photoUrl && (
+                    <div 
+                      ref={photoContainerRef} 
+                      className={`relative select-none ${repositioningZoneId ? 'cursor-crosshair' : ''}`}
+                      onMouseDown={handlePhotoMouseDown}
+                      onMouseMove={handlePhotoMouseMove}
+                      onMouseUp={handlePhotoMouseUp}
+                      onMouseLeave={handlePhotoMouseUp}
+                    >
+                      <img src={photoUrl} alt="Compteur" className="w-full rounded-lg" draggable={false} />
+                      {showZonesOnPhoto && zones.map((zone) => zone.position && (
+                        <div 
+                          key={zone.id}
+                          className={`absolute border-2 rounded ${selectedZoneId === zone.id ? 'ring-2 ring-white' : ''}`}
+                          style={{
+                            left: `${zone.position.x * 100}%`,
+                            top: `${zone.position.y * 100}%`,
+                            width: `${zone.position.w * 100}%`,
+                            height: `${zone.position.h * 100}%`,
+                            borderColor: ZONE_TYPES.find(z => z.value === zone.fieldType)?.color || '#6B7280',
+                            backgroundColor: `${ZONE_TYPES.find(z => z.value === zone.fieldType)?.color || '#6B7280'}30`
+                          }}
+                          onClick={() => setSelectedZoneId(zone.id)}
+                        >
+                          <span 
+                            className="absolute -top-5 left-0 px-1 text-xs text-white rounded"
+                            style={{ backgroundColor: ZONE_TYPES.find(z => z.value === zone.fieldType)?.color || '#6B7280' }}
+                          >
+                            {zone.label}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Card>
+
+                {/* Index + Zones à droite */}
+                <div className="space-y-4">
+                  {/* Index de consommation EN PREMIER */}
+                  <Card className="p-4">
+                    <h3 className="font-semibold mb-3">Index de consommation</h3>
+                    <div className="grid grid-cols-2 gap-3 mb-3">
+                      <div>
+                        <Label className="text-xs text-gray-500">Chiffres entiers</Label>
+                        <Input 
+                          type="number" 
+                          value={integerDigits} 
+                          onChange={(e) => setIntegerDigits(parseInt(e.target.value) || 1)} 
+                          className="mt-1" 
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-xs text-gray-500">Décimales à utiliser</Label>
+                        <Input 
+                          type="number" 
+                          value={decimalDigits} 
+                          onChange={(e) => setDecimalDigits(parseInt(e.target.value) || 0)} 
+                          className="mt-1" 
+                        />
+                      </div>
+                    </div>
+                    <div className="mb-3">
+                      <Label className="text-xs text-gray-500">Comment repérer les décimales ?</Label>
+                      <Select value={decimalIndicator} onValueChange={setDecimalIndicator}>
+                        <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {DECIMAL_INDICATORS.map(d => (
+                            <SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {decimalIndicator === 'other' && (
+                        <Input 
+                          value={customDecimalIndicator} 
+                          onChange={(e) => setCustomDecimalIndicator(e.target.value)} 
+                          placeholder="Décrivez..."
+                          className="mt-2" 
+                        />
+                      )}
+                    </div>
+                    <div className="p-3 bg-gray-50 rounded-lg border text-center">
+                      <div className="text-xs text-gray-500 mb-2">Format attendu</div>
+                      <div className="font-mono text-xl">
+                        <span className="bg-gray-800 text-white px-2 py-1 rounded">{formatPreview.split(',')[0]}</span>
+                        <span className="text-gray-400 mx-1">,</span>
+                        <span className={`px-2 py-1 rounded ${
+                          decimalIndicator === 'red_digits' || decimalIndicator === 'red_background' 
+                            ? 'bg-red-500 text-white' 
+                            : 'bg-gray-300'
+                        }`}>
+                          {formatPreview.split(',')[1]}
+                        </span>
+                      </div>
+                    </div>
+                  </Card>
+
+                  {/* Zones EN SECOND */}
+                  <Card className="p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="font-semibold">Zones ({zones.length})</h3>
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={validateAllZones}
+                        disabled={zones.length === 0 || allZonesValidated}
+                        className="h-7 text-xs"
+                      >
+                        <Check className="h-3 w-3 mr-1" /> Tout valider
+                      </Button>
+                    </div>
+
+                    <div className="space-y-2 max-h-64 overflow-y-auto">
+                      {zones.map((zone) => {
+                        const config = ZONE_TYPES.find(z => z.value === zone.fieldType)
+                        return (
+                          <div 
+                            key={zone.id} 
+                            className={`p-3 border rounded-lg ${zone.isValidated ? 'bg-green-50 border-green-200' : 'bg-white'}`}
+                            style={{ borderLeftWidth: 4, borderLeftColor: config?.color || '#6B7280' }}
+                          >
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="font-medium text-sm">{zone.label}</span>
+                              <Button variant="ghost" size="icon" className="h-6 w-6 text-red-500" onClick={() => removeZone(zone.id)}>
+                                <Trash2 className="h-3 w-3" />
+                              </Button>
+                            </div>
+                            
+                            <div className="flex items-center gap-2 mb-2">
+                              <Input 
+                                value={zone.extractedValue} 
+                                onChange={(e) => updateZone(zone.id, { extractedValue: e.target.value })}
+                                className="font-mono flex-1 h-9"
+                                placeholder="Valeur..."
+                              />
+                              <Button 
+                                size="sm" 
+                                variant={zone.isValidated ? 'secondary' : 'default'}
+                                onClick={() => validateZone(zone.id)}
+                                disabled={zone.isValidated}
+                                className="h-9 px-4"
+                              >
+                                {zone.isValidated ? '✓' : 'OK'}
+                              </Button>
+                            </div>
+
+                            <div className="flex items-center gap-2 flex-wrap">
+                              {zone.position ? (
+                                <>
+                                  <Badge variant="outline" className="text-xs bg-green-50">✓ Positionné</Badge>
+                                  <Button variant="outline" size="sm" className="h-6 text-xs" onClick={() => startRepositioning(zone.id)}>
+                                    <Move className="h-3 w-3 mr-1" /> Modifier
+                                  </Button>
+                                </>
+                              ) : (
+                                <Button variant="default" size="sm" className="h-7 text-xs bg-teal-600 hover:bg-teal-700" onClick={() => startRepositioning(zone.id)}>
+                                  <Move className="h-3 w-3 mr-1" /> Positionner
+                                </Button>
+                              )}
+
+                              {zone.fieldType.includes('reading') && (
+                                <div className="flex items-center gap-1 ml-auto">
+                                  <span className="text-xs text-gray-500">Déc:</span>
+                                  <div className="flex border rounded overflow-hidden">
+                                    {[1, 2, 3].map(n => (
+                                      <button 
+                                        key={n}
+                                        onClick={() => updateZone(zone.id, { decimalDigits: n })}
+                                        className={`px-2 py-0.5 text-xs font-medium ${
+                                          zone.decimalDigits === n ? 'bg-teal-600 text-white' : 'bg-gray-50 hover:bg-gray-100'
+                                        }`}
+                                      >
+                                        {n}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+
+                    {/* Ajouter zone */}
+                    <div className="mt-3 pt-3 border-t">
+                      <span className="text-xs text-gray-500 block mb-2">Ajouter :</span>
+                      <div className="flex flex-wrap gap-2">
+                        {ZONE_TYPES.map((type) => (
+                          <Tooltip key={type.value}>
+                            <TooltipTrigger asChild>
+                              <Button 
+                                variant="outline" 
+                                size="sm" 
+                                onClick={() => addZone(type.value)}
+                                className="gap-1 h-8"
+                              >
+                                <Plus className="h-3 w-3" />
+                                <span>{type.icon}</span>
+                                <span className="text-xs">{type.label}</span>
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>Ajouter {type.label}</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        ))}
+                      </div>
+                    </div>
+                  </Card>
                 </div>
               </div>
+            )}
 
-              {/* Remove button */}
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => removeZone(zone.id)}
-                disabled={zones.length === 1}
-                className="text-red-500 hover:text-red-700 hover:bg-red-50"
-              >
-                <Trash2 className="h-4 w-4" />
+            {/* STEP 3 - TESTS */}
+            {currentStep === 3 && (
+              <div className="space-y-4">
+                <Card className="p-4">
+                  <h2 className="font-semibold mb-1">Tests</h2>
+                  <p className="text-gray-500 text-sm mb-4">Testez avec d'autres photos pour améliorer la reconnaissance. Les corrections enrichissent automatiquement le modèle.</p>
+                  
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div>
+                      {testPhotoUrl ? (
+                        <div className="relative">
+                          <img src={testPhotoUrl} alt="Test" className="w-full max-h-64 object-contain rounded-lg border" />
+                          <button onClick={resetTestPhoto} className="absolute top-2 right-2 p-1.5 bg-gray-800 text-white rounded-full">
+                            <RotateCcw className="h-4 w-4" />
+                          </button>
+                        </div>
+                      ) : (
+                        <label className="flex flex-col items-center justify-center h-48 border-2 border-dashed rounded-lg cursor-pointer hover:border-teal-500 hover:bg-teal-50">
+                          <Upload className="h-8 w-8 text-gray-400 mb-2" />
+                          <span className="text-sm text-gray-500">Ajouter une photo de test</span>
+                          <input type="file" accept="image/*" onChange={handleTestPhotoUpload} className="hidden" />
+                        </label>
+                      )}
+                      {testPhotoUrl && !currentTestResult && (
+                        <Button onClick={runTest} disabled={testing} className="w-full mt-3 gap-2">
+                          {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                          Lancer le test
+                        </Button>
+                      )}
+                    </div>
+
+                    <div>
+                      {currentTestResult && (
+                        <div className={`p-4 rounded-lg ${currentTestResult.success ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
+                          <div className="flex items-center gap-2 mb-2">
+                            {currentTestResult.success ? (
+                              <CheckCircle className="h-5 w-5 text-green-600" />
+                            ) : (
+                              <X className="h-5 w-5 text-red-600" />
+                            )}
+                            <span className={`font-medium ${currentTestResult.success ? 'text-green-700' : 'text-red-700'}`}>
+                              {currentTestResult.success ? 'Reconnu' : 'Non reconnu'}
+                            </span>
+                            <Badge variant="outline">{Math.round(currentTestResult.confidence * 100)}%</Badge>
+                          </div>
+                          {currentTestResult.extractedSerial && (
+                            <p className="text-sm">N°: <span className="font-mono">{currentTestResult.extractedSerial}</span></p>
+                          )}
+                          {currentTestResult.extractedReading && (
+                            <p className="text-sm">Index: <span className="font-mono">{currentTestResult.extractedReading}</span></p>
+                          )}
+                          <div className="flex gap-2 mt-3">
+                            <Button onClick={validateTest} className="flex-1 gap-1">
+                              <Check className="h-4 w-4" /> Valider
+                            </Button>
+                            <Button onClick={openCorrectionModal} variant="outline" className="flex-1 gap-1">
+                              <Edit3 className="h-4 w-4" /> Corriger
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                      {!testPhotoUrl && !currentTestResult && (
+                        <div className="h-48 flex items-center justify-center text-gray-400 text-sm text-center p-4">
+                          <div>
+                            <p className="mb-2">Les tests sont optionnels</p>
+                            <p className="text-xs">Ils permettent d'améliorer la reconnaissance en corrigeant les erreurs</p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </Card>
+
+                {/* Historique des tests */}
+                {testHistory.length > 0 && (
+                  <Card className="p-4">
+                    <h3 className="font-semibold mb-3">Historique ({testHistory.length})</h3>
+                    <div className="space-y-2">
+                      {testHistory.map((t, i) => (
+                        <div key={t.id} className={`p-3 rounded-lg border text-sm ${t.isValidated ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+                          <div className="flex items-center gap-2 mb-1">
+                            {t.isValidated ? <Check className="h-4 w-4 text-green-600" /> : <X className="h-4 w-4 text-red-600" />}
+                            <span className="font-medium">Test #{testHistory.length - i}</span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2 text-xs">
+                            <div>
+                              <span className="text-gray-500">N°:</span> <span className="font-mono">{t.extractedSerial || '-'}</span>
+                              {t.correctSerial && <span className="text-green-600"> → {t.correctSerial}</span>}
+                            </div>
+                            <div>
+                              <span className="text-gray-500">Index:</span> <span className="font-mono">{t.extractedReading || '-'}</span>
+                              {t.correctReading && <span className="text-green-600"> → {t.correctReading}</span>}
+                            </div>
+                          </div>
+                          {t.rejectionReason && <p className="text-xs text-red-600 mt-1">{t.rejectionReason}</p>}
+                        </div>
+                      ))}
+                    </div>
+                  </Card>
+                )}
+
+                {/* Récapitulatif */}
+                <Card className="p-4">
+                  <h3 className="font-semibold mb-2">Récapitulatif</h3>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                    <div>
+                      <span className="text-gray-500">Nom:</span>
+                      <span className="ml-2 font-medium">{name}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">Fabricant:</span>
+                      <span className="ml-2 font-medium">{manufacturer || '-'}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">Type:</span>
+                      <span className="ml-2">{METER_TYPES.find(t => t.value === meterType)?.icon} {METER_TYPES.find(t => t.value === meterType)?.label}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">Zones:</span>
+                      <span className="ml-2 font-medium">{zones.filter(z => z.isValidated).length}/{zones.length}</span>
+                    </div>
+                  </div>
+                </Card>
+              </div>
+            )}
+
+            {/* Navigation */}
+            <div className="flex justify-between mt-6">
+              <Button variant="outline" onClick={() => goToStep(currentStep - 1)} disabled={currentStep === 1}>
+                <ArrowLeft className="h-4 w-4 mr-1" /> Retour
               </Button>
+              {currentStep < 3 ? (
+                <Button onClick={() => goToStep(currentStep + 1)} disabled={!canProceed(currentStep)}>
+                  Suivant <ArrowRight className="h-4 w-4 ml-1" />
+                </Button>
+              ) : (
+                <Button onClick={handleSave} disabled={saving || !name.trim() || zones.length === 0} className="min-w-32">
+                  {saving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Save className="h-4 w-4 mr-1" />}
+                  Enregistrer
+                </Button>
+              )}
             </div>
-          ))}
-        </div>
-
-        {zones.length === 0 && (
-          <div className="text-center py-8 text-gray-500">
-            Aucune zone configurée. Cliquez sur "Ajouter une zone" pour commencer.
-          </div>
+          </>
         )}
-      </Card>
 
-      {/* Actions */}
-      <div className="flex justify-end gap-3">
-        <Link href="/dashboard/meters">
-          <Button variant="outline">Annuler</Button>
-        </Link>
-        <Button
-          onClick={handleSave}
-          disabled={saving}
-          className="gap-2"
-        >
-          {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-          {saving ? 'Enregistrement...' : 'Créer le modèle'}
-        </Button>
+        {/* Modal de correction */}
+        <Dialog open={showCorrectionModal} onOpenChange={setShowCorrectionModal}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Edit3 className="h-5 w-5 text-orange-500" />
+                Corriger le test
+              </DialogTitle>
+              <DialogDescription>
+                Indiquez les valeurs correctes pour améliorer la reconnaissance.
+              </DialogDescription>
+            </DialogHeader>
+            
+            <div className="space-y-4 py-4">
+              <div>
+                <Label className="text-sm">N° série lu par l'IA</Label>
+                <div className="flex items-center gap-2 mt-1">
+                  <Input value={currentTestResult?.extractedSerial || ''} disabled className="bg-gray-100 font-mono" />
+                  <span className="text-gray-400">→</span>
+                  <Input value={correctionSerial} onChange={(e) => setCorrectionSerial(e.target.value)} placeholder="Valeur correcte" className="font-mono" />
+                </div>
+              </div>
+              
+              <div>
+                <Label className="text-sm">Index lu par l'IA</Label>
+                <div className="flex items-center gap-2 mt-1">
+                  <Input value={currentTestResult?.extractedReading || ''} disabled className="bg-gray-100 font-mono" />
+                  <span className="text-gray-400">→</span>
+                  <Input value={correctionReading} onChange={(e) => setCorrectionReading(e.target.value)} placeholder="Valeur correcte" className="font-mono" />
+                </div>
+              </div>
+              
+              <div>
+                <Label className="text-sm">Raison du rejet (optionnel)</Label>
+                <Textarea value={correctionReason} onChange={(e) => setCorrectionReason(e.target.value)} placeholder="Ex: Décimales mal placées..." className="mt-1" rows={2} />
+              </div>
+            </div>
+            
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setShowCorrectionModal(false)}>Annuler</Button>
+              <Button onClick={submitCorrection} className="bg-orange-500 hover:bg-orange-600">
+                <Check className="h-4 w-4 mr-1" /> Enregistrer correction
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
-    </div>
+    </TooltipProvider>
   )
+}
+
+async function fileToBase64(file: File): Promise<string> { 
+  return new Promise((resolve) => { 
+    const reader = new FileReader()
+    reader.onloadend = () => resolve((reader.result as string).split(',')[1])
+    reader.readAsDataURL(file) 
+  }) 
 }
