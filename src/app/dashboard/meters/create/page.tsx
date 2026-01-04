@@ -1,7 +1,8 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
+import Link from 'next/link'
 import {
   MeterType,
   MeterFieldType,
@@ -13,8 +14,6 @@ import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
-import { Badge } from '@/components/ui/badge'
 import {
   Select,
   SelectContent,
@@ -22,188 +21,156 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Separator } from '@/components/ui/separator'
-import { Switch } from '@/components/ui/switch'
-import { X, Upload, Sparkles, Plus, Trash2, ArrowLeft, Loader2 } from 'lucide-react'
-import Link from 'next/link'
+import { ArrowLeft, ArrowRight, Loader2, Save, CheckCircle } from 'lucide-react'
 
-// Helper to create empty zone
-function createEmptyZone(fieldType: MeterFieldType = 'serialNumber'): MeterZone {
-  return {
-    id: crypto.randomUUID(),
-    fieldType,
-    label: METER_FIELD_CONFIG[fieldType].label,
-    hasDecimals: false
-  }
-}
+import { PhotoAnalyzer, AnalysisResult } from '@/components/meters/PhotoAnalyzer'
+import { Keyword } from '@/components/meters/KeywordsSelector'
+import { ZoneEditor } from '@/components/meters/ZoneEditor'
+import { ModelRecap } from '@/components/meters/ModelRecap'
+import { ModelTester, TestResult } from '@/components/meters/ModelTester'
+
+const STEPS = [
+  { id: 1, label: 'Informations', description: 'Infos générales' },
+  { id: 2, label: 'Photo & Mots-clés', description: 'Analyse IA' },
+  { id: 3, label: 'Zones', description: 'Zones de lecture' },
+  { id: 4, label: 'Récap & Test', description: 'Validation' },
+]
 
 export default function CreateMeterModelPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   
-  // Pre-fill from unrecognized meter if coming from there
   const fromUnrecognized = searchParams.get('fromUnrecognized')
   const prefilledPhoto = searchParams.get('photo')
   const prefilledType = searchParams.get('type') as MeterType | null
 
-  // Form state
+  const [currentStep, setCurrentStep] = useState(1)
+
+  // Step 1: Basic info
   const [name, setName] = useState('')
   const [manufacturer, setManufacturer] = useState('')
   const [meterType, setMeterType] = useState<MeterType>(prefilledType || 'water_general')
   const [unit, setUnit] = useState(prefilledType ? METER_TYPE_CONFIG[prefilledType]?.unit || 'm³' : 'm³')
+  const [displayType, setDisplayType] = useState<string>('mechanical_rolls')
+  const [primaryColor, setPrimaryColor] = useState('')
+
+  // Step 2: Photo & Keywords
+  const [photoFile, setPhotoFile] = useState<File | null>(null)
+  const [photoUrl, setPhotoUrl] = useState<string | null>(prefilledPhoto || null)
+  const [keywords, setKeywords] = useState<Keyword[]>([])
   const [aiDescription, setAiDescription] = useState('')
-  const [zones, setZones] = useState<MeterZone[]>([createEmptyZone('serialNumber')])
-  const [isVerified, setIsVerified] = useState(false)
-  
-  // Photos state
-  const [photos, setPhotos] = useState<File[]>([])
-  const [photoUrls, setPhotoUrls] = useState<string[]>(prefilledPhoto ? [prefilledPhoto] : [])
-  
-  // AI analysis state
-  const [analyzing, setAnalyzing] = useState(false)
-  const [aiAnalysis, setAiAnalysis] = useState<any>(null)
-  
-  // Submission state
+
+  // Step 3: Zones
+  const [zones, setZones] = useState<MeterZone[]>([])
+
+  // Step 4: Tests
+  const [testHistory, setTestHistory] = useState<TestResult[]>([])
+
+  // Saving state
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [saved, setSaved] = useState(false)
 
-  // Handle photo upload
-  const handlePhotoUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || [])
-    if (files.length === 0) return
-    
-    // Add to photos array
-    setPhotos(prev => [...prev, ...files])
-    
-    // Create preview URLs
-    files.forEach(file => {
-      const url = URL.createObjectURL(file)
-      setPhotoUrls(prev => [...prev, url])
-    })
-  }, [])
-
-  // Remove photo
-  const removePhoto = (index: number) => {
-    setPhotos(prev => prev.filter((_, i) => i !== index))
-    setPhotoUrls(prev => {
-      // Revoke object URL to prevent memory leak
-      if (prev[index]?.startsWith('blob:')) {
-        URL.revokeObjectURL(prev[index])
-      }
-      return prev.filter((_, i) => i !== index)
-    })
+  const handlePhotoChange = (file: File | null, url: string | null) => {
+    setPhotoFile(file)
+    setPhotoUrl(url)
   }
 
-  // Analyze with Claude
-  const analyzeWithClaude = async () => {
-    if (photoUrls.length === 0) {
-      setError('Veuillez ajouter au moins une photo')
-      return
+  const handleAnalysisComplete = (analysis: AnalysisResult) => {
+    if (analysis.name && !name) setName(analysis.name)
+    if (analysis.manufacturer && !manufacturer) setManufacturer(analysis.manufacturer)
+    if (analysis.meterType) {
+      setMeterType(analysis.meterType as MeterType)
+      setUnit(METER_TYPE_CONFIG[analysis.meterType as MeterType]?.unit || 'm³')
     }
-
-    setAnalyzing(true)
-    setError(null)
-
-    try {
-      // Convert photos to base64
-      const photoBase64s = await Promise.all(
-        photos.map(async (file) => {
-          return new Promise<string>((resolve) => {
-            const reader = new FileReader()
-            reader.onloadend = () => {
-              const base64 = (reader.result as string).split(',')[1]
-              resolve(base64)
-            }
-            reader.readAsDataURL(file)
-          })
-        })
-      )
-
-      // Call our API route
-      const response = await fetch('/api/analyze-meter', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          photos: photoBase64s,
-          existingType: meterType 
-        })
-      })
-
-      if (!response.ok) {
-        throw new Error('Erreur lors de l\'analyse')
-      }
-
-      const result = await response.json()
-      setAiAnalysis(result)
-
-      // Auto-fill form with AI suggestions
-      if (result.name) setName(result.name)
-      if (result.manufacturer) setManufacturer(result.manufacturer)
-      if (result.meterType) {
-        setMeterType(result.meterType)
-        setUnit(METER_TYPE_CONFIG[result.meterType as MeterType]?.unit || 'm³')
-      }
-      if (result.description) setAiDescription(result.description)
-      if (result.suggestedZones && result.suggestedZones.length > 0) {
-        setZones(result.suggestedZones.map((z: any) => ({
-          id: crypto.randomUUID(),
-          fieldType: z.fieldType,
-          label: z.label || METER_FIELD_CONFIG[z.fieldType as MeterFieldType]?.label,
-          hasDecimals: z.hasDecimals || false,
-          decimalDigits: z.decimalDigits,
-          digitCount: z.digitCount
-        })))
-      }
-
-    } catch (err) {
-      console.error('Analysis error:', err)
-      setError('Erreur lors de l\'analyse Claude. Veuillez réessayer.')
-    } finally {
-      setAnalyzing(false)
+    if (analysis.description) setAiDescription(analysis.description)
+    if (analysis.suggestedZones && analysis.suggestedZones.length > 0 && zones.length === 0) {
+      setZones(analysis.suggestedZones.map((z: any) => ({
+        id: crypto.randomUUID(),
+        fieldType: z.fieldType,
+        label: z.label || METER_FIELD_CONFIG[z.fieldType as MeterFieldType]?.label,
+        hasDecimals: z.hasDecimals || false,
+        decimalDigits: z.decimalDigits,
+        digitCount: z.digitCount
+      })))
     }
   }
 
-  // Add zone
-  const addZone = () => {
-    setZones(prev => [...prev, createEmptyZone('readingSingle')])
+  const handleTestComplete = (result: TestResult) => {
+    setTestHistory(prev => [result, ...prev])
   }
 
-  // Remove zone
-  const removeZone = (id: string) => {
-    setZones(prev => prev.filter(z => z.id !== id))
-  }
+  const suggestZones = async (): Promise<MeterZone[]> => {
+    if (!photoFile) return []
 
-  // Update zone
-  const updateZone = (id: string, updates: Partial<MeterZone>) => {
-    setZones(prev => prev.map(z => {
-      if (z.id !== id) return z
-      
-      // If fieldType changed, update label too
-      if (updates.fieldType && updates.fieldType !== z.fieldType) {
-        return {
-          ...z,
-          ...updates,
-          label: METER_FIELD_CONFIG[updates.fieldType].label
-        }
-      }
-      
-      return { ...z, ...updates }
+    const base64 = await new Promise<string>((resolve) => {
+      const reader = new FileReader()
+      reader.onloadend = () => resolve((reader.result as string).split(',')[1])
+      reader.readAsDataURL(photoFile)
+    })
+
+    const response = await fetch('/api/analyze-meter', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ photos: [base64], suggestZonesOnly: true })
+    })
+
+    if (!response.ok) throw new Error('Erreur')
+    const result = await response.json()
+
+    return (result.suggestedZones || []).map((z: any) => ({
+      id: crypto.randomUUID(),
+      fieldType: z.fieldType,
+      label: z.label || METER_FIELD_CONFIG[z.fieldType as MeterFieldType]?.label,
+      hasDecimals: z.hasDecimals || false,
+      decimalDigits: z.decimalDigits,
+      position: z.position
     }))
   }
 
-  // Save model
+  const canProceed = (step: number): boolean => {
+    switch (step) {
+      case 1: return !!name.trim()
+      case 2: return !!photoUrl
+      case 3: return zones.length > 0
+      case 4: return true
+      default: return false
+    }
+  }
+
+  const goToStep = (step: number) => {
+    if (step < 1 || step > 4) return
+    if (step > currentStep && !canProceed(currentStep)) return
+    setCurrentStep(step)
+  }
+
+  const generateDescription = (): string => {
+    const lines: string[] = []
+    const typeLabel = meterType === 'gas' ? 'gaz' : meterType === 'electricity' ? 'électricité' : 'eau'
+    lines.push(`Compteur ${typeLabel} ${manufacturer || ''} ${name}`.trim())
+    
+    const validKw = keywords.filter(k => k.validated)
+    if (validKw.length > 0) {
+      lines.push('', 'Mots-clés:')
+      validKw.forEach(k => lines.push(`- ${k.value}`))
+    }
+    
+    if (zones.length > 0) {
+      lines.push('', 'Zones:')
+      zones.forEach(z => {
+        let desc = `- ${z.label}`
+        if (z.hasDecimals) desc += ` (${z.decimalDigits} déc.)`
+        lines.push(desc)
+      })
+    }
+
+    if (aiDescription) lines.push('', aiDescription)
+    return lines.join('\n')
+  }
+
   const handleSave = async () => {
-    // Validation
-    if (!name.trim()) {
-      setError('Le nom du modèle est requis')
-      return
-    }
-    if (zones.length === 0) {
-      setError('Au moins une zone est requise')
-      return
-    }
-    if (photoUrls.length === 0) {
-      setError('Au moins une photo de référence est requise')
+    if (!name.trim() || !photoUrl || zones.length === 0) {
+      setError('Veuillez compléter tous les champs requis')
       return
     }
 
@@ -211,27 +178,24 @@ export default function CreateMeterModelPage() {
     setError(null)
 
     try {
-      // Upload photos to Supabase Storage
-      const uploadedUrls: string[] = []
-      
-      for (const file of photos) {
+      let uploadedPhotoUrl = photoUrl
+      if (photoFile) {
         const formData = new FormData()
-        formData.append('file', file)
+        formData.append('file', photoFile)
         
         const uploadResponse = await fetch('/api/upload-meter-photo', {
           method: 'POST',
           body: formData
         })
         
-        if (!uploadResponse.ok) {
-          throw new Error('Erreur upload photo')
-        }
-        
+        if (!uploadResponse.ok) throw new Error('Erreur upload photo')
         const { url } = await uploadResponse.json()
-        uploadedUrls.push(url)
+        uploadedPhotoUrl = url
       }
 
-      // Create meter model
+      const validatedKeywords = keywords.filter(k => k.validated).map(k => k.value)
+      const generatedDescription = generateDescription()
+
       const response = await fetch('/api/meter-models', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -240,35 +204,70 @@ export default function CreateMeterModelPage() {
           manufacturer,
           meter_type: meterType,
           unit,
-          ai_description: aiDescription,
-          ai_analysis_data: aiAnalysis || {},
-          reference_photos: uploadedUrls,
-          zones,
-          is_verified: isVerified,
+          display_type: displayType,
+          primary_color: primaryColor,
+          ai_description: generatedDescription,
+          keywords: validatedKeywords,
+          reference_photos: [uploadedPhotoUrl],
+          zones: zones.map(z => ({
+            field_type: z.fieldType,
+            custom_label: z.label,
+            position_x: z.position?.x,
+            position_y: z.position?.y,
+            position_width: z.position?.width,
+            position_height: z.position?.height,
+            decimal_places: z.hasDecimals ? z.decimalDigits : null,
+            note: (z as any).note
+          })),
           is_active: true,
-          from_unrecognized_id: fromUnrecognized
+          is_verified: testHistory.some(t => t.success),
+          test_success_rate: testHistory.length > 0 
+            ? testHistory.filter(t => t.success).length / testHistory.length 
+            : 0,
+          from_unrecognized_id: fromUnrecognized || null
         })
       })
 
       if (!response.ok) {
-        throw new Error('Erreur lors de la création')
+        const err = await response.json()
+        throw new Error(err.error || 'Erreur lors de la création')
       }
 
-      // Redirect to meters list
-      router.push('/dashboard/meters')
+      const { id: modelId } = await response.json()
+      
+      // Save test history
+      for (const test of testHistory) {
+        await fetch('/api/meter-models/tests', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model_id: modelId,
+            photo_url: test.photoUrl,
+            success: test.success,
+            validation_type: test.validationType,
+            confidence: test.confidence,
+            extracted_serial: test.extractedSerial,
+            extracted_reading: test.extractedReading,
+            ai_response: test.aiResponse
+          })
+        })
+      }
 
-    } catch (err) {
+      setSaved(true)
+      setTimeout(() => router.push('/dashboard/meters'), 1500)
+
+    } catch (err: any) {
       console.error('Save error:', err)
-      setError('Erreur lors de la sauvegarde. Veuillez réessayer.')
+      setError(err.message || 'Erreur lors de l\'enregistrement')
     } finally {
       setSaving(false)
     }
   }
 
   return (
-    <div className="p-6 max-w-4xl mx-auto space-y-6">
+    <div className="p-6 max-w-5xl mx-auto">
       {/* Header */}
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-4 mb-6">
         <Link href="/dashboard/meters">
           <Button variant="ghost" size="icon">
             <ArrowLeft className="h-5 w-5" />
@@ -277,289 +276,236 @@ export default function CreateMeterModelPage() {
         <div>
           <h1 className="text-2xl font-bold">Nouveau modèle de compteur</h1>
           <p className="text-gray-500">
-            Ajoutez des photos et laissez Claude analyser le compteur
+            {fromUnrecognized ? 'Depuis un compteur non reconnu' : 'Création manuelle'}
           </p>
         </div>
       </div>
 
-      {/* Error message */}
+      {/* Step indicator */}
+      <div className="mb-8">
+        <div className="flex items-center justify-between">
+          {STEPS.map((step, index) => (
+            <div key={step.id} className="flex items-center">
+              <button
+                onClick={() => goToStep(step.id)}
+                disabled={step.id > currentStep && !canProceed(currentStep)}
+                className={`flex items-center gap-2 ${
+                  step.id === currentStep ? 'text-teal-600' :
+                  step.id < currentStep ? 'text-green-600 cursor-pointer' :
+                  'text-gray-400'
+                }`}
+              >
+                <div className={`
+                  w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium
+                  ${step.id === currentStep ? 'bg-teal-600 text-white' :
+                    step.id < currentStep ? 'bg-green-600 text-white' :
+                    'bg-gray-200 text-gray-500'}
+                `}>
+                  {step.id < currentStep ? <CheckCircle className="h-5 w-5" /> : step.id}
+                </div>
+                <div className="hidden sm:block">
+                  <div className="font-medium">{step.label}</div>
+                  <div className="text-xs text-gray-500">{step.description}</div>
+                </div>
+              </button>
+              
+              {index < STEPS.length - 1 && (
+                <div className={`w-12 md:w-24 h-0.5 mx-2 ${
+                  step.id < currentStep ? 'bg-green-600' : 'bg-gray-200'
+                }`} />
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Error */}
       {error && (
-        <Card className="p-4 bg-red-50 border-red-200">
+        <Card className="p-4 mb-6 bg-red-50 border-red-200">
           <p className="text-red-700">{error}</p>
         </Card>
       )}
 
-      {/* From unrecognized banner */}
-      {fromUnrecognized && (
-        <Card className="p-4 bg-blue-50 border-blue-200">
-          <div className="flex items-center gap-2">
-            <span className="text-xl">📸</span>
-            <div>
-              <p className="font-medium text-blue-900">
-                Création depuis un compteur non reconnu
-              </p>
-              <p className="text-sm text-blue-700">
-                La photo a été pré-chargée. Vous pouvez en ajouter d'autres.
-              </p>
-            </div>
-          </div>
+      {/* Success */}
+      {saved && (
+        <Card className="p-6 mb-6 bg-green-50 border-green-200 text-center">
+          <CheckCircle className="h-12 w-12 text-green-600 mx-auto mb-2" />
+          <p className="text-green-700 font-medium">Modèle créé avec succès !</p>
+          <p className="text-green-600 text-sm">Redirection...</p>
         </Card>
       )}
 
-      {/* Photos section */}
-      <Card className="p-6">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h2 className="text-lg font-semibold">Photos de référence</h2>
-            <p className="text-sm text-gray-500">
-              Ajoutez des photos claires du compteur sous différents angles
-            </p>
-          </div>
-          <Button
-            onClick={analyzeWithClaude}
-            disabled={analyzing || photoUrls.length === 0}
-            className="gap-2"
-          >
-            {analyzing ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Sparkles className="h-4 w-4" />
-            )}
-            {analyzing ? 'Analyse...' : 'Analyser avec Claude'}
-          </Button>
-        </div>
+      {/* Step content */}
+      {!saved && (
+        <>
+          {/* Step 1: Basic Info */}
+          {currentStep === 1 && (
+            <Card className="p-6 space-y-6">
+              <h2 className="text-lg font-semibold">Informations générales</h2>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {/* Photo previews */}
-          {photoUrls.map((url, index) => (
-            <div key={index} className="relative group">
-              <img
-                src={url}
-                alt={`Photo ${index + 1}`}
-                className="w-full h-32 object-cover rounded-lg border"
-              />
-              <button
-                onClick={() => removePhoto(index)}
-                className="absolute top-2 right-2 p-1 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-          ))}
-
-          {/* Upload button */}
-          <label className="flex flex-col items-center justify-center h-32 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer hover:border-teal-500 hover:bg-teal-50 transition-colors">
-            <Upload className="h-8 w-8 text-gray-400 mb-2" />
-            <span className="text-sm text-gray-500">Ajouter</span>
-            <input
-              type="file"
-              accept="image/*"
-              multiple
-              onChange={handlePhotoUpload}
-              className="hidden"
-            />
-          </label>
-        </div>
-
-        {/* AI Analysis result */}
-        {aiAnalysis && (
-          <div className="mt-4 p-4 bg-purple-50 rounded-lg border border-purple-200">
-            <div className="flex items-center gap-2 mb-2">
-              <Sparkles className="h-4 w-4 text-purple-600" />
-              <span className="font-medium text-purple-900">Analyse Claude</span>
-            </div>
-            <p className="text-sm text-purple-700">
-              {aiAnalysis.rawAnalysis || 'Analyse terminée. Les champs ont été pré-remplis.'}
-            </p>
-          </div>
-        )}
-      </Card>
-
-      {/* Basic info */}
-      <Card className="p-6 space-y-4">
-        <h2 className="text-lg font-semibold">Informations générales</h2>
-
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label htmlFor="name">Nom du modèle *</Label>
-            <Input
-              id="name"
-              placeholder="ex: Itron Aquadis+"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="manufacturer">Fabricant</Label>
-            <Input
-              id="manufacturer"
-              placeholder="ex: Itron"
-              value={manufacturer}
-              onChange={(e) => setManufacturer(e.target.value)}
-            />
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label>Type de compteur *</Label>
-            <Select value={meterType} onValueChange={(v) => {
-              setMeterType(v as MeterType)
-              setUnit(METER_TYPE_CONFIG[v as MeterType]?.unit || 'm³')
-            }}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {Object.entries(METER_TYPE_CONFIG).map(([type, config]) => (
-                  <SelectItem key={type} value={type}>
-                    {config.icon} {config.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="unit">Unité</Label>
-            <Input
-              id="unit"
-              value={unit}
-              onChange={(e) => setUnit(e.target.value)}
-            />
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="description">Description (générée par IA)</Label>
-          <Textarea
-            id="description"
-            placeholder="Description du compteur..."
-            value={aiDescription}
-            onChange={(e) => setAiDescription(e.target.value)}
-            rows={3}
-          />
-        </div>
-
-        <div className="flex items-center gap-3">
-          <Switch
-            checked={isVerified}
-            onCheckedChange={setIsVerified}
-          />
-          <Label>Marquer comme vérifié manuellement</Label>
-        </div>
-      </Card>
-
-      {/* Zones configuration */}
-      <Card className="p-6 space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-lg font-semibold">Zones de lecture</h2>
-            <p className="text-sm text-gray-500">
-              Définissez les champs à extraire de ce compteur
-            </p>
-          </div>
-          <Button variant="outline" onClick={addZone} className="gap-2">
-            <Plus className="h-4 w-4" />
-            Ajouter une zone
-          </Button>
-        </div>
-
-        <div className="space-y-3">
-          {zones.map((zone, index) => (
-            <div
-              key={zone.id}
-              className="flex items-start gap-3 p-4 border rounded-lg bg-gray-50"
-            >
-              <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-3">
-                {/* Field type */}
-                <div className="space-y-1">
-                  <Label className="text-xs">Type de champ</Label>
-                  <Select
-                    value={zone.fieldType}
-                    onValueChange={(v) => updateZone(zone.id, { fieldType: v as MeterFieldType })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {Object.entries(METER_FIELD_CONFIG).map(([type, config]) => (
-                        <SelectItem key={type} value={type}>
-                          {config.icon} {config.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {/* Label */}
-                <div className="space-y-1">
-                  <Label className="text-xs">Libellé</Label>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="name">Nom commercial *</Label>
                   <Input
-                    value={zone.label}
-                    onChange={(e) => updateZone(zone.id, { label: e.target.value })}
-                    placeholder="Libellé..."
+                    id="name"
+                    placeholder="ex: Landis+Gyr E350"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
                   />
                 </div>
-
-                {/* Decimals */}
-                <div className="space-y-1">
-                  <Label className="text-xs">Décimales</Label>
-                  <div className="flex items-center gap-2">
-                    <Switch
-                      checked={zone.hasDecimals}
-                      onCheckedChange={(v) => updateZone(zone.id, { hasDecimals: v })}
-                    />
-                    {zone.hasDecimals && (
-                      <Input
-                        type="number"
-                        min={1}
-                        max={5}
-                        value={zone.decimalDigits || 2}
-                        onChange={(e) => updateZone(zone.id, { decimalDigits: parseInt(e.target.value) })}
-                        className="w-20"
-                      />
-                    )}
-                  </div>
+                <div className="space-y-2">
+                  <Label htmlFor="manufacturer">Fabricant</Label>
+                  <Input
+                    id="manufacturer"
+                    placeholder="ex: Landis+Gyr"
+                    value={manufacturer}
+                    onChange={(e) => setManufacturer(e.target.value)}
+                  />
                 </div>
               </div>
 
-              {/* Remove button */}
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => removeZone(zone.id)}
-                disabled={zones.length === 1}
-                className="text-red-500 hover:text-red-700 hover:bg-red-50"
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
+              <div className="space-y-2">
+                <Label>Type d'énergie *</Label>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {Object.entries(METER_TYPE_CONFIG).map(([type, config]) => (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => {
+                        setMeterType(type as MeterType)
+                        setUnit(config.unit)
+                      }}
+                      className={`p-3 rounded-lg border-2 transition-all text-left ${
+                        meterType === type 
+                          ? 'border-teal-500 bg-teal-50' 
+                          : 'border-gray-200 hover:border-gray-300'
+                      }`}
+                    >
+                      <div className="text-2xl mb-1">{config.icon}</div>
+                      <div className="font-medium text-sm">{config.label}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="unit">Unité par défaut</Label>
+                  <Input id="unit" value={unit} onChange={(e) => setUnit(e.target.value)} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Type d'affichage</Label>
+                  <Select value={displayType} onValueChange={setDisplayType}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="mechanical_rolls">Rouleaux mécaniques</SelectItem>
+                      <SelectItem value="digital_lcd">Écran LCD</SelectItem>
+                      <SelectItem value="dials">Cadrans</SelectItem>
+                      <SelectItem value="mixed">Mixte</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="color">Couleur dominante</Label>
+                <Input
+                  id="color"
+                  placeholder="ex: gris, beige, noir"
+                  value={primaryColor}
+                  onChange={(e) => setPrimaryColor(e.target.value)}
+                />
+              </div>
+            </Card>
+          )}
+
+          {/* Step 2: Photo & Keywords */}
+          {currentStep === 2 && (
+            <PhotoAnalyzer
+              photoUrl={photoUrl}
+              photoFile={photoFile}
+              keywords={keywords}
+              onPhotoChange={handlePhotoChange}
+              onKeywordsChange={setKeywords}
+              onAnalysisComplete={handleAnalysisComplete}
+            />
+          )}
+
+          {/* Step 3: Zones */}
+          {currentStep === 3 && (
+            <ZoneEditor
+              photoUrl={photoUrl}
+              zones={zones}
+              onChange={setZones}
+              onSuggestZones={suggestZones}
+            />
+          )}
+
+          {/* Step 4: Recap & Test */}
+          {currentStep === 4 && (
+            <div className="space-y-6">
+              <ModelRecap
+                name={name}
+                manufacturer={manufacturer}
+                meterType={meterType}
+                unit={unit}
+                keywords={keywords}
+                zones={zones}
+                photoUrl={photoUrl}
+                description={aiDescription}
+              />
+              
+              <ModelTester
+                modelData={{
+                  name,
+                  manufacturer,
+                  meterType,
+                  unit,
+                  keywords,
+                  zones,
+                  photoUrl,
+                  description: aiDescription
+                }}
+                testHistory={testHistory}
+                onTestComplete={handleTestComplete}
+              />
             </div>
-          ))}
-        </div>
+          )}
 
-        {zones.length === 0 && (
-          <div className="text-center py-8 text-gray-500">
-            Aucune zone configurée. Cliquez sur "Ajouter une zone" pour commencer.
+          {/* Navigation */}
+          <div className="flex justify-between mt-8">
+            <Button
+              variant="outline"
+              onClick={() => goToStep(currentStep - 1)}
+              disabled={currentStep === 1}
+              className="gap-2"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Retour
+            </Button>
+
+            {currentStep < 4 ? (
+              <Button
+                onClick={() => goToStep(currentStep + 1)}
+                disabled={!canProceed(currentStep)}
+                className="gap-2"
+              >
+                Suivant
+                <ArrowRight className="h-4 w-4" />
+              </Button>
+            ) : (
+              <Button
+                onClick={handleSave}
+                disabled={saving || !name.trim() || !photoUrl || zones.length === 0}
+                className="gap-2"
+              >
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                {saving ? 'Enregistrement...' : 'Enregistrer'}
+              </Button>
+            )}
           </div>
-        )}
-      </Card>
-
-      {/* Actions */}
-      <div className="flex justify-end gap-3">
-        <Link href="/dashboard/meters">
-          <Button variant="outline">Annuler</Button>
-        </Link>
-        <Button
-          onClick={handleSave}
-          disabled={saving}
-          className="gap-2"
-        >
-          {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-          {saving ? 'Enregistrement...' : 'Créer le modèle'}
-        </Button>
-      </div>
+        </>
+      )}
     </div>
   )
 }
