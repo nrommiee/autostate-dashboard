@@ -7,113 +7,67 @@ const anthropic = new Anthropic({
 
 export async function POST(request: NextRequest) {
   try {
-    const { photos, existingType, extractKeywords, suggestZonesOnly } = await request.json()
+    const { photos, existingType, extractKeywords, extractValues } = await request.json()
 
     if (!photos || photos.length === 0) {
-      return NextResponse.json(
-        { error: 'Au moins une photo est requise' },
-        { status: 400 }
-      )
+      return NextResponse.json({ error: 'Photo requise' }, { status: 400 })
     }
 
     const content: any[] = []
 
-    // Add photos
     for (let i = 0; i < Math.min(photos.length, 4); i++) {
       content.push({
         type: 'image',
-        source: {
-          type: 'base64',
-          media_type: 'image/jpeg',
-          data: photos[i]
-        }
+        source: { type: 'base64', media_type: 'image/jpeg', data: photos[i] }
       })
     }
 
-    // Build prompt based on mode
-    let prompt: string
-
-    if (suggestZonesOnly) {
-      prompt = `Analyse cette photo de compteur et identifie les zones de lecture.
-
-Retourne UNIQUEMENT un JSON avec ce format:
-{
-  "suggestedZones": [
-    {
-      "fieldType": "serialNumber|ean|readingSingle|readingDay|readingNight|readingExclusiveNight|readingProduction|subscribedPower|custom",
-      "label": "Libellé en français",
-      "hasDecimals": true/false,
-      "decimalDigits": 0-5,
-      "position": {
-        "x": 0.0-1.0,
-        "y": 0.0-1.0,
-        "width": 0.0-1.0,
-        "height": 0.0-1.0
-      }
-    }
-  ]
-}
-
-Position: coordonnées relatives (0-1) par rapport à l'image.
-Réponds UNIQUEMENT avec le JSON.`
-
-    } else {
-      prompt = `Tu es un expert en compteurs d'énergie. Analyse cette photo de compteur.
+    const prompt = `Tu es un expert en compteurs d'énergie. Analyse cette photo.
 
 TÂCHE:
-1. Identifie le fabricant (EXACT comme écrit sur le compteur)
-2. Identifie le type (eau/gaz/électricité)
-3. Extrais TOUS les textes/mots visibles sur le compteur
-4. Suggère les zones de lecture
+1. Identifie le fabricant (EXACT comme écrit)
+2. Identifie le modèle
+3. Identifie le type (eau/gaz/électricité)
+4. Extrais TOUS les textes visibles
+5. Extrais le NUMÉRO DE SÉRIE actuel
+6. Extrais l'INDEX actuel (avec décimales si visible)
+7. Identifie les zones de lecture
 
-${existingType ? `Indication: L'utilisateur pense que c'est un compteur de type: ${existingType}` : ''}
+${existingType ? `Type indiqué: ${existingType}` : ''}
 
-Retourne UNIQUEMENT un JSON avec ce format:
+Retourne UNIQUEMENT ce JSON:
 {
-  "name": "Nom du modèle (ex: Aquadis+)",
-  "manufacturer": "Fabricant EXACT visible (ex: WATEAU, ITRON, ELSTER)",
+  "name": "Nom du modèle",
+  "manufacturer": "Fabricant EXACT visible",
   "meterType": "water_general|water_passage|electricity|gas|oil_tank|calorimeter|other",
-  "description": "Description technique en 2-3 phrases",
-  "keywords": [
-    "FABRICANT_VISIBLE",
-    "Texte1_visible",
-    "Texte2_visible",
-    "Class_X",
-    "m³_ou_kWh",
-    "autre_marquage"
-  ],
+  "description": "Description technique 2-3 phrases",
+  "serialNumber": "Numéro de série extrait ou null",
+  "reading": "Index extrait avec décimales (virgule) ou null",
+  "keywords": ["MOT1", "MOT2", "..."],
   "suggestedZones": [
     {
-      "fieldType": "serialNumber|ean|readingSingle|readingDay|readingNight|custom",
+      "fieldType": "serialNumber|readingSingle|readingDay|readingNight|ean|custom",
       "label": "Libellé",
       "hasDecimals": true/false,
-      "decimalDigits": 2,
-      "digitCount": 8
+      "decimalDigits": 3,
+      "extractedValue": "Valeur extraite",
+      "position": {"x": 0.0-1.0, "y": 0.0-1.0, "width": 0.0-1.0, "height": 0.0-1.0}
     }
   ],
   "photoQuality": {
     "score": 0-100,
-    "issues": ["problème1", "problème2"]
-  },
-  "rawAnalysis": "Ton analyse détaillée"
+    "issues": []
+  }
 }
 
-RÈGLES POUR LES MOTS-CLÉS:
-- Extrais TOUS les textes lisibles sur le compteur
-- Le fabricant doit être EXACTEMENT comme écrit (WATEAU pas Wateau)
-- Inclus les unités (m³, kWh, etc.)
-- Inclus les classes (Class C, etc.)
-- Inclus les codes techniques visibles
-- Inclus les caractéristiques (Qn 1.5m³/h, PN 16, etc.)
+RÈGLES:
+- serialNumber: Le numéro unique du compteur (souvent "Nr." ou "N°")
+- reading: L'index de consommation actuel avec décimales (virgule française)
+- keywords: TOUS les textes lisibles (fabricant, modèle, normes, etc.)
+- position: Coordonnées relatives 0-1 si tu peux identifier où se trouve la zone
+- Mets toujours au moins 2 zones: serialNumber et readingSingle
 
-RÈGLES QUALITÉ PHOTO:
-- score 80-100: Bonne qualité, texte lisible
-- score 50-79: Qualité moyenne, certains textes difficiles
-- score 0-49: Mauvaise qualité
-- issues: "Flou", "Trop sombre", "Reflets", "Angle incorrect"
-
-Réponds UNIQUEMENT avec le JSON, sans markdown.`
-    }
+Réponds UNIQUEMENT avec le JSON.`
 
     content.push({ type: 'text', text: prompt })
 
@@ -125,42 +79,60 @@ Réponds UNIQUEMENT avec le JSON, sans markdown.`
 
     const textContent = response.content.find(c => c.type === 'text')
     if (!textContent || textContent.type !== 'text') {
-      throw new Error('No text response from Claude')
+      throw new Error('No response')
     }
 
     let analysis
     try {
       const jsonMatch = textContent.text.match(/\{[\s\S]*\}/)
-      if (jsonMatch) {
-        analysis = JSON.parse(jsonMatch[0])
-      } else {
-        analysis = JSON.parse(textContent.text)
-      }
+      analysis = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(textContent.text)
     } catch {
-      analysis = {
-        rawAnalysis: textContent.text,
-        keywords: [],
-        suggestedZones: []
-      }
+      analysis = { rawAnalysis: textContent.text, keywords: [], suggestedZones: [] }
     }
 
-    // Ensure keywords is always an array
-    if (!analysis.keywords) {
-      analysis.keywords = []
-    }
+    // Ensure arrays exist
+    if (!analysis.keywords) analysis.keywords = []
+    if (!analysis.suggestedZones) analysis.suggestedZones = []
 
     // Add manufacturer to keywords if not present
     if (analysis.manufacturer && !analysis.keywords.includes(analysis.manufacturer)) {
       analysis.keywords.unshift(analysis.manufacturer)
     }
 
+    // Ensure we have at least default zones with extracted values
+    if (analysis.suggestedZones.length === 0) {
+      analysis.suggestedZones = [
+        {
+          fieldType: 'serialNumber',
+          label: 'Numéro de série',
+          hasDecimals: false,
+          extractedValue: analysis.serialNumber || ''
+        },
+        {
+          fieldType: 'readingSingle',
+          label: 'Index',
+          hasDecimals: true,
+          decimalDigits: 3,
+          extractedValue: analysis.reading || ''
+        }
+      ]
+    } else {
+      // Add extracted values to zones if not present
+      analysis.suggestedZones = analysis.suggestedZones.map((zone: any) => {
+        if (zone.fieldType === 'serialNumber' && !zone.extractedValue) {
+          zone.extractedValue = analysis.serialNumber || ''
+        }
+        if (zone.fieldType === 'readingSingle' && !zone.extractedValue) {
+          zone.extractedValue = analysis.reading || ''
+        }
+        return zone
+      })
+    }
+
     return NextResponse.json(analysis)
 
   } catch (error) {
     console.error('Meter analysis error:', error)
-    return NextResponse.json(
-      { error: 'Erreur lors de l\'analyse' },
-      { status: 500 }
-    )
+    return NextResponse.json({ error: 'Erreur analyse' }, { status: 500 })
   }
 }
