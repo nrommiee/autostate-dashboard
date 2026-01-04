@@ -14,7 +14,8 @@ import {
   ChevronRight,
   FileText,
   Gauge,
-  AlertCircle
+  AlertCircle,
+  BarChart3
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -63,6 +64,11 @@ const navItems: NavItem[] = [
     title: 'Non reconnus',
     href: '/dashboard/unrecognized',
     icon: <AlertCircle className="h-4 w-4" />,
+  },
+  {
+    title: 'Analytics',
+    href: '/dashboard/analytics',
+    icon: <BarChart3 className="h-4 w-4" />,
   },
 ]
 
