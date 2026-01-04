@@ -183,8 +183,9 @@ async function updateModelRules(supabase: any, modelId: string, errorType: strin
     .eq('model_id', modelId)
     .single()
 
-  const currentErrors = existingRules?.common_errors || []
-  const newErrors = [...new Set([...currentErrors, ...frequentErrors])]
+  const currentErrors: string[] = existingRules?.common_errors || []
+  const combined = currentErrors.concat(frequentErrors)
+  const newErrors = combined.filter((value, index, self) => self.indexOf(value) === index)
 
   await supabase
     .from('meter_reading_rules')
