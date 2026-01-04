@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { createAdminClient } from '@/lib/supabase'
+import { supabase } from '@/lib/supabase'
 import { 
   MeterModel, 
   MeterType, 
@@ -29,13 +29,10 @@ export default function MeterModelsPage() {
   async function loadModels() {
     setLoading(true)
     try {
-      const supabase = createAdminClient()
-      const { data, error } = await supabase
-        .from('meter_models')
-        .select('*')
-        .order('usage_count', { ascending: false })
-
-      if (error) throw error
+      // Utiliser l'API pour récupérer les modèles
+      const response = await fetch('/api/meter-models')
+      if (!response.ok) throw new Error('Failed to fetch')
+      const data = await response.json()
       setModels(data || [])
     } catch (error) {
       console.error('Error loading meter models:', error)
@@ -181,7 +178,7 @@ function MeterModelCard({
   
   async function toggleActive() {
     try {
-      const supabase = createAdminClient()
+      // Utiliser le client supabase normal (avec RLS)
       await supabase
         .from('meter_models')
         .update({ is_active: !model.is_active })
