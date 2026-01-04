@@ -6,21 +6,60 @@ import {
   MeterModel, 
   MeterType, 
   METER_TYPE_CONFIG,
-  computeMeterModelStats 
 } from '@/lib/supabase'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import Link from 'next/link'
+import Image from 'next/image'
+import { 
+  Plus, 
+  TrendingUp, 
+  TrendingDown, 
+  Gauge, 
+  CheckCircle, 
+  XCircle, 
+  BarChart3,
+  Search,
+  MoreVertical,
+  Eye,
+  EyeOff,
+  Pencil,
+  Trash2,
+  ChevronLeft,
+  ChevronRight
+} from 'lucide-react'
+
+// Display type labels
+const DISPLAY_TYPE_LABELS: Record<string, string> = {
+  mechanical: 'Mécanique',
+  digital: 'Digital',
+  dials: 'Cadrans',
+  other: 'Autre'
+}
 
 export default function MeterModelsPage() {
   const [models, setModels] = useState<MeterModel[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [filterType, setFilterType] = useState<MeterType | 'all'>('all')
-  const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'inactive'>('all')
+  const [filterType, setFilterType] = useState<string>('all')
+  const [filterStatus, setFilterStatus] = useState<string>('all')
+  const [currentPage, setCurrentPage] = useState(1)
+  const itemsPerPage = 10
 
   useEffect(() => {
     loadModels()
@@ -29,7 +68,6 @@ export default function MeterModelsPage() {
   async function loadModels() {
     setLoading(true)
     try {
-      // Utiliser l'API pour récupérer les modèles
       const response = await fetch('/api/meter-models')
       if (!response.ok) throw new Error('Failed to fetch')
       const data = await response.json()
@@ -41,37 +79,64 @@ export default function MeterModelsPage() {
     }
   }
 
+  // Calculate stats
+  const stats = {
+    totalModels: models.filter(m => m.is_active).length,
+    totalScans: models.reduce((acc, m) => acc + (m.total_scans || 0), 0),
+    successfulScans: models.reduce((acc, m) => acc + (m.successful_scans || 0), 0),
+    failedScans: models.reduce((acc, m) => acc + ((m.total_scans || 0) - (m.successful_scans || 0)), 0),
+  }
+
+  const successRate = stats.totalScans > 0 
+    ? Math.round((stats.successfulScans / stats.totalScans) * 100) 
+    : 0
+
+  // Filter models
   const filteredModels = models.filter(model => {
-    // Search filter
     if (search) {
       const searchLower = search.toLowerCase()
       if (!model.name.toLowerCase().includes(searchLower) &&
-          !model.manufacturer.toLowerCase().includes(searchLower)) {
+          !model.manufacturer?.toLowerCase().includes(searchLower)) {
         return false
       }
     }
-    
-    // Type filter
-    if (filterType !== 'all' && model.meter_type !== filterType) {
-      return false
-    }
-    
-    // Status filter
+    if (filterType !== 'all' && model.meter_type !== filterType) return false
     if (filterStatus === 'active' && !model.is_active) return false
     if (filterStatus === 'inactive' && model.is_active) return false
-    
     return true
   })
 
-  // Group by type for summary
-  const typeStats = models.reduce((acc, model) => {
-    if (!acc[model.meter_type]) {
-      acc[model.meter_type] = { count: 0, totalScans: 0 }
+  // Pagination
+  const totalPages = Math.ceil(filteredModels.length / itemsPerPage)
+  const paginatedModels = filteredModels.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  )
+
+  async function toggleActive(model: MeterModel) {
+    try {
+      await supabase
+        .from('meter_models')
+        .update({ is_active: !model.is_active })
+        .eq('id', model.id)
+      loadModels()
+    } catch (error) {
+      console.error('Error toggling model:', error)
     }
-    acc[model.meter_type].count++
-    acc[model.meter_type].totalScans += model.total_scans
-    return acc
-  }, {} as Record<string, { count: number; totalScans: number }>)
+  }
+
+  async function deleteModel(model: MeterModel) {
+    if (!confirm(`Supprimer le modèle "${model.name}" ?`)) return
+    try {
+      await supabase
+        .from('meter_models')
+        .delete()
+        .eq('id', model.id)
+      loadModels()
+    } catch (error) {
+      console.error('Error deleting model:', error)
+    }
+  }
 
   return (
     <div className="p-6 space-y-6">
@@ -79,197 +144,327 @@ export default function MeterModelsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Modèles de compteurs</h1>
-          <p className="text-gray-500">
-            {models.length} modèle{models.length > 1 ? 's' : ''} configuré{models.length > 1 ? 's' : ''}
+          <p className="text-muted-foreground">
+            Gérez vos modèles de compteurs pour la reconnaissance automatique
           </p>
         </div>
         <Link href="/dashboard/meters/create">
-          <Button>
-            <span className="mr-2">+</span>
-            Nouveau modèle
+          <Button className="gap-2">
+            <Plus className="h-4 w-4" />
+            Créer un modèle
           </Button>
         </Link>
       </div>
 
-      {/* Stats cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
-        {Object.entries(METER_TYPE_CONFIG).map(([type, config]) => {
-          const stats = typeStats[type] || { count: 0, totalScans: 0 }
-          return (
-            <Card 
-              key={type} 
-              className={`p-4 cursor-pointer transition-all hover:shadow-md ${
-                filterType === type ? 'ring-2 ring-blue-500' : ''
-              }`}
-              onClick={() => setFilterType(filterType === type ? 'all' : type as MeterType)}
-            >
-              <div className="text-2xl mb-1">{config.icon}</div>
-              <div className="font-medium text-sm">{config.label}</div>
-              <div className="text-2xl font-bold">{stats.count}</div>
-              <div className="text-xs text-gray-500">{stats.totalScans} scans</div>
-            </Card>
-          )
-        })}
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Modèles actifs */}
+        <Card className="p-6">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm text-muted-foreground">Modèles actifs</span>
+            <Badge variant="secondary" className="bg-teal-50 text-teal-700 gap-1">
+              <TrendingUp className="h-3 w-3" />
+              {models.length > 0 ? '+' + Math.round((stats.totalModels / models.length) * 100) + '%' : '0%'}
+            </Badge>
+          </div>
+          <div className="text-3xl font-bold">{stats.totalModels}</div>
+          <div className="flex items-center gap-2 mt-2 text-sm text-muted-foreground">
+            <TrendingUp className="h-4 w-4 text-teal-600" />
+            <span>sur {models.length} modèles</span>
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">Prêts pour la reconnaissance</p>
+        </Card>
+
+        {/* Scans total */}
+        <Card className="p-6">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm text-muted-foreground">Scans total</span>
+            <Badge variant="secondary" className="bg-blue-50 text-blue-700 gap-1">
+              <BarChart3 className="h-3 w-3" />
+              Ce mois
+            </Badge>
+          </div>
+          <div className="text-3xl font-bold">{stats.totalScans.toLocaleString()}</div>
+          <div className="flex items-center gap-2 mt-2 text-sm text-muted-foreground">
+            <TrendingUp className="h-4 w-4 text-blue-600" />
+            <span>Analyses effectuées</span>
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">Sur tous les compteurs</p>
+        </Card>
+
+        {/* Réussites */}
+        <Card className="p-6">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm text-muted-foreground">Réussites</span>
+            <Badge variant="secondary" className="bg-green-50 text-green-700 gap-1">
+              <TrendingUp className="h-3 w-3" />
+              {successRate}%
+            </Badge>
+          </div>
+          <div className="text-3xl font-bold text-green-600">{stats.successfulScans.toLocaleString()}</div>
+          <div className="flex items-center gap-2 mt-2 text-sm text-muted-foreground">
+            <CheckCircle className="h-4 w-4 text-green-600" />
+            <span>Lectures validées</span>
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">Taux de réussite excellent</p>
+        </Card>
+
+        {/* Échecs */}
+        <Card className="p-6">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm text-muted-foreground">Échecs</span>
+            <Badge variant="secondary" className="bg-red-50 text-red-700 gap-1">
+              <TrendingDown className="h-3 w-3" />
+              {100 - successRate}%
+            </Badge>
+          </div>
+          <div className="text-3xl font-bold text-red-600">{stats.failedScans.toLocaleString()}</div>
+          <div className="flex items-center gap-2 mt-2 text-sm text-muted-foreground">
+            <XCircle className="h-4 w-4 text-red-600" />
+            <span>À améliorer</span>
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">Nécessite attention</p>
+        </Card>
       </div>
 
       {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-4">
-        <Input
-          placeholder="Rechercher par nom ou fabricant..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="max-w-sm"
-        />
-        
-        <Tabs value={filterStatus} onValueChange={(v) => setFilterStatus(v as any)}>
-          <TabsList>
-            <TabsTrigger value="all">Tous</TabsTrigger>
-            <TabsTrigger value="active">Actifs</TabsTrigger>
-            <TabsTrigger value="inactive">Inactifs</TabsTrigger>
-          </TabsList>
-        </Tabs>
-        
-        {filterType !== 'all' && (
-          <Button variant="outline" size="sm" onClick={() => setFilterType('all')}>
-            ✕ {METER_TYPE_CONFIG[filterType].label}
-          </Button>
-        )}
-      </div>
+      <Card className="p-4">
+        <div className="flex flex-col sm:flex-row gap-4">
+          {/* Search */}
+          <div className="relative flex-1 max-w-sm">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Rechercher un modèle..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-9"
+            />
+          </div>
 
-      {/* Models list */}
-      {loading ? (
-        <div className="text-center py-12 text-gray-500">Chargement...</div>
-      ) : filteredModels.length === 0 ? (
-        <Card className="p-12 text-center">
-          <div className="text-4xl mb-4">📊</div>
-          <div className="font-medium text-lg mb-2">Aucun modèle trouvé</div>
-          <p className="text-gray-500 mb-4">
-            {search || filterType !== 'all' 
-              ? 'Essayez de modifier vos filtres' 
-              : 'Créez votre premier modèle de compteur'}
-          </p>
-          {!search && filterType === 'all' && (
-            <Link href="/dashboard/meters/create">
-              <Button>Créer un modèle</Button>
-            </Link>
-          )}
-        </Card>
-      ) : (
-        <div className="grid gap-4">
-          {filteredModels.map((model) => (
-            <MeterModelCard key={model.id} model={model} onRefresh={loadModels} />
-          ))}
+          {/* Type filter */}
+          <Select value={filterType} onValueChange={setFilterType}>
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder="Type de compteur" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Tous les types</SelectItem>
+              {Object.entries(METER_TYPE_CONFIG).map(([type, config]) => (
+                <SelectItem key={type} value={type}>
+                  {config.icon} {config.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {/* Status filter */}
+          <Select value={filterStatus} onValueChange={setFilterStatus}>
+            <SelectTrigger className="w-[150px]">
+              <SelectValue placeholder="Statut" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Tous</SelectItem>
+              <SelectItem value="active">Actifs</SelectItem>
+              <SelectItem value="inactive">Inactifs</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
-      )}
-    </div>
-  )
-}
+      </Card>
 
-// Model card component
-function MeterModelCard({ 
-  model, 
-  onRefresh 
-}: { 
-  model: MeterModel
-  onRefresh: () => void 
-}) {
-  const config = METER_TYPE_CONFIG[model.meter_type]
-  const stats = computeMeterModelStats(model)
-  
-  async function toggleActive() {
-    try {
-      // Utiliser le client supabase normal (avec RLS)
-      await supabase
-        .from('meter_models')
-        .update({ is_active: !model.is_active })
-        .eq('id', model.id)
-      onRefresh()
-    } catch (error) {
-      console.error('Error toggling model:', error)
-    }
-  }
-
-  return (
-    <Card className={`p-4 ${!model.is_active ? 'opacity-60' : ''}`}>
-      <div className="flex items-start gap-4">
-        {/* Type icon */}
-        <div 
-          className="w-12 h-12 rounded-lg flex items-center justify-center text-2xl"
-          style={{ backgroundColor: config.color + '20' }}
-        >
-          {config.icon}
-        </div>
-        
-        {/* Info */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            <h3 className="font-semibold truncate">{model.name}</h3>
-            {model.is_verified && (
-              <Badge variant="secondary" className="bg-green-100 text-green-700">
-                ✓ Vérifié
-              </Badge>
-            )}
-            {!model.is_active && (
-              <Badge variant="secondary" className="bg-gray-100 text-gray-600">
-                Inactif
-              </Badge>
+      {/* Table */}
+      <Card>
+        {loading ? (
+          <div className="p-12 text-center text-muted-foreground">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-teal-600 mx-auto mb-4"></div>
+            Chargement...
+          </div>
+        ) : filteredModels.length === 0 ? (
+          <div className="p-12 text-center">
+            <Gauge className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+            <h3 className="font-semibold text-lg mb-2">Aucun modèle trouvé</h3>
+            <p className="text-muted-foreground mb-4">
+              {search || filterType !== 'all' || filterStatus !== 'all'
+                ? 'Essayez de modifier vos filtres'
+                : 'Créez votre premier modèle de compteur'}
+            </p>
+            {!search && filterType === 'all' && filterStatus === 'all' && (
+              <Link href="/dashboard/meters/create">
+                <Button>Créer un modèle</Button>
+              </Link>
             )}
           </div>
-          
-          <div className="text-sm text-gray-500 mb-2">
-            {model.manufacturer || 'Fabricant inconnu'} • {config.label} • {model.unit}
-          </div>
-          
-          <div className="text-sm text-gray-600 line-clamp-2">
-            {model.ai_description || 'Aucune description'}
-          </div>
-          
-          {/* Zones preview */}
-          <div className="flex flex-wrap gap-1 mt-2">
-            {model.zones.map((zone: any) => (
-              <Badge key={zone.id} variant="outline" className="text-xs">
-                {zone.label}
-              </Badge>
-            ))}
-          </div>
-        </div>
-        
-        {/* Stats */}
-        <div className="text-right space-y-1">
-          <div className="text-2xl font-bold">{model.usage_count}</div>
-          <div className="text-xs text-gray-500">utilisations</div>
-          
-          {model.total_scans > 0 && (
-            <>
-              <div 
-                className={`text-lg font-semibold ${
-                  stats.successRate >= 80 ? 'text-green-600' : 
-                  stats.successRate >= 60 ? 'text-yellow-600' : 'text-red-600'
-                }`}
-              >
-                {stats.successRate}%
+        ) : (
+          <>
+            {/* Table Header */}
+            <div className="grid grid-cols-[auto_1fr_120px_100px_120px_80px_80px_80px_50px] gap-4 px-4 py-3 border-b bg-muted/50 text-sm font-medium text-muted-foreground">
+              <div className="w-12"></div>
+              <div>Nom du compteur</div>
+              <div>Type</div>
+              <div>Statut</div>
+              <div>Affichage</div>
+              <div className="text-center">Scans</div>
+              <div className="text-center">Réussis</div>
+              <div className="text-center">Ratés</div>
+              <div></div>
+            </div>
+
+            {/* Table Body */}
+            <div className="divide-y">
+              {paginatedModels.map((model) => {
+                const config = METER_TYPE_CONFIG[model.meter_type] || { icon: '📊', label: model.meter_type, color: '#6B7280' }
+                const displayType = model.ai_analysis_data?.display_type || 'mechanical'
+                const failed = (model.total_scans || 0) - (model.successful_scans || 0)
+                const photo = model.reference_photos?.[0]
+
+                return (
+                  <div 
+                    key={model.id}
+                    className="grid grid-cols-[auto_1fr_120px_100px_120px_80px_80px_80px_50px] gap-4 px-4 py-3 items-center hover:bg-muted/30 transition-colors"
+                  >
+                    {/* Photo */}
+                    <div className="w-12 h-12 rounded-lg overflow-hidden bg-muted flex items-center justify-center">
+                      {photo ? (
+                        <img 
+                          src={photo} 
+                          alt={model.name}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <span className="text-2xl">{config.icon}</span>
+                      )}
+                    </div>
+
+                    {/* Name */}
+                    <div>
+                      <div className="font-medium">{model.name}</div>
+                      <div className="text-sm text-muted-foreground">
+                        {model.manufacturer || 'Fabricant inconnu'}
+                      </div>
+                    </div>
+
+                    {/* Type */}
+                    <div>
+                      <Badge 
+                        variant="secondary" 
+                        className="gap-1"
+                        style={{ 
+                          backgroundColor: config.color + '20',
+                          color: config.color 
+                        }}
+                      >
+                        {config.icon} {config.label}
+                      </Badge>
+                    </div>
+
+                    {/* Status */}
+                    <div>
+                      {model.is_active ? (
+                        <Badge className="bg-green-100 text-green-700 hover:bg-green-100">
+                          <span className="w-2 h-2 rounded-full bg-green-500 mr-1.5"></span>
+                          Actif
+                        </Badge>
+                      ) : (
+                        <Badge variant="secondary" className="bg-gray-100 text-gray-600">
+                          <span className="w-2 h-2 rounded-full bg-gray-400 mr-1.5"></span>
+                          Inactif
+                        </Badge>
+                      )}
+                    </div>
+
+                    {/* Display type */}
+                    <div className="text-sm text-muted-foreground">
+                      {DISPLAY_TYPE_LABELS[displayType] || displayType}
+                    </div>
+
+                    {/* Scans */}
+                    <div className="text-center font-medium">
+                      {model.total_scans || 0}
+                    </div>
+
+                    {/* Success */}
+                    <div className="text-center font-medium text-green-600">
+                      {model.successful_scans || 0}
+                    </div>
+
+                    {/* Failed */}
+                    <div className="text-center font-medium text-red-600">
+                      {failed}
+                    </div>
+
+                    {/* Actions */}
+                    <div>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-8 w-8">
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem asChild>
+                            <Link href={`/dashboard/meters/${model.id}`}>
+                              <Pencil className="h-4 w-4 mr-2" />
+                              Modifier
+                            </Link>
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => toggleActive(model)}>
+                            {model.is_active ? (
+                              <>
+                                <EyeOff className="h-4 w-4 mr-2" />
+                                Désactiver
+                              </>
+                            ) : (
+                              <>
+                                <Eye className="h-4 w-4 mr-2" />
+                                Activer
+                              </>
+                            )}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem 
+                            onClick={() => deleteModel(model)}
+                            className="text-red-600"
+                          >
+                            <Trash2 className="h-4 w-4 mr-2" />
+                            Supprimer
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* Pagination */}
+            <div className="flex items-center justify-between px-4 py-3 border-t">
+              <div className="text-sm text-muted-foreground">
+                {filteredModels.length} modèle{filteredModels.length > 1 ? 's' : ''}
               </div>
-              <div className="text-xs text-gray-500">succès</div>
-            </>
-          )}
-        </div>
-        
-        {/* Actions */}
-        <div className="flex flex-col gap-2">
-          <Link href={`/dashboard/meters/${model.id}`}>
-            <Button variant="outline" size="sm">
-              Modifier
-            </Button>
-          </Link>
-          <Button 
-            variant="ghost" 
-            size="sm"
-            onClick={toggleActive}
-          >
-            {model.is_active ? 'Désactiver' : 'Activer'}
-          </Button>
-        </div>
-      </div>
-    </Card>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground">
+                  Page {currentPage} sur {totalPages || 1}
+                </span>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages || totalPages === 0}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          </>
+        )}
+      </Card>
+    </div>
   )
 }
