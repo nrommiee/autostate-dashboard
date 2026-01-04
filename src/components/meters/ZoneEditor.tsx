@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef } from 'react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -25,17 +25,16 @@ interface ZoneEditorProps {
   disabled?: boolean
 }
 
-// Zone colors for visual distinction
 const ZONE_COLORS: Record<MeterFieldType, string> = {
-  serialNumber: '#3B82F6', // blue
-  ean: '#8B5CF6', // purple
-  readingSingle: '#10B981', // green
-  readingDay: '#F59E0B', // amber
-  readingNight: '#6366F1', // indigo
-  readingExclusiveNight: '#EC4899', // pink
-  readingProduction: '#14B8A6', // teal
-  subscribedPower: '#EF4444', // red
-  custom: '#6B7280', // gray
+  serialNumber: '#3B82F6',
+  ean: '#8B5CF6',
+  readingSingle: '#10B981',
+  readingDay: '#F59E0B',
+  readingNight: '#6366F1',
+  readingExclusiveNight: '#EC4899',
+  readingProduction: '#14B8A6',
+  subscribedPower: '#EF4444',
+  custom: '#6B7280',
 }
 
 export function ZoneEditor({
@@ -52,7 +51,6 @@ export function ZoneEditor({
   const [pendingFieldType, setPendingFieldType] = useState<MeterFieldType | null>(null)
   const [suggesting, setSuggesting] = useState(false)
 
-  // Create new zone
   const createZone = (fieldType: MeterFieldType): MeterZone => ({
     id: crypto.randomUUID(),
     fieldType,
@@ -61,29 +59,23 @@ export function ZoneEditor({
     decimalDigits: METER_FIELD_CONFIG[fieldType].isReading ? 2 : undefined
   })
 
-  // Add zone without position (for manual config)
   const addZoneManual = (fieldType: MeterFieldType) => {
     onChange([...zones, createZone(fieldType)])
   }
 
-  // Start drawing mode
   const startDrawing = (fieldType: MeterFieldType) => {
     setPendingFieldType(fieldType)
     setIsDrawing(true)
   }
 
-  // Handle mouse down on image
   const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!isDrawing || !pendingFieldType || !containerRef.current) return
-
     const rect = containerRef.current.getBoundingClientRect()
     const x = (e.clientX - rect.left) / rect.width
     const y = (e.clientY - rect.top) / rect.height
-
     setDrawStart({ x, y })
   }
 
-  // Handle mouse up on image
   const handleMouseUp = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!isDrawing || !pendingFieldType || !drawStart || !containerRef.current) {
       setIsDrawing(false)
@@ -91,18 +83,13 @@ export function ZoneEditor({
       setPendingFieldType(null)
       return
     }
-
     const rect = containerRef.current.getBoundingClientRect()
     const endX = (e.clientX - rect.left) / rect.width
     const endY = (e.clientY - rect.top) / rect.height
-
-    // Calculate zone bounds
     const x = Math.min(drawStart.x, endX)
     const y = Math.min(drawStart.y, endY)
     const width = Math.abs(endX - drawStart.x)
     const height = Math.abs(endY - drawStart.y)
-
-    // Only create zone if it has meaningful size
     if (width > 0.02 && height > 0.02) {
       const newZone: MeterZone = {
         ...createZone(pendingFieldType),
@@ -115,46 +102,32 @@ export function ZoneEditor({
       }
       onChange([...zones, newZone])
     }
-
     setIsDrawing(false)
     setDrawStart(null)
     setPendingFieldType(null)
   }
 
-  // Remove zone
   const removeZone = (id: string) => {
     onChange(zones.filter(z => z.id !== id))
     if (selectedZoneId === id) setSelectedZoneId(null)
   }
 
-  // Update zone
   const updateZone = (id: string, updates: Partial<MeterZone>) => {
     onChange(zones.map(z => {
       if (z.id !== id) return z
-
-      // If fieldType changed, update label too
       if (updates.fieldType && updates.fieldType !== z.fieldType) {
-        return {
-          ...z,
-          ...updates,
-          label: METER_FIELD_CONFIG[updates.fieldType].label
-        }
+        return { ...z, ...updates, label: METER_FIELD_CONFIG[updates.fieldType].label }
       }
-
       return { ...z, ...updates }
     }))
   }
 
-  // Suggest zones with AI
   const handleSuggestZones = async () => {
     if (!onSuggestZones) return
-
     setSuggesting(true)
     try {
       const suggested = await onSuggestZones()
-      if (suggested.length > 0) {
-        onChange([...zones, ...suggested])
-      }
+      if (suggested.length > 0) onChange([...zones, ...suggested])
     } catch (err) {
       console.error('Error suggesting zones:', err)
     } finally {
@@ -162,18 +135,13 @@ export function ZoneEditor({
     }
   }
 
-  const selectedZone = zones.find(z => z.id === selectedZoneId)
-
   return (
     <div className="space-y-6">
-      {/* Zone type buttons */}
       <Card className="p-4">
         <div className="flex items-center justify-between mb-3">
           <div>
             <h3 className="font-semibold text-sm">Ajouter une zone</h3>
-            <p className="text-xs text-gray-500">
-              Cliquez sur un type puis dessinez sur la photo, ou ajoutez sans position
-            </p>
+            <p className="text-xs text-gray-500">Cliquez sur un type puis dessinez sur la photo</p>
           </div>
           {onSuggestZones && (
             <Button
@@ -184,21 +152,15 @@ export function ZoneEditor({
               disabled={suggesting || disabled || !photoUrl}
               className="gap-2"
             >
-              {suggesting ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Sparkles className="h-4 w-4" />
-              )}
+              {suggesting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
               Suggestion IA
             </Button>
           )}
         </div>
-
         <div className="flex flex-wrap gap-2">
           {Object.entries(METER_FIELD_CONFIG).map(([type, config]) => {
             const fieldType = type as MeterFieldType
             const hasZone = zones.some(z => z.fieldType === fieldType)
-            
             return (
               <div key={type} className="flex">
                 <Button
@@ -231,52 +193,36 @@ export function ZoneEditor({
             )
           })}
         </div>
-
         {isDrawing && (
           <div className="mt-3 p-2 bg-blue-50 border border-blue-200 rounded text-sm text-blue-700">
-            🎯 Mode dessin actif: Dessinez un rectangle sur la photo pour placer la zone "{METER_FIELD_CONFIG[pendingFieldType!].label}"
+            🎯 Dessinez un rectangle sur la photo pour placer la zone
           </div>
         )}
       </Card>
 
-      {/* Photo with zones overlay */}
       {photoUrl && (
         <Card className="p-4">
           <h3 className="font-semibold text-sm mb-3">Zones sur la photo</h3>
-          
           <div
             ref={containerRef}
             className={`relative select-none ${isDrawing ? 'cursor-crosshair' : ''}`}
             onMouseDown={handleMouseDown}
             onMouseUp={handleMouseUp}
           >
-            <img
-              src={photoUrl}
-              alt="Photo du compteur"
-              className="w-full rounded-lg"
-              draggable={false}
-            />
-
-            {/* Render zones */}
+            <img src={photoUrl} alt="Photo du compteur" className="w-full rounded-lg" draggable={false} />
             {zones.map((zone) => zone.position && (
               <div
                 key={zone.id}
-                className={`absolute border-2 rounded cursor-pointer transition-all ${
-                  selectedZoneId === zone.id ? 'ring-2 ring-offset-1' : ''
-                }`}
+                className={`absolute border-2 rounded cursor-pointer transition-all ${selectedZoneId === zone.id ? 'ring-2 ring-offset-1' : ''}`}
                 style={{
                   left: `${zone.position.x * 100}%`,
                   top: `${zone.position.y * 100}%`,
                   width: `${zone.position.width * 100}%`,
                   height: `${zone.position.height * 100}%`,
                   borderColor: ZONE_COLORS[zone.fieldType],
-                  backgroundColor: `${ZONE_COLORS[zone.fieldType]}20`,
-                  ringColor: ZONE_COLORS[zone.fieldType]
+                  backgroundColor: `${ZONE_COLORS[zone.fieldType]}20`
                 }}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setSelectedZoneId(zone.id)
-                }}
+                onClick={(e) => { e.stopPropagation(); setSelectedZoneId(zone.id) }}
               >
                 <div
                   className="absolute -top-5 left-0 px-1.5 py-0.5 text-xs font-medium text-white rounded-t whitespace-nowrap"
@@ -286,8 +232,6 @@ export function ZoneEditor({
                 </div>
               </div>
             ))}
-
-            {/* Drawing preview */}
             {isDrawing && drawStart && (
               <div
                 className="absolute border-2 border-dashed pointer-events-none"
@@ -302,33 +246,21 @@ export function ZoneEditor({
         </Card>
       )}
 
-      {/* Zones list */}
       <Card className="p-4">
-        <h3 className="font-semibold text-sm mb-3">
-          Zones configurées ({zones.length})
-        </h3>
-
+        <h3 className="font-semibold text-sm mb-3">Zones configurées ({zones.length})</h3>
         {zones.length === 0 ? (
-          <div className="text-center py-8 text-gray-500">
-            Aucune zone configurée. Cliquez sur un type de zone ci-dessus pour commencer.
-          </div>
+          <div className="text-center py-8 text-gray-500">Aucune zone configurée</div>
         ) : (
           <div className="space-y-3">
             {zones.map((zone) => (
               <div
                 key={zone.id}
-                className={`p-3 border rounded-lg transition-all ${
-                  selectedZoneId === zone.id ? 'ring-2 border-teal-300' : 'bg-gray-50'
-                }`}
+                className={`p-3 border rounded-lg transition-all ${selectedZoneId === zone.id ? 'ring-2 border-teal-300' : 'bg-gray-50'}`}
                 onClick={() => setSelectedZoneId(zone.id)}
-                style={{
-                  borderLeftWidth: 4,
-                  borderLeftColor: ZONE_COLORS[zone.fieldType]
-                }}
+                style={{ borderLeftWidth: 4, borderLeftColor: ZONE_COLORS[zone.fieldType] }}
               >
                 <div className="flex items-start gap-3">
                   <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-3">
-                    {/* Field type */}
                     <div className="space-y-1">
                       <Label className="text-xs">Type</Label>
                       <Select
@@ -336,20 +268,14 @@ export function ZoneEditor({
                         onValueChange={(v) => updateZone(zone.id, { fieldType: v as MeterFieldType })}
                         disabled={disabled}
                       >
-                        <SelectTrigger className="h-9">
-                          <SelectValue />
-                        </SelectTrigger>
+                        <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                         <SelectContent>
                           {Object.entries(METER_FIELD_CONFIG).map(([type, config]) => (
-                            <SelectItem key={type} value={type}>
-                              {config.icon} {config.label}
-                            </SelectItem>
+                            <SelectItem key={type} value={type}>{config.icon} {config.label}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                     </div>
-
-                    {/* Label */}
                     <div className="space-y-1">
                       <Label className="text-xs">Libellé</Label>
                       <Input
@@ -359,8 +285,6 @@ export function ZoneEditor({
                         className="h-9"
                       />
                     </div>
-
-                    {/* Decimals */}
                     <div className="space-y-1">
                       <Label className="text-xs">Décimales</Label>
                       <div className="flex items-center gap-2">
@@ -383,23 +307,17 @@ export function ZoneEditor({
                       </div>
                     </div>
                   </div>
-
-                  {/* Position indicator & remove */}
                   <div className="flex items-center gap-2">
                     {zone.position && (
                       <Badge variant="outline" className="text-xs">
-                        <Move className="h-3 w-3 mr-1" />
-                        Position
+                        <Move className="h-3 w-3 mr-1" />Position
                       </Badge>
                     )}
                     <Button
                       type="button"
                       variant="ghost"
                       size="icon"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        removeZone(zone.id)
-                      }}
+                      onClick={(e) => { e.stopPropagation(); removeZone(zone.id) }}
                       disabled={disabled}
                       className="text-red-500 hover:text-red-700 hover:bg-red-50 h-8 w-8"
                     >
@@ -407,13 +325,11 @@ export function ZoneEditor({
                     </Button>
                   </div>
                 </div>
-
-                {/* Zone note/format */}
                 {selectedZoneId === zone.id && (
                   <div className="mt-3 pt-3 border-t">
-                    <Label className="text-xs">Note (aide pour la lecture)</Label>
+                    <Label className="text-xs">Note</Label>
                     <Input
-                      placeholder="ex: Ignorer les chiffres rouges, Format: 8 chiffres..."
+                      placeholder="ex: Ignorer les chiffres rouges..."
                       value={(zone as any).note || ''}
                       onChange={(e) => updateZone(zone.id, { ...zone, note: e.target.value } as any)}
                       disabled={disabled}
