@@ -1,167 +1,118 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
+import { logApiUsage, createTimer } from '@/lib/api-usage'
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!
 })
 
 export async function POST(request: NextRequest) {
+  const timer = createTimer()
+  let inputTokens = 0
+  let outputTokens = 0
+  let success = false
+  let errorMessage: string | null = null
+
   try {
-    const { testPhoto, modelData } = await request.json()
+    const body = await request.json()
+    const { testPhoto, modelData } = body
 
-    if (!testPhoto) {
-      return NextResponse.json(
-        { error: 'Photo de test requise' },
-        { status: 400 }
-      )
+    if (!testPhoto || !modelData) {
+      return NextResponse.json({ error: 'Photo et modèle requis' }, { status: 400 })
     }
 
-    if (!modelData) {
-      return NextResponse.json(
-        { error: 'Données du modèle requises' },
-        { status: 400 }
-      )
-    }
+    const { name, manufacturer, meterType, keywords, zones, description } = modelData
 
-    // Build the context from model data
-    const modelContext = buildModelContext(modelData)
+    // Construire le prompt de test
+    const keywordsText = (keywords || []).slice(0, 10).join(', ')
+    const zonesText = (zones || []).map((z: any) => z.label || z.fieldType).join(', ')
 
-    const content: any[] = [
-      {
-        type: 'image',
-        source: {
-          type: 'base64',
-          media_type: 'image/jpeg',
-          data: testPhoto
-        }
-      },
-      {
-        type: 'text',
-        text: `Tu es un système de reconnaissance de compteurs. 
-        
-MODÈLE À RECONNAÎTRE:
-${modelContext}
+    const prompt = `Tu dois vérifier si cette photo correspond au modèle de compteur suivant:
+
+MODÈLE ATTENDU:
+- Nom: ${name}
+- Fabricant: ${manufacturer || 'Non spécifié'}
+- Type: ${meterType}
+- Mots-clés: ${keywordsText}
+- Zones: ${zonesText}
+${description ? `- Description: ${description}` : ''}
 
 TÂCHE:
-1. Vérifie si le compteur sur la photo correspond au modèle décrit
-2. Si oui, extrais les données (numéro de série, index)
-3. Évalue ta confiance
+1. Vérifie si la photo correspond à ce modèle
+2. Extrais le numéro de série et l'index si visible
+3. Évalue ta confiance (0.0 à 1.0)
 
-CRITÈRES DE CORRESPONDANCE:
-- Le fabricant visible DOIT correspondre exactement au fabricant du modèle
-- Le type de compteur DOIT correspondre (eau/gaz/électricité)
-- Les mots-clés doivent être présents sur le compteur
-
-Retourne UNIQUEMENT un JSON:
+RETOURNE UNIQUEMENT CE JSON:
 {
-  "success": true/false,
+  "matches": true/false,
   "confidence": 0.0-1.0,
-  "matchDetails": {
-    "manufacturerMatch": true/false,
-    "typeMatch": true/false,
-    "keywordsFound": ["mot1", "mot2"],
-    "keywordsMissing": ["mot3"]
-  },
-  "extractedSerial": "numéro ou null",
-  "extractedReading": "index avec virgule ou null",
-  "explanation": "Pourquoi ça correspond ou non"
-}
-
-RÈGLES:
-- success = true SEULEMENT si manufacturerMatch ET typeMatch sont true
-- confidence >= 0.8 pour un match fiable
-- Virgule comme séparateur décimal pour l'index
-
-Réponds UNIQUEMENT avec le JSON.`
-      }
-    ]
+  "serial": "Numéro de série extrait ou null",
+  "reading": "Index extrait ou null",
+  "reason": "Raison si non reconnu"
+}`
 
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
-      max_tokens: 1000,
-      messages: [{ role: 'user', content }]
+      max_tokens: 500,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: testPhoto } },
+          { type: 'text', text: prompt }
+        ]
+      }]
     })
+
+    inputTokens = response.usage?.input_tokens || 0
+    outputTokens = response.usage?.output_tokens || 0
 
     const textContent = response.content.find(c => c.type === 'text')
     if (!textContent || textContent.type !== 'text') {
-      throw new Error('No text response from Claude')
+      throw new Error('No response')
     }
 
     let result
     try {
       const jsonMatch = textContent.text.match(/\{[\s\S]*\}/)
-      if (jsonMatch) {
-        result = JSON.parse(jsonMatch[0])
-      } else {
-        result = JSON.parse(textContent.text)
-      }
+      result = jsonMatch ? JSON.parse(jsonMatch[0]) : null
     } catch {
-      result = {
-        success: false,
-        confidence: 0,
-        explanation: 'Erreur de parsing de la réponse'
-      }
+      result = null
     }
 
+    if (!result) {
+      throw new Error('Analyse impossible')
+    }
+
+    success = true
+
     return NextResponse.json({
-      success: result.success || false,
-      confidence: result.confidence || 0,
-      extractedSerial: result.extractedSerial || null,
-      extractedReading: result.extractedReading || null,
-      aiResponse: result
+      success: result.matches === true,
+      confidence: result.confidence || 0.5,
+      extractedSerial: result.serial || null,
+      extractedReading: result.reading || null,
+      reason: result.reason || null
     })
 
-  } catch (error) {
+  } catch (error: any) {
+    errorMessage = error.message || 'Erreur test'
     console.error('Test meter error:', error)
-    return NextResponse.json(
-      { error: 'Erreur lors du test' },
-      { status: 500 }
-    )
-  }
-}
+    return NextResponse.json({ 
+      success: false, 
+      error: errorMessage,
+      confidence: 0 
+    }, { status: 500 })
 
-function buildModelContext(modelData: any): string {
-  const lines: string[] = []
-
-  lines.push(`NOM: ${modelData.name}`)
-  lines.push(`FABRICANT: ${modelData.manufacturer || 'Non spécifié'}`)
-  
-  const typeLabels: Record<string, string> = {
-    water_general: 'Eau - Général',
-    water_passage: 'Eau - Passage',
-    electricity: 'Électricité',
-    gas: 'Gaz',
-    oil_tank: 'Mazout',
-    calorimeter: 'Calorimètre'
-  }
-  lines.push(`TYPE: ${typeLabels[modelData.meterType] || modelData.meterType}`)
-  lines.push(`UNITÉ: ${modelData.unit}`)
-
-  if (modelData.keywords && modelData.keywords.length > 0) {
-    lines.push('')
-    lines.push('MOTS-CLÉS À VÉRIFIER:')
-    modelData.keywords.forEach((kw: string) => {
-      lines.push(`- ${kw}`)
+  } finally {
+    // Log usage
+    await logApiUsage({
+      functionId: 'test_model',
+      endpoint: '/api/test-meter',
+      inputTokens,
+      outputTokens,
+      imageCount: 1,
+      success,
+      responseTimeMs: timer.elapsed(),
+      errorMessage: errorMessage || undefined
     })
   }
-
-  if (modelData.zones && modelData.zones.length > 0) {
-    lines.push('')
-    lines.push('ZONES À EXTRAIRE:')
-    modelData.zones.forEach((zone: any) => {
-      let zoneDesc = `- ${zone.label || zone.fieldType}`
-      if (zone.hasDecimals) {
-        zoneDesc += ` (${zone.decimalDigits || 2} décimales)`
-      }
-      lines.push(zoneDesc)
-    })
-  }
-
-  if (modelData.description) {
-    lines.push('')
-    lines.push('DESCRIPTION:')
-    lines.push(modelData.description)
-  }
-
-  return lines.join('\n')
 }
