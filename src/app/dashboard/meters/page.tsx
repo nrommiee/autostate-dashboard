@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { createAdminClient } from '@/lib/supabase'
+import { supabase } from '@/lib/supabase'
 import { 
   MeterModel, 
   MeterType, 
@@ -29,7 +29,6 @@ export default function MeterModelsPage() {
   async function loadModels() {
     setLoading(true)
     try {
-      const supabase = createAdminClient()
       const { data, error } = await supabase
         .from('meter_models')
         .select('*')
@@ -45,7 +44,6 @@ export default function MeterModelsPage() {
   }
 
   const filteredModels = models.filter(model => {
-    // Search filter
     if (search) {
       const searchLower = search.toLowerCase()
       if (!model.name.toLowerCase().includes(searchLower) &&
@@ -54,19 +52,16 @@ export default function MeterModelsPage() {
       }
     }
     
-    // Type filter
     if (filterType !== 'all' && model.meter_type !== filterType) {
       return false
     }
     
-    // Status filter
     if (filterStatus === 'active' && !model.is_active) return false
     if (filterStatus === 'inactive' && model.is_active) return false
     
     return true
   })
 
-  // Group by type for summary
   const typeStats = models.reduce((acc, model) => {
     if (!acc[model.meter_type]) {
       acc[model.meter_type] = { count: 0, totalScans: 0 }
@@ -168,7 +163,6 @@ export default function MeterModelsPage() {
   )
 }
 
-// Model card component
 function MeterModelCard({ 
   model, 
   onRefresh 
@@ -181,7 +175,6 @@ function MeterModelCard({
   
   async function toggleActive() {
     try {
-      const supabase = createAdminClient()
       await supabase
         .from('meter_models')
         .update({ is_active: !model.is_active })
@@ -195,7 +188,6 @@ function MeterModelCard({
   return (
     <Card className={`p-4 ${!model.is_active ? 'opacity-60' : ''}`}>
       <div className="flex items-start gap-4">
-        {/* Type icon */}
         <div 
           className="w-12 h-12 rounded-lg flex items-center justify-center text-2xl"
           style={{ backgroundColor: config.color + '20' }}
@@ -203,7 +195,6 @@ function MeterModelCard({
           {config.icon}
         </div>
         
-        {/* Info */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
             <h3 className="font-semibold truncate">{model.name}</h3>
@@ -227,7 +218,6 @@ function MeterModelCard({
             {model.ai_description || 'Aucune description'}
           </div>
           
-          {/* Zones preview */}
           <div className="flex flex-wrap gap-1 mt-2">
             {model.zones.map((zone: any) => (
               <Badge key={zone.id} variant="outline" className="text-xs">
@@ -237,7 +227,6 @@ function MeterModelCard({
           </div>
         </div>
         
-        {/* Stats */}
         <div className="text-right space-y-1">
           <div className="text-2xl font-bold">{model.usage_count}</div>
           <div className="text-xs text-gray-500">utilisations</div>
@@ -257,7 +246,6 @@ function MeterModelCard({
           )}
         </div>
         
-        {/* Actions */}
         <div className="flex flex-col gap-2">
           <Link href={`/dashboard/meters/${model.id}`}>
             <Button variant="outline" size="sm">
