@@ -1,11 +1,11 @@
 'use client'
-
 import { useEffect, useState } from 'react'
-import { useRouter, usePathname } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase, Profile } from '@/lib/supabase'
 import { 
   Users, 
+  FolderOpen, 
   Settings, 
   LogOut, 
   LayoutDashboard,
@@ -15,111 +15,60 @@ import {
   FileText,
   Gauge,
   AlertCircle,
-  BarChart3,
-  Activity,
-  DollarSign,
-  HelpCircle,
-  Search,
-  MoreVertical,
-  User,
-  CreditCard,
-  Bell,
+  BarChart3
 } from 'lucide-react'
+import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import {
-  Sidebar,
-  SidebarContent,
-  SidebarFooter,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
-  SidebarHeader,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarMenuSub,
-  SidebarMenuSubButton,
-  SidebarMenuSubItem,
-  SidebarProvider,
-  SidebarInset,
-  SidebarSeparator,
-} from '@/components/ui/sidebar'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible'
+import { Separator } from '@/components/ui/separator'
 
-// Menu principal
-const mainNavItems = [
+interface NavItem {
+  title: string
+  href: string
+  icon: React.ReactNode
+  badge?: number
+}
+
+const navItems: NavItem[] = [
   {
     title: 'Dashboard',
-    url: '/dashboard',
-    icon: LayoutDashboard,
+    href: '/dashboard',
+    icon: <LayoutDashboard className="h-4 w-4" />,
   },
   {
     title: 'Utilisateurs',
-    url: '/dashboard/users',
-    icon: Users,
+    href: '/dashboard/users',
+    icon: <Users className="h-4 w-4" />,
   },
   {
     title: 'Objets',
-    url: '/dashboard/objects',
-    icon: Boxes,
+    href: '/dashboard/objects',
+    icon: <Boxes className="h-4 w-4" />,
   },
   {
     title: 'Suggestions',
-    url: '/dashboard/suggestions',
-    icon: Lightbulb,
+    href: '/dashboard/suggestions',
+    icon: <Lightbulb className="h-4 w-4" />,
   },
   {
     title: 'Formulaires Énergie',
-    url: '/dashboard/energy-forms',
-    icon: FileText,
+    href: '/dashboard/energy-forms',
+    icon: <FileText className="h-4 w-4" />,
   },
   {
-    title: 'Compteurs',
-    url: '/dashboard/meters',
-    icon: Gauge,
-    items: [
-      { title: 'Non reconnus', url: '/dashboard/unrecognized', icon: AlertCircle },
-      { title: 'Modèles', url: '/dashboard/meters', icon: Gauge },
-    ]
+    title: 'Modèles compteurs',
+    href: '/dashboard/meters',
+    icon: <Gauge className="h-4 w-4" />,
+  },
+  {
+    title: 'Non reconnus',
+    href: '/dashboard/unrecognized',
+    icon: <AlertCircle className="h-4 w-4" />,
   },
   {
     title: 'Analytics',
-    url: '/dashboard/analytics',
-    icon: BarChart3,
-    items: [
-      { title: 'Usage', url: '/dashboard/analytics/usage', icon: Activity },
-      { title: 'Coûts', url: '/dashboard/analytics/cost', icon: DollarSign },
-    ]
-  },
-]
-
-// Menu secondaire (bas)
-const secondaryNavItems = [
-  {
-    title: 'Paramètres',
-    url: '/dashboard/settings',
-    icon: Settings,
-  },
-  {
-    title: 'Aide',
-    url: '/dashboard/help',
-    icon: HelpCircle,
-  },
-  {
-    title: 'Recherche',
-    url: '/dashboard/search',
-    icon: Search,
+    href: '/dashboard/analytics',
+    icon: <BarChart3 className="h-4 w-4" />,
   },
 ]
 
@@ -129,7 +78,6 @@ export default function DashboardLayout({
   children: React.ReactNode
 }) {
   const router = useRouter()
-  const pathname = usePathname()
   const [user, setUser] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
   const [unrecognizedCount, setUnrecognizedCount] = useState(0)
@@ -143,6 +91,7 @@ export default function DashboardLayout({
         return
       }
 
+      // Get profile
       const { data: profile } = await supabase
         .from('profiles')
         .select('*')
@@ -153,12 +102,14 @@ export default function DashboardLayout({
         setUser(profile)
       }
 
+      // Get unrecognized meters count
       const { count } = await supabase
         .from('unrecognized_meters')
         .select('*', { count: 'exact', head: true })
         .eq('status', 'pending')
       
       setUnrecognizedCount(count || 0)
+
       setLoading(false)
     }
 
@@ -179,190 +130,84 @@ export default function DashboardLayout({
   }
 
   return (
-    <SidebarProvider>
-      <Sidebar>
-        {/* Header avec logo */}
-        <SidebarHeader>
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton size="lg" asChild>
-                <Link href="/dashboard">
-                  <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-teal-600 text-white">
-                    <span className="text-lg">📐</span>
-                  </div>
-                  <div className="flex flex-col gap-0.5 leading-none">
-                    <span className="font-semibold">AutoState</span>
-                    <span className="text-xs text-muted-foreground">Admin Dashboard</span>
-                  </div>
-                </Link>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          </SidebarMenu>
-        </SidebarHeader>
+    <div className="min-h-screen flex">
+      {/* Sidebar */}
+      <aside className="w-64 border-r bg-card flex flex-col">
+        {/* Logo */}
+        <div className="p-6">
+          <Link href="/dashboard" className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-teal-600 rounded-xl flex items-center justify-center">
+              <span className="text-xl">📐</span>
+            </div>
+            <div>
+              <h1 className="font-bold text-lg">AutoState</h1>
+              <p className="text-xs text-muted-foreground">Admin Dashboard</p>
+            </div>
+          </Link>
+        </div>
 
-        {/* Contenu principal */}
-        <SidebarContent>
-          {/* Navigation principale */}
-          <SidebarGroup>
-            <SidebarGroupLabel>Navigation</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {mainNavItems.map((item) => (
-                  item.items ? (
-                    // Item avec sous-menu
-                    <Collapsible
-                      key={item.title}
-                      asChild
-                      defaultOpen={pathname?.startsWith(item.url)}
-                      className="group/collapsible"
-                    >
-                      <SidebarMenuItem>
-                        <CollapsibleTrigger asChild>
-                          <SidebarMenuButton 
-                            tooltip={item.title}
-                            isActive={pathname?.startsWith(item.url)}
-                          >
-                            <item.icon className="h-4 w-4" />
-                            <span>{item.title}</span>
-                            <ChevronRight className="ml-auto transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90" />
-                          </SidebarMenuButton>
-                        </CollapsibleTrigger>
-                        <CollapsibleContent>
-                          <SidebarMenuSub>
-                            {item.items.map((subItem) => (
-                              <SidebarMenuSubItem key={subItem.title}>
-                                <SidebarMenuSubButton asChild isActive={pathname === subItem.url}>
-                                  <Link href={subItem.url}>
-                                    <subItem.icon className="h-4 w-4" />
-                                    <span>{subItem.title}</span>
-                                    {subItem.url === '/dashboard/unrecognized' && unrecognizedCount > 0 && (
-                                      <span className="ml-auto bg-orange-100 text-orange-700 text-xs font-semibold px-2 py-0.5 rounded-full">
-                                        {unrecognizedCount}
-                                      </span>
-                                    )}
-                                  </Link>
-                                </SidebarMenuSubButton>
-                              </SidebarMenuSubItem>
-                            ))}
-                          </SidebarMenuSub>
-                        </CollapsibleContent>
-                      </SidebarMenuItem>
-                    </Collapsible>
-                  ) : (
-                    // Item simple
-                    <SidebarMenuItem key={item.title}>
-                      <SidebarMenuButton asChild isActive={pathname === item.url} tooltip={item.title}>
-                        <Link href={item.url}>
-                          <item.icon className="h-4 w-4" />
-                          <span>{item.title}</span>
-                        </Link>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  )
-                ))}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
+        <Separator />
 
-          <SidebarSeparator />
+        {/* Navigation */}
+        <nav className="flex-1 p-4 space-y-1">
+          {navItems.map((item) => (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={cn(
+                "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                "hover:bg-accent hover:text-accent-foreground",
+                "text-muted-foreground"
+              )}
+            >
+              {item.icon}
+              <span className="flex-1">{item.title}</span>
+              {/* Badge for unrecognized meters */}
+              {item.href === '/dashboard/unrecognized' && unrecognizedCount > 0 && (
+                <span className="bg-orange-100 text-orange-700 text-xs font-semibold px-2 py-0.5 rounded-full">
+                  {unrecognizedCount}
+                </span>
+              )}
+            </Link>
+          ))}
+        </nav>
 
-          {/* Navigation secondaire */}
-          <SidebarGroup>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {secondaryNavItems.map((item) => (
-                  <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton asChild isActive={pathname === item.url} tooltip={item.title}>
-                      <Link href={item.url}>
-                        <item.icon className="h-4 w-4" />
-                        <span>{item.title}</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        </SidebarContent>
+        <Separator />
 
-        {/* Footer avec profil utilisateur */}
-        <SidebarFooter>
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <SidebarMenuButton
-                    size="lg"
-                    className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
-                  >
-                    <Avatar className="h-8 w-8 rounded-lg">
-                      <AvatarImage src={user?.avatar_url || ''} alt={user?.full_name || ''} />
-                      <AvatarFallback className="rounded-lg bg-teal-100 text-teal-700">
-                        {user?.full_name?.charAt(0) || user?.email?.charAt(0) || 'A'}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="grid flex-1 text-left text-sm leading-tight">
-                      <span className="truncate font-semibold">{user?.full_name || 'Admin'}</span>
-                      <span className="truncate text-xs text-muted-foreground">{user?.email}</span>
-                    </div>
-                    <MoreVertical className="ml-auto size-4" />
-                  </SidebarMenuButton>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent
-                  className="w-[--radix-dropdown-menu-trigger-width] min-w-56 rounded-lg"
-                  side="bottom"
-                  align="end"
-                  sideOffset={4}
-                >
-                  <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
-                    <Avatar className="h-8 w-8 rounded-lg">
-                      <AvatarImage src={user?.avatar_url || ''} alt={user?.full_name || ''} />
-                      <AvatarFallback className="rounded-lg bg-gradient-to-br from-teal-400 to-cyan-500 text-white">
-                        {user?.full_name?.charAt(0) || user?.email?.charAt(0) || 'A'}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="grid flex-1 text-left text-sm leading-tight">
-                      <span className="truncate font-semibold">{user?.full_name || 'Admin'}</span>
-                      <span className="truncate text-xs text-muted-foreground">{user?.email}</span>
-                    </div>
-                  </div>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem asChild>
-                    <Link href="/dashboard/account" className="cursor-pointer">
-                      <User className="mr-2 h-4 w-4" />
-                      Compte
-                    </Link>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem asChild>
-                    <Link href="/dashboard/billing" className="cursor-pointer">
-                      <CreditCard className="mr-2 h-4 w-4" />
-                      Facturation
-                    </Link>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem asChild>
-                    <Link href="/dashboard/notifications" className="cursor-pointer">
-                      <Bell className="mr-2 h-4 w-4" />
-                      Notifications
-                    </Link>
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={handleLogout} className="text-red-600 cursor-pointer">
-                    <LogOut className="mr-2 h-4 w-4" />
-                    Déconnexion
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </SidebarMenuItem>
-          </SidebarMenu>
-        </SidebarFooter>
-      </Sidebar>
+        {/* User section */}
+        <div className="p-4">
+          <div className="flex items-center gap-3 mb-4">
+            <Avatar className="h-9 w-9">
+              <AvatarImage src={user?.avatar_url || ''} />
+              <AvatarFallback className="bg-teal-100 text-teal-700">
+                {user?.full_name?.charAt(0) || user?.email?.charAt(0) || 'A'}
+              </AvatarFallback>
+            </Avatar>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium truncate">
+                {user?.full_name || 'Admin'}
+              </p>
+              <p className="text-xs text-muted-foreground truncate">
+                {user?.email}
+              </p>
+            </div>
+          </div>
 
-      {/* Zone de contenu principal */}
-      <SidebarInset>
-        <main className="flex-1 overflow-auto bg-muted/30">
-          {children}
-        </main>
-      </SidebarInset>
-    </SidebarProvider>
+          <Button 
+            variant="outline" 
+            className="w-full justify-start gap-2"
+            onClick={handleLogout}
+          >
+            <LogOut className="h-4 w-4" />
+            Déconnexion
+          </Button>
+        </div>
+      </aside>
+
+      {/* Main content */}
+      <main className="flex-1 overflow-auto bg-muted/30">
+        {children}
+      </main>
+    </div>
   )
 }
