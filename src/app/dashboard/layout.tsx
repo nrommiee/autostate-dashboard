@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { supabase, Profile } from '@/lib/supabase'
 import { 
@@ -12,10 +12,13 @@ import {
   Boxes,
   Lightbulb,
   ChevronRight,
+  ChevronDown,
   FileText,
   Gauge,
   AlertCircle,
-  BarChart3
+  BarChart3,
+  Activity,
+  DollarSign
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -27,6 +30,7 @@ interface NavItem {
   href: string
   icon: React.ReactNode
   badge?: number
+  children?: { title: string; href: string; icon: React.ReactNode }[]
 }
 
 const navItems: NavItem[] = [
@@ -69,6 +73,10 @@ const navItems: NavItem[] = [
     title: 'Analytics',
     href: '/dashboard/analytics',
     icon: <BarChart3 className="h-4 w-4" />,
+    children: [
+      { title: 'Usage', href: '/dashboard/analytics/usage', icon: <Activity className="h-4 w-4" /> },
+      { title: 'Coûts', href: '/dashboard/analytics/cost', icon: <DollarSign className="h-4 w-4" /> },
+    ]
   },
 ]
 
@@ -78,9 +86,24 @@ export default function DashboardLayout({
   children: React.ReactNode
 }) {
   const router = useRouter()
+  const pathname = usePathname()
   const [user, setUser] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
   const [unrecognizedCount, setUnrecognizedCount] = useState(0)
+  const [expandedItems, setExpandedItems] = useState<string[]>([])
+
+  // Auto-expand Analytics if we're on an analytics page
+  useEffect(() => {
+    if (pathname?.startsWith('/dashboard/analytics')) {
+      setExpandedItems(prev => prev.includes('/dashboard/analytics') ? prev : [...prev, '/dashboard/analytics'])
+    }
+  }, [pathname])
+
+  const toggleExpand = (href: string) => {
+    setExpandedItems(prev => 
+      prev.includes(href) ? prev.filter(h => h !== href) : [...prev, href]
+    )
+  }
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -151,24 +174,66 @@ export default function DashboardLayout({
         {/* Navigation */}
         <nav className="flex-1 p-4 space-y-1">
           {navItems.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={cn(
-                "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
-                "hover:bg-accent hover:text-accent-foreground",
-                "text-muted-foreground"
+            <div key={item.href}>
+              {item.children ? (
+                // Item with children (expandable)
+                <>
+                  <button
+                    onClick={() => toggleExpand(item.href)}
+                    className={cn(
+                      "w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                      "hover:bg-accent hover:text-accent-foreground",
+                      pathname?.startsWith(item.href) ? "bg-accent text-accent-foreground" : "text-muted-foreground"
+                    )}
+                  >
+                    {item.icon}
+                    <span className="flex-1 text-left">{item.title}</span>
+                    {expandedItems.includes(item.href) ? (
+                      <ChevronDown className="h-4 w-4" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4" />
+                    )}
+                  </button>
+                  {expandedItems.includes(item.href) && (
+                    <div className="ml-4 mt-1 space-y-1 border-l pl-3">
+                      {item.children.map((child) => (
+                        <Link
+                          key={child.href}
+                          href={child.href}
+                          className={cn(
+                            "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                            "hover:bg-accent hover:text-accent-foreground",
+                            pathname === child.href ? "bg-accent text-accent-foreground" : "text-muted-foreground"
+                          )}
+                        >
+                          {child.icon}
+                          <span>{child.title}</span>
+                        </Link>
+                      ))}
+                    </div>
+                  )}
+                </>
+              ) : (
+                // Regular item
+                <Link
+                  href={item.href}
+                  className={cn(
+                    "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                    "hover:bg-accent hover:text-accent-foreground",
+                    pathname === item.href ? "bg-accent text-accent-foreground" : "text-muted-foreground"
+                  )}
+                >
+                  {item.icon}
+                  <span className="flex-1">{item.title}</span>
+                  {/* Badge for unrecognized meters */}
+                  {item.href === '/dashboard/unrecognized' && unrecognizedCount > 0 && (
+                    <span className="bg-orange-100 text-orange-700 text-xs font-semibold px-2 py-0.5 rounded-full">
+                      {unrecognizedCount}
+                    </span>
+                  )}
+                </Link>
               )}
-            >
-              {item.icon}
-              <span className="flex-1">{item.title}</span>
-              {/* Badge for unrecognized meters */}
-              {item.href === '/dashboard/unrecognized' && unrecognizedCount > 0 && (
-                <span className="bg-orange-100 text-orange-700 text-xs font-semibold px-2 py-0.5 rounded-full">
-                  {unrecognizedCount}
-                </span>
-              )}
-            </Link>
+            </div>
           ))}
         </nav>
 
