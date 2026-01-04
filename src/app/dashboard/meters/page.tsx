@@ -83,8 +83,8 @@ export default function MeterModelsPage() {
   const stats = {
     totalModels: models.filter(m => m.is_active).length,
     totalScans: models.reduce((acc, m) => acc + (m.total_scans || 0), 0),
-    successfulScans: models.reduce((acc, m) => acc + (m.successful_scans || 0), 0),
-    failedScans: models.reduce((acc, m) => acc + ((m.total_scans || 0) - (m.successful_scans || 0)), 0),
+    successfulScans: models.reduce((acc, m) => acc + (m.success_count || 0), 0),
+    failedScans: models.reduce((acc, m) => acc + (m.fail_count || 0), 0),
   }
 
   const successRate = stats.totalScans > 0 
@@ -312,7 +312,7 @@ export default function MeterModelsPage() {
               {paginatedModels.map((model) => {
                 const config = METER_TYPE_CONFIG[model.meter_type] || { icon: '📊', label: model.meter_type, color: '#6B7280' }
                 const displayType = model.ai_analysis_data?.display_type || 'mechanical'
-                const failed = (model.total_scans || 0) - (model.successful_scans || 0)
+                const failed = model.fail_count || 0
                 const photo = model.reference_photos?.[0]
 
                 return (
@@ -382,7 +382,7 @@ export default function MeterModelsPage() {
 
                     {/* Success */}
                     <div className="text-center font-medium text-green-600">
-                      {model.successful_scans || 0}
+                      {model.success_count || 0}
                     </div>
 
                     {/* Failed */}
