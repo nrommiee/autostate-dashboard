@@ -33,7 +33,7 @@ import {
 import { 
   ArrowLeft, ArrowRight, Loader2, Save, CheckCircle, Upload, 
   Sparkles, X, Trash2, Plus, Play, Check, RotateCcw, 
-  AlertTriangle, Move, Edit3, Eye, EyeOff
+  AlertTriangle, Move, Edit3, Eye, EyeOff, ZoomIn
 } from 'lucide-react'
 
 // Types
@@ -65,6 +65,12 @@ const DISPLAY_TYPES = [
     label: 'Cadrans', 
     description: 'Aiguilles rotatives',
     image: '🎯'
+  },
+  { 
+    value: 'other', 
+    label: 'Autre', 
+    description: 'Type personnalisé',
+    image: '⚙️'
   },
 ]
 
@@ -131,6 +137,7 @@ export default function CreateMeterModelPage() {
   const [customMeterType, setCustomMeterType] = useState('')
   const [unit, setUnit] = useState('')
   const [displayType, setDisplayType] = useState('')
+  const [customDisplayType, setCustomDisplayType] = useState('')
   const [keywords, setKeywords] = useState<{ value: string; selected: boolean }[]>([])
   const [needsAnalysis, setNeedsAnalysis] = useState(false)
 
@@ -159,6 +166,10 @@ export default function CreateMeterModelPage() {
   const [correctionSerial, setCorrectionSerial] = useState('')
   const [correctionReading, setCorrectionReading] = useState('')
   const [correctionReason, setCorrectionReason] = useState('')
+
+  // Modal lightbox pour agrandir image
+  const [showImageLightbox, setShowImageLightbox] = useState(false)
+  const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null)
 
   // Validation error
   const [validationError, setValidationError] = useState<string | null>(null)
@@ -194,6 +205,12 @@ export default function CreateMeterModelPage() {
     setNeedsAnalysis(false)
   }
 
+  // Ouvrir lightbox
+  const openLightbox = (url: string) => {
+    setLightboxImageUrl(url)
+    setShowImageLightbox(true)
+  }
+
   // Analysis
   const analyzePhoto = async () => {
     if (!photoFile) return
@@ -225,7 +242,13 @@ export default function CreateMeterModelPage() {
         }
       }
       if (result.displayType) {
-        setDisplayType(result.displayType)
+        const knownDisplay = DISPLAY_TYPES.find(d => d.value === result.displayType)
+        if (knownDisplay) {
+          setDisplayType(result.displayType)
+        } else {
+          setDisplayType('other')
+          setCustomDisplayType(result.displayType)
+        }
       } else if (!displayType) {
         setDisplayType('mechanical')
       }
@@ -439,11 +462,13 @@ export default function CreateMeterModelPage() {
   // Générer le prompt
   function generatePromptText(): string {
     const typeLabel = meterType === 'other' ? customMeterType : METER_TYPES.find(t => t.value === meterType)?.label || meterType
+    const displayLabel = displayType === 'other' ? customDisplayType : DISPLAY_TYPES.find(d => d.value === displayType)?.label || displayType
     
     const formatExample = 'X'.repeat(integerDigits) + ',' + 'X'.repeat(decimalDigits)
     
     let prompt = `MODÈLE: ${manufacturer ? manufacturer + ' ' : ''}${name}
 TYPE: ${typeLabel}
+AFFICHAGE: ${displayLabel}
 
 RÈGLES DE LECTURE:`
 
@@ -481,10 +506,27 @@ RÈGLES DE LECTURE:`
 
   // Save - utilise l'API existante /api/meter-models
   const handleSave = async () => {
-    if (!name.trim() || !photoUrl || zones.length === 0) { 
-      setError('Complétez tous les champs requis')
-      return 
+    // Validation
+    const finalMeterType = meterType === 'other' ? customMeterType : meterType
+    const finalDisplayType = displayType === 'other' ? customDisplayType : displayType
+    
+    if (!name.trim()) {
+      setError('Le nom est requis')
+      return
     }
+    if (!finalMeterType) {
+      setError('Le type de compteur est requis')
+      return
+    }
+    if (!photoUrl) {
+      setError('La photo est requise')
+      return
+    }
+    if (zones.length === 0) {
+      setError('Au moins une zone est requise')
+      return
+    }
+    
     setSaving(true)
     setError(null)
     
@@ -501,7 +543,6 @@ RÈGLES DE LECTURE:`
         }
       }
 
-      const finalMeterType = meterType === 'other' ? customMeterType : (meterType || 'other')
       const finalDecimalIndicator = decimalIndicator === 'other' ? customDecimalIndicator : decimalIndicator
       const promptText = generatePromptText()
 
@@ -516,7 +557,7 @@ RÈGLES DE LECTURE:`
           unit: unit || 'm³',
           ai_description: promptText,
           ai_analysis_data: {
-            display_type: displayType || 'mechanical',
+            display_type: finalDisplayType || 'mechanical',
             keywords: keywords.filter(k => k.selected).map(k => k.value),
             integerDigits,
             decimalDigits,
@@ -565,7 +606,7 @@ RÈGLES DE LECTURE:`
   // Navigation
   const canProceed = (step: number): boolean => { 
     switch (step) { 
-      case 1: return !!photoUrl && !!name.trim()
+      case 1: return !!photoUrl && !!name.trim() && !!(meterType === 'other' ? customMeterType : meterType)
       case 2: return allZonesValidated
       default: return true 
     } 
@@ -580,9 +621,20 @@ RÈGLES DE LECTURE:`
           setValidationError('Veuillez valider toutes les zones en cliquant sur "OK" avant de continuer.')
           return
         }
-        if (currentStep === 1 && (!photoUrl || !name.trim())) {
-          setValidationError('Veuillez ajouter une photo et un nom.')
-          return
+        if (currentStep === 1) {
+          if (!photoUrl) {
+            setValidationError('Veuillez ajouter une photo.')
+            return
+          }
+          if (!name.trim()) {
+            setValidationError('Veuillez ajouter un nom.')
+            return
+          }
+          const finalType = meterType === 'other' ? customMeterType : meterType
+          if (!finalType) {
+            setValidationError('Veuillez sélectionner un type de compteur.')
+            return
+          }
         }
         return
       }
@@ -657,18 +709,31 @@ RÈGLES DE LECTURE:`
             {/* STEP 1 - PHOTO & INFORMATIONS */}
             {currentStep === 1 && (
               <div className="grid md:grid-cols-2 gap-6">
-                {/* Photo à gauche */}
+                {/* Photo à gauche - RÉDUITE À 70% */}
                 <Card className="p-4">
                   <h3 className="font-semibold text-sm mb-2">Photo de référence</h3>
                   <p className="text-gray-500 text-xs mb-3">L'IA analyse la photo pour pré-remplir les informations.</p>
                   
                   {photoUrl ? (
                     <div className="space-y-3">
-                      <div className="relative">
-                        <img src={photoUrl} alt="Compteur" className="w-full rounded-lg border" />
-                        <button onClick={removePhoto} className="absolute top-2 right-2 p-1.5 bg-red-500 text-white rounded-full hover:bg-red-600">
-                          <X className="h-4 w-4" />
-                        </button>
+                      <div className="relative flex justify-center">
+                        <div className="relative w-[70%]">
+                          <img 
+                            src={photoUrl} 
+                            alt="Compteur" 
+                            className="w-full rounded-lg border cursor-pointer hover:opacity-90 transition-opacity" 
+                            onClick={() => openLightbox(photoUrl)}
+                          />
+                          <button onClick={removePhoto} className="absolute top-2 right-2 p-1.5 bg-red-500 text-white rounded-full hover:bg-red-600">
+                            <X className="h-4 w-4" />
+                          </button>
+                          <button 
+                            onClick={() => openLightbox(photoUrl)} 
+                            className="absolute bottom-2 right-2 p-1.5 bg-black/50 text-white rounded-full hover:bg-black/70"
+                          >
+                            <ZoomIn className="h-4 w-4" />
+                          </button>
+                        </div>
                       </div>
                       {needsAnalysis ? (
                         <Button onClick={analyzePhoto} disabled={analyzing} className="w-full gap-2 bg-teal-600 hover:bg-teal-700">
@@ -753,49 +818,42 @@ RÈGLES DE LECTURE:`
                       )}
                     </div>
 
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <Label className="text-xs text-gray-500">Unité</Label>
-                        <Input 
-                          value={unit} 
-                          onChange={(e) => setUnit(e.target.value)} 
-                          placeholder="Ex: m³, kWh, L" 
-                          className={`mt-1 ${justAnalyzed && unit ? 'ring-2 ring-teal-300 bg-teal-50' : ''}`} 
-                        />
-                      </div>
-                      <div>
-                        <Label className="text-xs text-gray-500">Type d'affichage</Label>
-                        <Select value={displayType} onValueChange={setDisplayType}>
-                          <SelectTrigger className={`mt-1 ${justAnalyzed && displayType ? 'ring-2 ring-teal-300 bg-teal-50' : ''}`}>
-                            <SelectValue placeholder="Sélectionner..." />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {DISPLAY_TYPES.map(d => (
-                              <SelectItem key={d.value} value={d.value}>{d.image} {d.label}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
+                    <div>
+                      <Label className="text-xs text-gray-500">Unité</Label>
+                      <Input 
+                        value={unit} 
+                        onChange={(e) => setUnit(e.target.value)} 
+                        placeholder="Ex: m³, kWh, L" 
+                        className={`mt-1 ${justAnalyzed && unit ? 'ring-2 ring-teal-300 bg-teal-50' : ''}`} 
+                      />
                     </div>
 
-                    {/* Mini tuto affichage */}
-                    <div className="p-3 bg-gray-50 rounded-lg">
-                      <div className="text-xs text-gray-500 mb-2">Types d'affichage :</div>
-                      <div className="grid grid-cols-3 gap-2">
+                    {/* Type d'affichage - Version liste UNIQUEMENT avec Autre */}
+                    <div>
+                      <Label className="text-xs text-gray-500">Type d'affichage</Label>
+                      <div className={`grid grid-cols-4 gap-2 mt-2 ${justAnalyzed && displayType ? 'ring-2 ring-teal-300 rounded-lg p-1' : ''}`}>
                         {DISPLAY_TYPES.map(d => (
                           <div 
                             key={d.value} 
-                            className={`p-2 rounded border text-center cursor-pointer transition-colors ${
-                              displayType === d.value ? 'border-teal-500 bg-teal-50' : 'border-gray-200 bg-white'
+                            className={`p-2 rounded-lg border text-center cursor-pointer transition-colors ${
+                              displayType === d.value ? 'border-teal-500 bg-teal-50' : 'border-gray-200 hover:border-gray-300'
                             }`}
                             onClick={() => setDisplayType(d.value)}
                           >
-                            <div className="text-2xl mb-1">{d.image}</div>
+                            <div className="text-xl mb-1">{d.image}</div>
                             <div className="text-xs font-medium">{d.label}</div>
-                            <div className="text-xs text-gray-400">{d.description}</div>
+                            <div className="text-[10px] text-gray-400">{d.description}</div>
                           </div>
                         ))}
                       </div>
+                      {displayType === 'other' && (
+                        <Input 
+                          value={customDisplayType} 
+                          onChange={(e) => setCustomDisplayType(e.target.value)} 
+                          placeholder="Type d'affichage personnalisé"
+                          className="mt-2" 
+                        />
+                      )}
                     </div>
 
                     {keywords.length > 0 && (
@@ -824,7 +882,7 @@ RÈGLES DE LECTURE:`
             {/* STEP 2 - INDEX & ZONES */}
             {currentStep === 2 && (
               <div className="grid md:grid-cols-2 gap-6">
-                {/* Photo avec zones */}
+                {/* Photo avec zones - RÉDUITE À 70% */}
                 <Card className="p-4">
                   <div className="flex items-center justify-between mb-2">
                     <h3 className="font-semibold text-sm">
@@ -843,37 +901,51 @@ RÈGLES DE LECTURE:`
                   </div>
                   
                   {photoUrl && (
-                    <div 
-                      ref={photoContainerRef} 
-                      className={`relative select-none ${repositioningZoneId ? 'cursor-crosshair' : ''}`}
-                      onMouseDown={handlePhotoMouseDown}
-                      onMouseMove={handlePhotoMouseMove}
-                      onMouseUp={handlePhotoMouseUp}
-                      onMouseLeave={handlePhotoMouseUp}
-                    >
-                      <img src={photoUrl} alt="Compteur" className="w-full rounded-lg" draggable={false} />
-                      {showZonesOnPhoto && zones.map((zone) => zone.position && (
-                        <div 
-                          key={zone.id}
-                          className={`absolute border-2 rounded ${selectedZoneId === zone.id ? 'ring-2 ring-white' : ''}`}
-                          style={{
-                            left: `${zone.position.x * 100}%`,
-                            top: `${zone.position.y * 100}%`,
-                            width: `${zone.position.w * 100}%`,
-                            height: `${zone.position.h * 100}%`,
-                            borderColor: ZONE_TYPES.find(z => z.value === zone.fieldType)?.color || '#6B7280',
-                            backgroundColor: `${ZONE_TYPES.find(z => z.value === zone.fieldType)?.color || '#6B7280'}30`
-                          }}
-                          onClick={() => setSelectedZoneId(zone.id)}
+                    <div className="flex justify-center">
+                      <div 
+                        ref={photoContainerRef} 
+                        className={`relative select-none w-[70%] ${repositioningZoneId ? 'cursor-crosshair' : ''}`}
+                        onMouseDown={handlePhotoMouseDown}
+                        onMouseMove={handlePhotoMouseMove}
+                        onMouseUp={handlePhotoMouseUp}
+                        onMouseLeave={handlePhotoMouseUp}
+                      >
+                        <img 
+                          src={photoUrl} 
+                          alt="Compteur" 
+                          className="w-full rounded-lg cursor-pointer" 
+                          draggable={false} 
+                          onClick={() => !repositioningZoneId && openLightbox(photoUrl)}
+                        />
+                        <button 
+                          onClick={() => openLightbox(photoUrl)} 
+                          className="absolute bottom-2 right-2 p-1.5 bg-black/50 text-white rounded-full hover:bg-black/70"
                         >
-                          <span 
-                            className="absolute -top-5 left-0 px-1 text-xs text-white rounded"
-                            style={{ backgroundColor: ZONE_TYPES.find(z => z.value === zone.fieldType)?.color || '#6B7280' }}
+                          <ZoomIn className="h-4 w-4" />
+                        </button>
+                        {showZonesOnPhoto && zones.map((zone) => zone.position && (
+                          <div 
+                            key={zone.id}
+                            className={`absolute border-2 rounded ${selectedZoneId === zone.id ? 'ring-2 ring-white' : ''}`}
+                            style={{
+                              left: `${zone.position.x * 100}%`,
+                              top: `${zone.position.y * 100}%`,
+                              width: `${zone.position.w * 100}%`,
+                              height: `${zone.position.h * 100}%`,
+                              borderColor: ZONE_TYPES.find(z => z.value === zone.fieldType)?.color || '#6B7280',
+                              backgroundColor: `${ZONE_TYPES.find(z => z.value === zone.fieldType)?.color || '#6B7280'}30`
+                            }}
+                            onClick={() => setSelectedZoneId(zone.id)}
                           >
-                            {zone.label}
-                          </span>
-                        </div>
-                      ))}
+                            <span 
+                              className="absolute -top-5 left-0 px-1 text-xs text-white rounded"
+                              style={{ backgroundColor: ZONE_TYPES.find(z => z.value === zone.fieldType)?.color || '#6B7280' }}
+                            >
+                              {zone.label}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </Card>
@@ -1065,11 +1137,24 @@ RÈGLES DE LECTURE:`
                   <div className="grid md:grid-cols-2 gap-4">
                     <div>
                       {testPhotoUrl ? (
-                        <div className="relative">
-                          <img src={testPhotoUrl} alt="Test" className="w-full max-h-64 object-contain rounded-lg border" />
-                          <button onClick={resetTestPhoto} className="absolute top-2 right-2 p-1.5 bg-gray-800 text-white rounded-full">
-                            <RotateCcw className="h-4 w-4" />
-                          </button>
+                        <div className="relative flex justify-center">
+                          <div className="relative w-[70%]">
+                            <img 
+                              src={testPhotoUrl} 
+                              alt="Test" 
+                              className="w-full object-contain rounded-lg border cursor-pointer hover:opacity-90" 
+                              onClick={() => openLightbox(testPhotoUrl)}
+                            />
+                            <button onClick={resetTestPhoto} className="absolute top-2 right-2 p-1.5 bg-gray-800 text-white rounded-full">
+                              <RotateCcw className="h-4 w-4" />
+                            </button>
+                            <button 
+                              onClick={() => openLightbox(testPhotoUrl)} 
+                              className="absolute bottom-2 right-2 p-1.5 bg-black/50 text-white rounded-full hover:bg-black/70"
+                            >
+                              <ZoomIn className="h-4 w-4" />
+                            </button>
+                          </div>
                         </div>
                       ) : (
                         <label className="flex flex-col items-center justify-center h-48 border-2 border-dashed rounded-lg cursor-pointer hover:border-teal-500 hover:bg-teal-50">
@@ -1170,7 +1255,12 @@ RÈGLES DE LECTURE:`
                     </div>
                     <div>
                       <span className="text-gray-500">Type:</span>
-                      <span className="ml-2">{METER_TYPES.find(t => t.value === meterType)?.icon} {METER_TYPES.find(t => t.value === meterType)?.label}</span>
+                      <span className="ml-2">
+                        {meterType === 'other' 
+                          ? `📊 ${customMeterType || 'Autre'}`
+                          : `${METER_TYPES.find(t => t.value === meterType)?.icon || ''} ${METER_TYPES.find(t => t.value === meterType)?.label || '-'}`
+                        }
+                      </span>
                     </div>
                     <div>
                       <span className="text-gray-500">Zones:</span>
@@ -1191,7 +1281,7 @@ RÈGLES DE LECTURE:`
                   Suivant <ArrowRight className="h-4 w-4 ml-1" />
                 </Button>
               ) : (
-                <Button onClick={handleSave} disabled={saving || !name.trim() || zones.length === 0} className="min-w-32">
+                <Button onClick={handleSave} disabled={saving} className="min-w-32">
                   {saving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Save className="h-4 w-4 mr-1" />}
                   Enregistrer
                 </Button>
@@ -1244,6 +1334,32 @@ RÈGLES DE LECTURE:`
                 <Check className="h-4 w-4 mr-1" /> Enregistrer correction
               </Button>
             </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Modal Lightbox pour agrandir les images */}
+        <Dialog open={showImageLightbox} onOpenChange={setShowImageLightbox}>
+          <DialogContent className="max-w-4xl p-2">
+            <DialogHeader className="sr-only">
+              <DialogTitle>Image agrandie</DialogTitle>
+            </DialogHeader>
+            {lightboxImageUrl && (
+              <div className="relative">
+                <img 
+                  src={lightboxImageUrl} 
+                  alt="Image agrandie" 
+                  className="w-full h-auto max-h-[80vh] object-contain rounded-lg"
+                />
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  className="absolute top-2 right-2 bg-black/50 text-white hover:bg-black/70"
+                  onClick={() => setShowImageLightbox(false)}
+                >
+                  <X className="h-5 w-5" />
+                </Button>
+              </div>
+            )}
           </DialogContent>
         </Dialog>
       </div>
