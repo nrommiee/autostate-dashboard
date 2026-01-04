@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Card } from '@/components/ui/card'
@@ -35,7 +35,6 @@ import {
   Sparkles, X, Trash2, Plus, Play, Check, RotateCcw, 
   AlertTriangle, Move, Edit3, Eye, EyeOff
 } from 'lucide-react'
-import { supabase } from '@/lib/supabase'
 
 // Types
 const METER_TYPES = [
@@ -178,7 +177,7 @@ export default function CreateMeterModelPage() {
     if (photoUrl?.startsWith('blob:')) URL.revokeObjectURL(photoUrl)
     setPhotoFile(file)
     setPhotoUrl(URL.createObjectURL(file))
-    setNeedsAnalysis(true)  // Montrer le bouton d'analyse
+    setNeedsAnalysis(true)
   }
 
   const removePhoto = () => {
@@ -187,8 +186,12 @@ export default function CreateMeterModelPage() {
     setPhotoUrl(null)
     setName('')
     setManufacturer('')
+    setMeterType('')
+    setUnit('')
+    setDisplayType('')
     setKeywords([])
     setZones([])
+    setNeedsAnalysis(false)
   }
 
   // Analysis
@@ -224,7 +227,7 @@ export default function CreateMeterModelPage() {
       if (result.displayType) {
         setDisplayType(result.displayType)
       } else if (!displayType) {
-        setDisplayType('mechanical')  // Défaut si non détecté
+        setDisplayType('mechanical')
       }
       if (result.keywords) {
         setKeywords(result.keywords.map((kw: string) => ({ value: kw, selected: true })))
@@ -476,7 +479,7 @@ RÈGLES DE LECTURE:`
     return prompt
   }
 
-  // Save
+  // Save - utilise l'API existante /api/meter-models
   const handleSave = async () => {
     if (!name.trim() || !photoUrl || zones.length === 0) { 
       setError('Complétez tous les champs requis')
@@ -498,49 +501,49 @@ RÈGLES DE LECTURE:`
         }
       }
 
-      const finalMeterType = meterType === 'other' ? customMeterType : meterType
+      const finalMeterType = meterType === 'other' ? customMeterType : (meterType || 'other')
       const finalDecimalIndicator = decimalIndicator === 'other' ? customDecimalIndicator : decimalIndicator
       const promptText = generatePromptText()
 
-      // Utiliser l'API route pour la création (avec service role key)
-      const response = await fetch('/api/create-meter-model', {
+      // Appel à l'API existante
+      const response = await fetch('/api/meter-models', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name,
-          manufacturer: manufacturer || null,
-          meter_type: finalMeterType || 'other',
+          manufacturer: manufacturer || '',
+          meter_type: finalMeterType,
           unit: unit || 'm³',
-          display_type: displayType || 'mechanical',
-          keywords: keywords.filter(k => k.selected).map(k => k.value),
+          ai_description: promptText,
+          ai_analysis_data: {
+            display_type: displayType || 'mechanical',
+            keywords: keywords.filter(k => k.selected).map(k => k.value),
+            integerDigits,
+            decimalDigits,
+            decimalIndicator: finalDecimalIndicator,
+            tests: testHistory.map(t => ({
+              extractedSerial: t.extractedSerial,
+              extractedReading: t.extractedReading,
+              correctSerial: t.correctSerial,
+              correctReading: t.correctReading,
+              confidence: t.confidence,
+              isValidated: t.isValidated,
+              isRejected: t.isRejected,
+              rejectionReason: t.rejectionReason
+            }))
+          },
           reference_photos: [uploadedPhotoUrl],
-          is_verified: testHistory.filter(t => t.isValidated).length > 0,
-          // Reading rules
-          serial_digits: zones.find(z => z.fieldType === 'serialNumber')?.extractedValue?.replace(/[^0-9]/g, '').length || null,
-          reading_integer_digits: integerDigits,
-          reading_decimal_digits: decimalDigits,
-          decimal_indicator: finalDecimalIndicator,
-          prompt_rules: promptText,
-          // Zones
           zones: zones.map(z => ({
             id: z.id,
             fieldType: z.fieldType,
             label: z.label,
             extractedValue: z.extractedValue,
             position: z.position,
-            decimalDigits: z.decimalDigits
+            hasDecimals: z.fieldType?.includes('reading'),
+            decimalDigits: z.decimalDigits || 0
           })),
-          // Tests
-          tests: testHistory.map(t => ({
-            extractedSerial: t.extractedSerial,
-            extractedReading: t.extractedReading,
-            correctSerial: t.correctSerial,
-            correctReading: t.correctReading,
-            confidence: t.confidence,
-            isValidated: t.isValidated,
-            isRejected: t.isRejected,
-            rejectionReason: t.rejectionReason
-          }))
+          is_verified: testHistory.filter(t => t.isValidated).length > 0,
+          is_active: true
         })
       })
 
@@ -877,7 +880,7 @@ RÈGLES DE LECTURE:`
 
                 {/* Index + Zones à droite */}
                 <div className="space-y-4">
-                  {/* Index de consommation EN PREMIER */}
+                  {/* Index de consommation */}
                   <Card className="p-4">
                     <h3 className="font-semibold mb-3">Index de consommation</h3>
                     <div className="grid grid-cols-2 gap-3 mb-3">
@@ -935,7 +938,7 @@ RÈGLES DE LECTURE:`
                     </div>
                   </Card>
 
-                  {/* Zones EN SECOND */}
+                  {/* Zones */}
                   <Card className="p-4">
                     <div className="flex items-center justify-between mb-3">
                       <h3 className="font-semibold">Zones ({zones.length})</h3>
