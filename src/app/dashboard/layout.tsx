@@ -60,14 +60,13 @@ const navItems: NavItem[] = [
     icon: <FileText className="h-4 w-4" />,
   },
   {
-    title: 'Modèles compteurs',
+    title: 'Compteurs',
     href: '/dashboard/meters',
     icon: <Gauge className="h-4 w-4" />,
-  },
-  {
-    title: 'Non reconnus',
-    href: '/dashboard/unrecognized',
-    icon: <AlertCircle className="h-4 w-4" />,
+    children: [
+      { title: 'Non reconnus', href: '/dashboard/unrecognized', icon: <AlertCircle className="h-4 w-4" /> },
+      { title: 'Modèles', href: '/dashboard/meters', icon: <Gauge className="h-4 w-4" /> },
+    ]
   },
   {
     title: 'Analytics',
@@ -92,10 +91,13 @@ export default function DashboardLayout({
   const [unrecognizedCount, setUnrecognizedCount] = useState(0)
   const [expandedItems, setExpandedItems] = useState<string[]>([])
 
-  // Auto-expand Analytics if we're on an analytics page
+  // Auto-expand sections based on current path
   useEffect(() => {
     if (pathname?.startsWith('/dashboard/analytics')) {
       setExpandedItems(prev => prev.includes('/dashboard/analytics') ? prev : [...prev, '/dashboard/analytics'])
+    }
+    if (pathname?.startsWith('/dashboard/meters') || pathname?.startsWith('/dashboard/unrecognized')) {
+      setExpandedItems(prev => prev.includes('/dashboard/meters') ? prev : [...prev, '/dashboard/meters'])
     }
   }, [pathname])
 
@@ -197,18 +199,24 @@ export default function DashboardLayout({
                   {expandedItems.includes(item.href) && (
                     <div className="ml-4 mt-1 space-y-1 border-l pl-3">
                       {item.children.map((child) => (
-                        <Link
-                          key={child.href}
-                          href={child.href}
-                          className={cn(
-                            "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
-                            "hover:bg-accent hover:text-accent-foreground",
-                            pathname === child.href ? "bg-accent text-accent-foreground" : "text-muted-foreground"
-                          )}
-                        >
-                          {child.icon}
-                          <span>{child.title}</span>
-                        </Link>
+                          <Link
+                            key={child.href}
+                            href={child.href}
+                            className={cn(
+                              "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                              "hover:bg-accent hover:text-accent-foreground",
+                              pathname === child.href ? "bg-accent text-accent-foreground" : "text-muted-foreground"
+                            )}
+                          >
+                            {child.icon}
+                            <span className="flex-1">{child.title}</span>
+                            {/* Badge for unrecognized meters */}
+                            {child.href === '/dashboard/unrecognized' && unrecognizedCount > 0 && (
+                              <span className="bg-orange-100 text-orange-700 text-xs font-semibold px-2 py-0.5 rounded-full">
+                                {unrecognizedCount}
+                              </span>
+                            )}
+                          </Link>
                       ))}
                     </div>
                   )}
@@ -225,12 +233,6 @@ export default function DashboardLayout({
                 >
                   {item.icon}
                   <span className="flex-1">{item.title}</span>
-                  {/* Badge for unrecognized meters */}
-                  {item.href === '/dashboard/unrecognized' && unrecognizedCount > 0 && (
-                    <span className="bg-orange-100 text-orange-700 text-xs font-semibold px-2 py-0.5 rounded-full">
-                      {unrecognizedCount}
-                    </span>
-                  )}
                 </Link>
               )}
             </div>
