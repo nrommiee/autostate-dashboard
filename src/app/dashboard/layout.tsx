@@ -18,12 +18,26 @@ import {
   AlertCircle,
   BarChart3,
   Activity,
-  DollarSign
+  DollarSign,
+  HelpCircle,
+  Search,
+  MoreVertical,
+  User,
+  CreditCard,
+  Bell
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Separator } from '@/components/ui/separator'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 
 interface NavItem {
   title: string
@@ -241,12 +255,51 @@ export default function DashboardLayout({
 
         <Separator />
 
-        {/* User section */}
+        {/* Bottom section - Settings, Help, Search */}
+        <div className="p-4 space-y-1">
+          <Link
+            href="/dashboard/settings"
+            className={cn(
+              "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+              "hover:bg-accent hover:text-accent-foreground",
+              pathname === '/dashboard/settings' ? "bg-accent text-accent-foreground" : "text-muted-foreground"
+            )}
+          >
+            <Settings className="h-4 w-4" />
+            <span>Paramètres</span>
+          </Link>
+          <Link
+            href="/dashboard/help"
+            className={cn(
+              "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+              "hover:bg-accent hover:text-accent-foreground",
+              pathname === '/dashboard/help' ? "bg-accent text-accent-foreground" : "text-muted-foreground"
+            )}
+          >
+            <HelpCircle className="h-4 w-4" />
+            <span>Aide</span>
+          </Link>
+          <Link
+            href="/dashboard/search"
+            className={cn(
+              "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+              "hover:bg-accent hover:text-accent-foreground",
+              pathname === '/dashboard/search' ? "bg-accent text-accent-foreground" : "text-muted-foreground"
+            )}
+          >
+            <Search className="h-4 w-4" />
+            <span>Recherche</span>
+          </Link>
+        </div>
+
+        <Separator />
+
+        {/* User section with dropdown */}
         <div className="p-4">
-          <div className="flex items-center gap-3 mb-4">
-            <Avatar className="h-9 w-9">
+          <div className="flex items-center gap-3">
+            <Avatar className="h-10 w-10">
               <AvatarImage src={user?.avatar_url || ''} />
-              <AvatarFallback className="bg-teal-100 text-teal-700">
+              <AvatarFallback className="bg-teal-100 text-teal-700 text-sm font-medium">
                 {user?.full_name?.charAt(0) || user?.email?.charAt(0) || 'A'}
               </AvatarFallback>
             </Avatar>
@@ -258,16 +311,60 @@ export default function DashboardLayout({
                 {user?.email}
               </p>
             </div>
+            
+            {/* Dropdown menu */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-8 w-8">
+                  <MoreVertical className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel className="font-normal">
+                  <div className="flex items-center gap-3">
+                    <Avatar className="h-10 w-10">
+                      <AvatarImage src={user?.avatar_url || ''} />
+                      <AvatarFallback className="bg-gradient-to-br from-teal-400 to-cyan-500 text-white text-sm font-medium">
+                        {user?.full_name?.charAt(0) || user?.email?.charAt(0) || 'A'}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">
+                        {user?.full_name || 'Admin'}
+                      </p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {user?.email}
+                      </p>
+                    </div>
+                  </div>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem asChild>
+                  <Link href="/dashboard/account" className="flex items-center gap-2 cursor-pointer">
+                    <User className="h-4 w-4" />
+                    <span>Compte</span>
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href="/dashboard/billing" className="flex items-center gap-2 cursor-pointer">
+                    <CreditCard className="h-4 w-4" />
+                    <span>Facturation</span>
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href="/dashboard/notifications" className="flex items-center gap-2 cursor-pointer">
+                    <Bell className="h-4 w-4" />
+                    <span>Notifications</span>
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={handleLogout} className="text-red-600 focus:text-red-600 cursor-pointer">
+                  <LogOut className="h-4 w-4 mr-2" />
+                  <span>Déconnexion</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
-
-          <Button 
-            variant="outline" 
-            className="w-full justify-start gap-2"
-            onClick={handleLogout}
-          >
-            <LogOut className="h-4 w-4" />
-            Déconnexion
-          </Button>
         </div>
       </aside>
 
