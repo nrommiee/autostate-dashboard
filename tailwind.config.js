@@ -16,6 +16,15 @@ module.exports = {
   		}
   	},
   	extend: {
+  		maxHeight: {
+  			'111': '444px'
+  		},
+  		zIndex: {
+  			'1': '1'
+  		},
+  		spacing: {
+  			'8.5': '2.125rem'
+  		},
   		colors: {
   			border: 'hsl(var(--border))',
   			input: 'hsl(var(--input))',
