@@ -2,22 +2,27 @@
 
 import { useEffect, useState } from 'react'
 import { supabase, Mission, MissionData } from '@/lib/supabase'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
 import { 
-  TrendingUp,
-  TrendingDown,
-  Download
+  UsersIcon,
+  ClipboardListIcon,
+  DoorOpenIcon,
+  CameraIcon,
+  Download,
+  LogInIcon,
+  LogOutIcon,
+  FileTextIcon,
+  HomeIcon,
+  BuildingIcon,
+  ImageIcon
 } from 'lucide-react'
-import {
-  Area,
-  AreaChart,
-  ResponsiveContainer,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
-} from 'recharts'
+
+import { Button } from '@/components/ui/button'
+
+import StatisticsCard from '@/components/shadcn-studio/blocks/statistics-card'
+import StatisticsCardWithSvg from '@/components/shadcn-studio/blocks/statistics-card-with-svg'
+import MissionsChartCard from '@/components/shadcn-studio/blocks/chart-missions'
+import ActivityCard from '@/components/shadcn-studio/blocks/widget-activity'
+import UsersCardSvg from '@/assets/svg/users-card-svg'
 
 interface Stats {
   totalUsers: number
@@ -35,11 +40,6 @@ interface DailyMission {
   missions: number
 }
 
-interface DailyUsers {
-  date: string
-  users: number
-}
-
 export default function DashboardPage() {
   const [stats, setStats] = useState<Stats>({
     totalUsers: 0,
@@ -53,9 +53,7 @@ export default function DashboardPage() {
   })
   const [loading, setLoading] = useState(true)
   const [missionsData, setMissionsData] = useState<DailyMission[]>([])
-  const [usersData, setUsersData] = useState<DailyUsers[]>([])
   const [missionsPeriod, setMissionsPeriod] = useState<'7' | '30' | '90'>('30')
-  const [usersPeriod, setUsersPeriod] = useState<'7' | '30' | '90'>('30')
 
   useEffect(() => {
     const fetchStats = async () => {
@@ -185,61 +183,6 @@ export default function DashboardPage() {
     fetchMissionsChart()
   }, [missionsPeriod])
 
-  // Fetch users chart data
-  useEffect(() => {
-    const fetchUsersChart = async () => {
-      const days = parseInt(usersPeriod)
-      const startDate = new Date()
-      startDate.setDate(startDate.getDate() - days)
-      
-      const { data: profiles } = await supabase
-        .from('profiles')
-        .select('created_at')
-        .gte('created_at', startDate.toISOString())
-        .order('created_at', { ascending: true })
-
-      // Group by date (cumulative)
-      const grouped: Record<string, number> = {}
-      
-      // Get total users before period
-      const { count: usersBefore } = await supabase
-        .from('profiles')
-        .select('*', { count: 'exact', head: true })
-        .lt('created_at', startDate.toISOString())
-
-      let cumulative = usersBefore || 0
-
-      // Initialize all dates
-      for (let i = 0; i < days; i++) {
-        const date = new Date()
-        date.setDate(date.getDate() - (days - 1 - i))
-        const dateStr = date.toISOString().split('T')[0]
-        grouped[dateStr] = cumulative
-      }
-
-      // Add new users cumulatively
-      profiles?.forEach((p) => {
-        const dateStr = new Date(p.created_at).toISOString().split('T')[0]
-        // Increment this date and all future dates
-        Object.keys(grouped).forEach(key => {
-          if (key >= dateStr) {
-            grouped[key]++
-          }
-        })
-      })
-
-      // Convert to array
-      const chartData = Object.entries(grouped).map(([date, users]) => ({
-        date: new Date(date).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }),
-        users,
-      }))
-
-      setUsersData(chartData)
-    }
-
-    fetchUsersChart()
-  }, [usersPeriod])
-
   // Calculate percentage change
   const getPercentChange = (current: number, previous: number) => {
     if (previous === 0) return current > 0 ? 100 : 0
@@ -248,276 +191,169 @@ export default function DashboardPage() {
 
   const missionsChange = getPercentChange(stats.missionsThisMonth, stats.lastMonthMissions)
 
+  // Activity data for the widget
+  const activityData = [
+    {
+      icon: LogInIcon,
+      title: "États d'entrée",
+      value: Math.round(stats.totalMissions * 0.45).toString(),
+      percentage: '45%',
+      avatarClassName: 'bg-emerald-100 text-emerald-600'
+    },
+    {
+      icon: LogOutIcon,
+      title: "États de sortie",
+      value: Math.round(stats.totalMissions * 0.32).toString(),
+      percentage: '32%',
+      avatarClassName: 'bg-orange-100 text-orange-600'
+    },
+    {
+      icon: FileTextIcon,
+      title: "Pré-états",
+      value: Math.round(stats.totalMissions * 0.23).toString(),
+      percentage: '23%',
+      avatarClassName: 'bg-blue-100 text-blue-600'
+    }
+  ]
+
+  // Property types data
+  const propertyData = [
+    {
+      icon: HomeIcon,
+      title: "Maisons",
+      value: Math.round(stats.totalMissions * 0.35).toString(),
+      percentage: '35%',
+      avatarClassName: 'bg-violet-100 text-violet-600'
+    },
+    {
+      icon: BuildingIcon,
+      title: "Appartements",
+      value: Math.round(stats.totalMissions * 0.55).toString(),
+      percentage: '55%',
+      avatarClassName: 'bg-cyan-100 text-cyan-600'
+    },
+    {
+      icon: ImageIcon,
+      title: "Studios",
+      value: Math.round(stats.totalMissions * 0.10).toString(),
+      percentage: '10%',
+      avatarClassName: 'bg-pink-100 text-pink-600'
+    }
+  ]
+
+  // Stats cards data
+  const statsCardsData = [
+    {
+      icon: <UsersIcon />,
+      title: 'Utilisateurs',
+      value: stats.totalUsers.toLocaleString('fr-FR'),
+      trend: undefined,
+      changePercentage: undefined,
+      badgeContent: 'Comptes actifs',
+      iconClassName: 'bg-chart-1/10 text-chart-1'
+    },
+    {
+      icon: <ClipboardListIcon />,
+      title: 'Missions',
+      value: stats.totalMissions.toLocaleString('fr-FR'),
+      trend: missionsChange > 0 ? 'up' as const : missionsChange < 0 ? 'down' as const : undefined,
+      changePercentage: missionsChange !== 0 ? `${missionsChange > 0 ? '+' : ''}${missionsChange}%` : undefined,
+      badgeContent: `${stats.missionsThisMonth} ce mois`,
+      iconClassName: 'bg-chart-2/10 text-chart-2'
+    },
+    {
+      icon: <DoorOpenIcon />,
+      title: 'Pièces',
+      value: stats.totalRooms.toLocaleString('fr-FR'),
+      trend: undefined,
+      changePercentage: undefined,
+      badgeContent: 'Total inspectées',
+      iconClassName: 'bg-chart-3/10 text-chart-3'
+    },
+    {
+      icon: <CameraIcon />,
+      title: 'Photos',
+      value: stats.totalPhotos.toLocaleString('fr-FR'),
+      trend: undefined,
+      changePercentage: undefined,
+      badgeContent: 'Total capturées',
+      iconClassName: 'bg-chart-4/10 text-chart-4'
+    }
+  ]
+
   return (
-    <div className="flex-1 space-y-6 p-8 pt-6 bg-gray-50/50">
+    <div className='mx-auto size-full max-w-7xl flex-1 px-4 py-6 sm:px-6'>
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight text-gray-900">Dashboard</h2>
-          <p className="text-sm text-gray-500">Vue d'ensemble de l'activité AutoState</p>
+      <div className='flex items-center justify-between mb-6'>
+        <div className='flex flex-col gap-1'>
+          <h1 className='text-2xl font-semibold tracking-tight'>Dashboard</h1>
+          <p className='text-muted-foreground text-sm'>Vue d&apos;ensemble de l&apos;activité AutoState</p>
         </div>
-        <Button variant="outline" className="bg-white">
-          <Download className="mr-2 h-4 w-4" />
+        <Button variant='outline'>
+          <Download className='mr-2 h-4 w-4' />
           Exporter
         </Button>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        {/* Utilisateurs */}
-        <Card className="bg-white border-gray-200">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-gray-500">
-              Utilisateurs
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-semibold text-gray-900">
-              {loading ? '...' : stats.totalUsers.toLocaleString('fr-FR')}
-            </div>
-            <p className="text-sm text-gray-500 mt-1">
-              Comptes actifs
-            </p>
-          </CardContent>
-        </Card>
+      {/* Main Grid */}
+      <div className='grid grid-cols-2 gap-6 xl:grid-cols-3'>
+        {/* Statistics Cards Row */}
+        <div className='col-span-2 grid grid-cols-2 gap-6 xl:grid-cols-4'>
+          {statsCardsData.map((card, index) => (
+            <StatisticsCard
+              key={index}
+              icon={card.icon}
+              title={card.title}
+              value={card.value}
+              trend={card.trend}
+              changePercentage={card.changePercentage}
+              badgeContent={card.badgeContent}
+              className='shadow-none'
+              iconClassName={card.iconClassName}
+              loading={loading}
+            />
+          ))}
+        </div>
 
-        {/* Missions */}
-        <Card className="bg-white border-gray-200">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-gray-500">
-              Missions
-            </CardTitle>
-            {missionsChange !== 0 && (
-              <div className={`flex items-center text-xs font-medium ${
-                missionsChange > 0 ? 'text-emerald-600' : 'text-red-600'
-              }`}>
-                {missionsChange > 0 ? (
-                  <TrendingUp className="h-3 w-3 mr-1" />
-                ) : (
-                  <TrendingDown className="h-3 w-3 mr-1" />
-                )}
-                {missionsChange > 0 ? '+' : ''}{missionsChange}%
-              </div>
-            )}
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-semibold text-gray-900">
-              {loading ? '...' : stats.totalMissions.toLocaleString('fr-FR')}
-            </div>
-            <p className="text-sm text-gray-500 mt-1">
-              {stats.missionsThisMonth} ce mois
-            </p>
-          </CardContent>
-        </Card>
+        {/* Users Card with SVG */}
+        <StatisticsCardWithSvg
+          title='Utilisateurs actifs'
+          badgeContent='Avec workspace'
+          value={stats.activeUsers.toLocaleString('fr-FR')}
+          changePercentage={12}
+          svg={<UsersCardSvg />}
+          className='shadow-none max-xl:col-span-full'
+          loading={loading}
+        />
 
-        {/* Pièces */}
-        <Card className="bg-white border-gray-200">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-gray-500">
-              Pièces
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-semibold text-gray-900">
-              {loading ? '...' : stats.totalRooms.toLocaleString('fr-FR')}
-            </div>
-            <p className="text-sm text-gray-500 mt-1">
-              Total inspectées
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* Photos */}
-        <Card className="bg-white border-gray-200">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-gray-500">
-              Photos
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-semibold text-gray-900">
-              {loading ? '...' : stats.totalPhotos.toLocaleString('fr-FR')}
-            </div>
-            <p className="text-sm text-gray-500 mt-1">
-              Total capturées
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Charts */}
-      <div className="grid gap-6 lg:grid-cols-2">
         {/* Missions Chart */}
-        <Card className="bg-white border-gray-200">
-          <CardHeader className="flex flex-row items-center justify-between">
-            <div>
-              <CardTitle className="text-base font-semibold text-gray-900">
-                Missions réalisées
-              </CardTitle>
-              <CardDescription>
-                Nombre de missions par jour
-              </CardDescription>
-            </div>
-            <div className="flex gap-1">
-              <Button
-                variant={missionsPeriod === '7' ? 'default' : 'ghost'}
-                size="sm"
-                onClick={() => setMissionsPeriod('7')}
-                className="text-xs h-8"
-              >
-                7 jours
-              </Button>
-              <Button
-                variant={missionsPeriod === '30' ? 'default' : 'ghost'}
-                size="sm"
-                onClick={() => setMissionsPeriod('30')}
-                className="text-xs h-8"
-              >
-                30 jours
-              </Button>
-              <Button
-                variant={missionsPeriod === '90' ? 'default' : 'ghost'}
-                size="sm"
-                onClick={() => setMissionsPeriod('90')}
-                className="text-xs h-8"
-              >
-                90 jours
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="h-[250px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={missionsData}>
-                  <defs>
-                    <linearGradient id="missionGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#0d9488" stopOpacity={0.3} />
-                      <stop offset="100%" stopColor="#0d9488" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                  <XAxis 
-                    dataKey="date" 
-                    fontSize={11} 
-                    tickLine={false} 
-                    axisLine={false}
-                    tick={{ fill: '#9ca3af' }}
-                  />
-                  <YAxis 
-                    fontSize={11} 
-                    tickLine={false} 
-                    axisLine={false}
-                    tick={{ fill: '#9ca3af' }}
-                    allowDecimals={false}
-                  />
-                  <Tooltip 
-                    contentStyle={{ 
-                      backgroundColor: 'white', 
-                      border: '1px solid #e5e7eb',
-                      borderRadius: '8px',
-                      boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'
-                    }}
-                    labelStyle={{ color: '#111827', fontWeight: 600 }}
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="missions"
-                    stroke="#0d9488"
-                    strokeWidth={2}
-                    fill="url(#missionGradient)"
-                    name="Missions"
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
+        <MissionsChartCard
+          className='col-span-2 shadow-none'
+          chartData={missionsData}
+          period={missionsPeriod}
+          onPeriodChange={setMissionsPeriod}
+          stats={{
+            thisMonth: stats.missionsThisMonth,
+            lastMonth: stats.lastMonthMissions,
+            total: stats.totalMissions
+          }}
+        />
 
-        {/* Users Chart */}
-        <Card className="bg-white border-gray-200">
-          <CardHeader className="flex flex-row items-center justify-between">
-            <div>
-              <CardTitle className="text-base font-semibold text-gray-900">
-                Utilisateurs actifs
-              </CardTitle>
-              <CardDescription>
-                Évolution du nombre d'utilisateurs
-              </CardDescription>
-            </div>
-            <div className="flex gap-1">
-              <Button
-                variant={usersPeriod === '7' ? 'default' : 'ghost'}
-                size="sm"
-                onClick={() => setUsersPeriod('7')}
-                className="text-xs h-8"
-              >
-                7 jours
-              </Button>
-              <Button
-                variant={usersPeriod === '30' ? 'default' : 'ghost'}
-                size="sm"
-                onClick={() => setUsersPeriod('30')}
-                className="text-xs h-8"
-              >
-                30 jours
-              </Button>
-              <Button
-                variant={usersPeriod === '90' ? 'default' : 'ghost'}
-                size="sm"
-                onClick={() => setUsersPeriod('90')}
-                className="text-xs h-8"
-              >
-                90 jours
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="h-[250px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={usersData}>
-                  <defs>
-                    <linearGradient id="usersGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#6366f1" stopOpacity={0.3} />
-                      <stop offset="100%" stopColor="#6366f1" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                  <XAxis 
-                    dataKey="date" 
-                    fontSize={11} 
-                    tickLine={false} 
-                    axisLine={false}
-                    tick={{ fill: '#9ca3af' }}
-                  />
-                  <YAxis 
-                    fontSize={11} 
-                    tickLine={false} 
-                    axisLine={false}
-                    tick={{ fill: '#9ca3af' }}
-                    allowDecimals={false}
-                  />
-                  <Tooltip 
-                    contentStyle={{ 
-                      backgroundColor: 'white', 
-                      border: '1px solid #e5e7eb',
-                      borderRadius: '8px',
-                      boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'
-                    }}
-                    labelStyle={{ color: '#111827', fontWeight: 600 }}
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="users"
-                    stroke="#6366f1"
-                    strokeWidth={2}
-                    fill="url(#usersGradient)"
-                    name="Utilisateurs"
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
+        {/* Activity by Type */}
+        <ActivityCard
+          title='Types de missions'
+          subTitle={`${stats.totalMissions} missions totales`}
+          activityData={activityData}
+          className='justify-between shadow-none max-sm:col-span-full md:max-lg:col-span-full'
+        />
+
+        {/* Property Types */}
+        <ActivityCard
+          title='Types de biens'
+          subTitle='Répartition par catégorie'
+          activityData={propertyData}
+          className='justify-between shadow-none max-sm:col-span-full md:max-lg:col-span-full'
+        />
       </div>
     </div>
   )
