@@ -22,7 +22,7 @@ import StatisticsCard from '@/components/shadcn-studio/blocks/statistics-card'
 import StatisticsCardWithSvg from '@/components/shadcn-studio/blocks/statistics-card-with-svg'
 import MissionsChartCard from '@/components/shadcn-studio/blocks/chart-missions'
 import ActivityCard from '@/components/shadcn-studio/blocks/widget-activity'
-import UsersCardSvg from '@/assets/svg/users-card-svg'
+import UsersCardSvg from '@/assets/svg/users-card-svg.tsx'
 
 interface Stats {
   totalUsers: number
