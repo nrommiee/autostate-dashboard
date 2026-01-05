@@ -3,19 +3,13 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-
-import { ChevronLeftIcon, EyeIcon, EyeOffIcon, Smartphone, RefreshCw } from 'lucide-react'
-import { QRCodeSVG } from 'qrcode.react'
-
-import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
-
 import { BorderBeam } from '@/components/ui/border-beam'
-import Logo from '@/components/shadcn-studio/logo'
-import AuthFullBackgroundShape from '@/assets/svg/auth-full-background-shape'
+
+import AutoStateLogo from '@/components/login/logo'
+import LoginForm from '@/components/login/login-form'
+import QRCodeSection from '@/components/login/qr-code-section'
+import AuthBackgroundShape from '@/assets/svg/auth-background-shape'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -23,7 +17,6 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const [isVisible, setIsVisible] = useState(false)
   
   // QR Auth state
   const [qrToken, setQrToken] = useState<string | null>(null)
@@ -93,6 +86,7 @@ export default function LoginPage() {
             setQrStatus('approved')
             clearInterval(pollInterval)
             
+            // Créer la session via l'API
             const response = await fetch('/api/qr-auth', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -105,6 +99,7 @@ export default function LoginPage() {
             const result = await response.json()
             
             if (result.success && result.authUrl) {
+              // Rediriger vers le magic link
               window.location.href = result.authUrl
             } else {
               setError(result.error || 'Erreur de connexion')
@@ -148,211 +143,117 @@ export default function LoginPage() {
     generateQRToken()
   }, [generateQRToken])
 
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60)
-    const secs = seconds % 60
-    return `${mins}:${secs.toString().padStart(2, '0')}`
-  }
-
-  const qrValue = qrToken ? `autostate://auth?token=${qrToken}` : ''
-
   return (
-    <div className='h-dvh lg:grid lg:grid-cols-6'>
-      {/* Dashboard Preview */}
-      <div className='max-lg:hidden lg:col-span-3 xl:col-span-4'>
-        <div className='bg-muted relative z-1 flex h-full items-center justify-center px-6'>
-          <div className='relative shrink-0 rounded-[20px] p-2.5 outline outline-2 outline-border -outline-offset-2'>
-            <img
-              src='https://cdn.shadcnstudio.com/ss-assets/blocks/marketing/auth/image-1.png'
-              className='max-h-111 w-full rounded-lg object-contain dark:hidden'
-              alt='Dashboards'
-            />
-            <img
-              src='https://cdn.shadcnstudio.com/ss-assets/blocks/marketing/auth/image-1-dark.png'
-              className='hidden max-h-111 w-full rounded-lg object-contain dark:inline-block'
-              alt='Dashboards'
-            />
-
+    <div className='min-h-screen lg:grid lg:grid-cols-2'>
+      {/* Left Side - Branding */}
+      <div className='hidden lg:flex bg-gradient-to-br from-teal-600 to-teal-700 relative overflow-hidden'>
+        <div className='relative z-10 flex flex-col items-center justify-center w-full px-12'>
+          {/* Dashboard Preview Card */}
+          <div className='relative rounded-2xl p-1 bg-white/10 backdrop-blur-sm'>
+            <div className='bg-white rounded-xl overflow-hidden shadow-2xl'>
+              <img
+                src='/dashboard-preview.png'
+                alt='AutoState Dashboard'
+                className='w-full max-w-md object-cover'
+                onError={(e) => {
+                  // Fallback si l'image n'existe pas
+                  e.currentTarget.style.display = 'none'
+                  e.currentTarget.parentElement!.innerHTML = `
+                    <div class="w-96 h-64 bg-gradient-to-br from-gray-50 to-gray-100 flex flex-col items-center justify-center p-8 text-center">
+                      <div class="w-16 h-16 bg-teal-600 rounded-2xl flex items-center justify-center mb-4">
+                        <svg class="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
+                        </svg>
+                      </div>
+                      <h3 class="text-lg font-semibold text-gray-800">AutoState Dashboard</h3>
+                      <p class="text-sm text-gray-500 mt-1">Gérez vos états des lieux</p>
+                    </div>
+                  `
+                }}
+              />
+            </div>
             <BorderBeam duration={8} borderWidth={2} size={100} />
           </div>
 
-          <div className='absolute -z-1'>
-            <AuthFullBackgroundShape />
+          {/* Tagline */}
+          <div className='mt-12 text-center text-white'>
+            <h2 className='text-2xl font-bold mb-2'>États des lieux simplifiés</h2>
+            <p className='text-teal-100 max-w-sm'>
+              Gérez vos inspections immobilières avec l'IA et gagnez du temps sur chaque mission.
+            </p>
           </div>
+
+          {/* Stats */}
+          <div className='mt-8 flex gap-8'>
+            <div className='text-center'>
+              <div className='text-3xl font-bold text-white'>500+</div>
+              <div className='text-sm text-teal-200'>Missions</div>
+            </div>
+            <div className='text-center'>
+              <div className='text-3xl font-bold text-white'>50+</div>
+              <div className='text-sm text-teal-200'>Utilisateurs</div>
+            </div>
+            <div className='text-center'>
+              <div className='text-3xl font-bold text-white'>98%</div>
+              <div className='text-sm text-teal-200'>Satisfaction</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Background Shape */}
+        <div className='absolute inset-0 opacity-30'>
+          <AuthBackgroundShape className='absolute -right-32 -bottom-32 w-[800px] h-[800px]' />
         </div>
       </div>
 
-      {/* Login Form */}
-      <div className='flex h-full flex-col items-center justify-center py-10 sm:px-5 lg:col-span-3 xl:col-span-2'>
-        <div className='w-full max-w-md px-6'>
-          <a href='#' className='text-muted-foreground group mb-12 flex items-center gap-2 sm:mb-16 lg:mb-24'>
-            <ChevronLeftIcon className='transition-transform duration-200 group-hover:-translate-x-0.5' />
-            <p>Back to the website</p>
-          </a>
-
-          <div className='flex flex-col gap-6'>
-            <Logo className='gap-3' />
-
-            <div>
-              <h2 className='mb-1.5 text-2xl font-semibold'>Sign in to AutoState</h2>
-              <p className='text-muted-foreground'>Manage your property inspections.</p>
-            </div>
-
-            {/* Form */}
-            <form className='space-y-4' onSubmit={handleLogin}>
-              {/* Email */}
-              <div className='space-y-1'>
-                <Label className='leading-5' htmlFor='userEmail'>
-                  Email address*
-                </Label>
-                <Input 
-                  type='email' 
-                  id='userEmail' 
-                  placeholder='Enter your email address'
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                />
-              </div>
-
-              {/* Password */}
-              <div className='w-full space-y-1'>
-                <Label className='leading-5' htmlFor='password'>
-                  Password*
-                </Label>
-                <div className='relative'>
-                  <Input 
-                    id='password' 
-                    type={isVisible ? 'text' : 'password'} 
-                    placeholder='••••••••••••••••' 
-                    className='pr-9'
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                  />
-                  <Button
-                    type='button'
-                    variant='ghost'
-                    size='icon'
-                    onClick={() => setIsVisible(prevState => !prevState)}
-                    className='text-muted-foreground focus-visible:ring-ring/50 absolute inset-y-0 right-0 rounded-l-none hover:bg-transparent'
-                  >
-                    {isVisible ? <EyeOffIcon /> : <EyeIcon />}
-                    <span className='sr-only'>{isVisible ? 'Hide password' : 'Show password'}</span>
-                  </Button>
-                </div>
-              </div>
-
-              {/* Remember Me and Forgot Password */}
-              <div className='flex items-center justify-between gap-y-2'>
-                <div className='flex items-center gap-3'>
-                  <Checkbox id='rememberMe' className='h-6 w-6' />
-                  <Label htmlFor='rememberMe'> Remember Me</Label>
-                </div>
-
-                <a href='/forgot-password' className='hover:underline'>
-                  Forgot Password?
-                </a>
-              </div>
-
-              {/* Error */}
-              {error && (
-                <div className='text-sm text-red-600 bg-red-50 p-3 rounded-md'>
-                  {error}
-                </div>
-              )}
-
-              <Button className='w-full' type='submit' disabled={loading}>
-                {loading ? 'Signing in...' : 'Sign in to AutoState'}
-              </Button>
-            </form>
-
-            <div className='space-y-4'>
-              <div className='flex items-center gap-4'>
-                <Separator className='flex-1' />
-                <p>or</p>
-                <Separator className='flex-1' />
-              </div>
-
-              {/* QR CODE */}
-              <div className='text-center space-y-3'>
-                <div className='flex items-center justify-center gap-2 text-muted-foreground'>
-                  <Smartphone className='h-5 w-5' />
-                  <span className='font-medium'>Sign in with app</span>
-                </div>
-                <p className='text-sm text-muted-foreground'>
-                  Scan this QR code from the AutoState app
-                </p>
-
-                <div className='flex justify-center'>
-                  {qrStatus === 'loading' && (
-                    <div className='w-44 h-44 flex items-center justify-center bg-muted rounded-lg'>
-                      <RefreshCw className='h-8 w-8 text-muted-foreground animate-spin' />
-                    </div>
-                  )}
-
-                  {qrStatus === 'ready' && qrToken && (
-                    <div className='p-3 bg-white rounded-lg shadow-sm border'>
-                      <QRCodeSVG
-                        value={qrValue}
-                        size={160}
-                        level='M'
-                        includeMargin={false}
-                        fgColor='#000000'
-                      />
-                    </div>
-                  )}
-
-                  {qrStatus === 'approved' && (
-                    <div className='w-44 h-44 flex flex-col items-center justify-center bg-muted rounded-lg border border-border'>
-                      <svg className='h-14 w-14 text-foreground mb-2' fill='none' viewBox='0 0 24 24' stroke='currentColor'>
-                        <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M5 13l4 4L19 7' />
-                      </svg>
-                      <span className='text-foreground font-medium'>Connecting...</span>
-                    </div>
-                  )}
-
-                  {qrStatus === 'expired' && (
-                    <div className='w-44 h-44 flex flex-col items-center justify-center bg-muted rounded-lg'>
-                      <svg className='h-10 w-10 text-muted-foreground mb-2' fill='none' viewBox='0 0 24 24' stroke='currentColor'>
-                        <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' />
-                      </svg>
-                      <span className='text-muted-foreground text-sm mb-2'>Code expired</span>
-                      <button
-                        onClick={generateQRToken}
-                        className='text-primary hover:text-primary/80 text-sm font-medium flex items-center gap-1'
-                      >
-                        <RefreshCw className='h-4 w-4' />
-                        Regenerate
-                      </button>
-                    </div>
-                  )}
-
-                  {qrStatus === 'error' && (
-                    <div className='w-44 h-44 flex flex-col items-center justify-center bg-red-50 rounded-lg'>
-                      <svg className='h-10 w-10 text-red-400 mb-2' fill='none' viewBox='0 0 24 24' stroke='currentColor'>
-                        <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z' />
-                      </svg>
-                      <span className='text-red-500 text-sm mb-2'>Error</span>
-                      <button
-                        onClick={generateQRToken}
-                        className='text-primary hover:text-primary/80 text-sm font-medium flex items-center gap-1'
-                      >
-                        <RefreshCw className='h-4 w-4' />
-                        Retry
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                {qrStatus === 'ready' && timeLeft > 0 && (
-                  <p className='text-xs text-muted-foreground'>
-                    Expires in {formatTime(timeLeft)}
-                  </p>
-                )}
-              </div>
-            </div>
+      {/* Right Side - Login Form */}
+      <div className='flex min-h-screen flex-col items-center justify-center bg-gray-50 px-6 py-12 lg:bg-white'>
+        <div className='w-full max-w-sm'>
+          {/* Logo */}
+          <div className='mb-8'>
+            <AutoStateLogo />
           </div>
+
+          {/* Header */}
+          <div className='mb-8'>
+            <h1 className='text-2xl font-semibold text-gray-900'>
+              Bienvenue
+            </h1>
+            <p className='mt-1 text-gray-500'>
+              Connectez-vous à votre compte administrateur
+            </p>
+          </div>
+
+          {/* Login Form */}
+          <LoginForm
+            email={email}
+            setEmail={setEmail}
+            password={password}
+            setPassword={setPassword}
+            error={error}
+            loading={loading}
+            onSubmit={handleLogin}
+          />
+
+          {/* Divider */}
+          <div className='my-8 flex items-center gap-4'>
+            <Separator className='flex-1' />
+            <span className='text-sm text-gray-400'>ou</span>
+            <Separator className='flex-1' />
+          </div>
+
+          {/* QR Code Section */}
+          <QRCodeSection
+            qrToken={qrToken}
+            qrStatus={qrStatus}
+            timeLeft={timeLeft}
+            onRegenerate={generateQRToken}
+          />
+        </div>
+
+        {/* Footer */}
+        <div className='mt-12 text-center text-xs text-gray-400'>
+          © 2024 AutoState. Tous droits réservés.
         </div>
       </div>
     </div>
