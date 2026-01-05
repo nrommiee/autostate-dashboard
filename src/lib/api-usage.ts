@@ -68,6 +68,9 @@ export interface ApiUsageLog {
   modelId?: string
   errorMessage?: string
   metadata?: Record<string, any>
+  // Linking to missions
+  inspectionId?: string
+  userId?: string
 }
 
 // ============================================
@@ -97,7 +100,9 @@ export async function logApiUsage(log: ApiUsageLog): Promise<string | null> {
         response_time_ms: log.responseTimeMs,
         model_id: log.modelId || null,
         error_message: log.errorMessage || null,
-        metadata: log.metadata || {}
+        metadata: log.metadata || {},
+        inspection_id: log.inspectionId || null,
+        user_id: log.userId || null
       })
       .select('id')
       .single()
