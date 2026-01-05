@@ -8,7 +8,6 @@ import { EyeIcon, EyeOffIcon, CheckCircle, Lock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import AutoStateLogo from '@/components/login/logo'
 
 export default function ResetPasswordPage() {
   const router = useRouter()
@@ -19,13 +18,11 @@ export default function ResetPasswordPage() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState(false)
 
-  // Vérifier si on a un token valide
   useEffect(() => {
     const hashParams = new URLSearchParams(window.location.hash.substring(1))
     const accessToken = hashParams.get('access_token')
     
     if (!accessToken) {
-      // Pas de token, rediriger vers login
       router.push('/')
     }
   }, [router])
@@ -55,7 +52,6 @@ export default function ResetPasswordPage() {
 
       setSuccess(true)
       
-      // Rediriger après 3 secondes
       setTimeout(() => {
         router.push('/')
       }, 3000)
@@ -70,8 +66,16 @@ export default function ResetPasswordPage() {
     <div className='min-h-screen flex items-center justify-center bg-gray-50 px-6 py-12'>
       <div className='w-full max-w-sm'>
         {/* Logo */}
-        <div className='mb-8'>
-          <AutoStateLogo />
+        <div className='flex items-center gap-3 mb-8'>
+          <div className='w-10 h-10 bg-teal-600 rounded-xl flex items-center justify-center'>
+            <svg viewBox='0 0 24 24' fill='none' className='w-6 h-6 text-white' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round'>
+              <path d='M3 21h18' />
+              <path d='M3 21V3l18 18' />
+              <path d='M7 17h4' />
+              <path d='M11 13v4' />
+            </svg>
+          </div>
+          <span className='text-xl font-semibold'>AutoState</span>
         </div>
 
         {!success ? (
@@ -99,7 +103,7 @@ export default function ResetPasswordPage() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
-                    className='h-11 pl-10 pr-11'
+                    className='pl-10 pr-11'
                   />
                   <Button
                     type='button'
@@ -125,7 +129,7 @@ export default function ResetPasswordPage() {
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     required
-                    className='h-11 pl-10'
+                    className='pl-10'
                   />
                 </div>
               </div>
@@ -138,7 +142,7 @@ export default function ResetPasswordPage() {
 
               <Button 
                 type='submit' 
-                className='w-full h-11 bg-teal-600 hover:bg-teal-700'
+                className='w-full bg-teal-600 hover:bg-teal-700'
                 disabled={loading}
               >
                 {loading ? 'Mise à jour...' : 'Mettre à jour le mot de passe'}
