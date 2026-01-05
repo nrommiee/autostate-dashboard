@@ -8,6 +8,7 @@ import { ArrowLeft, Mail, CheckCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import AutoStateLogo from '@/components/login/logo'
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('')
@@ -36,40 +37,48 @@ export default function ForgotPasswordPage() {
   }
 
   return (
-    <div className='min-h-screen flex items-center justify-center bg-background px-6 py-12'>
+    <div className='min-h-screen flex items-center justify-center bg-gray-50 px-6 py-12'>
       <div className='w-full max-w-sm'>
+        {/* Back Link */}
         <Link 
           href='/' 
-          className='inline-flex items-center gap-2 text-muted-foreground hover:text-foreground mb-8 transition-colors'
+          className='inline-flex items-center gap-2 text-gray-500 hover:text-gray-700 mb-8 transition-colors'
         >
-          <ArrowLeft className='h-4 w-4' />
-          <span>Back to login</span>
+          <ArrowLeft className='w-4 h-4' />
+          <span>Retour à la connexion</span>
         </Link>
+
+        {/* Logo */}
+        <div className='mb-8'>
+          <AutoStateLogo />
+        </div>
 
         {!success ? (
           <>
+            {/* Header */}
             <div className='mb-8'>
-              <h1 className='text-2xl font-semibold text-foreground'>
-                Forgot Password?
+              <h1 className='text-2xl font-semibold text-gray-900'>
+                Mot de passe oublié ?
               </h1>
-              <p className='mt-2 text-muted-foreground'>
-                Enter your email address and we will send you a link to reset your password.
+              <p className='mt-2 text-gray-500'>
+                Entrez votre adresse email et nous vous enverrons un lien pour réinitialiser votre mot de passe.
               </p>
             </div>
 
+            {/* Form */}
             <form onSubmit={handleSubmit} className='space-y-4'>
               <div className='space-y-1.5'>
-                <Label htmlFor='email'>Email address</Label>
+                <Label htmlFor='email'>Adresse email</Label>
                 <div className='relative'>
-                  <Mail className='absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground' />
+                  <Mail className='absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400' />
                   <Input
                     id='email'
                     type='email'
-                    placeholder='Enter your email address'
+                    placeholder='votre@email.com'
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     required
-                    className='pl-10'
+                    className='h-11 pl-10'
                   />
                 </div>
               </div>
@@ -82,27 +91,28 @@ export default function ForgotPasswordPage() {
 
               <Button 
                 type='submit' 
-                className='w-full'
+                className='w-full h-11 bg-teal-600 hover:bg-teal-700'
                 disabled={loading}
               >
-                {loading ? 'Sending...' : 'Send reset link'}
+                {loading ? 'Envoi en cours...' : 'Envoyer le lien'}
               </Button>
             </form>
           </>
         ) : (
+          /* Success State */
           <div className='text-center'>
-            <div className='h-16 w-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6'>
-              <CheckCircle className='h-8 w-8 text-green-600' />
+            <div className='w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6'>
+              <CheckCircle className='w-8 h-8 text-green-600' />
             </div>
-            <h2 className='text-xl font-semibold text-foreground mb-2'>
-              Email sent!
+            <h2 className='text-xl font-semibold text-gray-900 mb-2'>
+              Email envoyé !
             </h2>
-            <p className='text-muted-foreground mb-6'>
-              If an account exists with <strong>{email}</strong>, you will receive an email with instructions to reset your password.
+            <p className='text-gray-500 mb-6'>
+              Si un compte existe avec l'adresse <strong>{email}</strong>, vous recevrez un email avec les instructions pour réinitialiser votre mot de passe.
             </p>
             <Link href='/'>
               <Button variant='outline' className='w-full'>
-                Back to login
+                Retour à la connexion
               </Button>
             </Link>
           </div>
