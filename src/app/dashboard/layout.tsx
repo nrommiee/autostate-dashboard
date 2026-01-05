@@ -24,7 +24,8 @@ import {
   MoreVertical,
   User,
   CreditCard,
-  Bell
+  Bell,
+  Zap
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -93,6 +94,7 @@ const navItems: NavItem[] = [
     children: [
       { title: 'Usage', href: '/dashboard/analytics/usage', icon: <Activity className="h-4 w-4" /> },
       { title: 'Coûts', href: '/dashboard/analytics/cost', icon: <DollarSign className="h-4 w-4" /> },
+      { title: 'Fonctions API', href: '/dashboard/analytics/functions', icon: <Zap className="h-4 w-4" /> },
     ]
   },
 ]
