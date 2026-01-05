@@ -364,7 +364,7 @@ export default function UsagePage() {
                   boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'
                 }}
                 labelStyle={{ color: '#111827', fontWeight: 600 }}
-                formatter={(value: number) => [value.toLocaleString('fr-FR'), 'Tokens']}
+                formatter={(value) => [Number(value).toLocaleString('fr-FR'), 'Tokens']}
               />
               <Area
                 type="monotone"
