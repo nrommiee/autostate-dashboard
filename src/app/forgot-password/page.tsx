@@ -36,52 +36,36 @@ export default function ForgotPasswordPage() {
   }
 
   return (
-    <div className='min-h-screen flex items-center justify-center bg-gray-50 px-6 py-12'>
+    <div className='min-h-screen flex items-center justify-center bg-background px-6 py-12'>
       <div className='w-full max-w-sm'>
-        {/* Back Link */}
         <Link 
           href='/' 
-          className='inline-flex items-center gap-2 text-gray-500 hover:text-gray-700 mb-8 transition-colors'
+          className='inline-flex items-center gap-2 text-muted-foreground hover:text-foreground mb-8 transition-colors'
         >
-          <ArrowLeft className='w-4 h-4' />
-          <span>Retour à la connexion</span>
+          <ArrowLeft className='h-4 w-4' />
+          <span>Back to login</span>
         </Link>
-
-        {/* Logo */}
-        <div className='flex items-center gap-3 mb-8'>
-          <div className='w-10 h-10 bg-teal-600 rounded-xl flex items-center justify-center'>
-            <svg viewBox='0 0 24 24' fill='none' className='w-6 h-6 text-white' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round'>
-              <path d='M3 21h18' />
-              <path d='M3 21V3l18 18' />
-              <path d='M7 17h4' />
-              <path d='M11 13v4' />
-            </svg>
-          </div>
-          <span className='text-xl font-semibold'>AutoState</span>
-        </div>
 
         {!success ? (
           <>
-            {/* Header */}
             <div className='mb-8'>
-              <h1 className='text-2xl font-semibold text-gray-900'>
-                Mot de passe oublié ?
+              <h1 className='text-2xl font-semibold text-foreground'>
+                Forgot Password?
               </h1>
-              <p className='mt-2 text-gray-500'>
-                Entrez votre adresse email et nous vous enverrons un lien pour réinitialiser votre mot de passe.
+              <p className='mt-2 text-muted-foreground'>
+                Enter your email address and we will send you a link to reset your password.
               </p>
             </div>
 
-            {/* Form */}
             <form onSubmit={handleSubmit} className='space-y-4'>
               <div className='space-y-1.5'>
-                <Label htmlFor='email'>Adresse email</Label>
+                <Label htmlFor='email'>Email address</Label>
                 <div className='relative'>
-                  <Mail className='absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400' />
+                  <Mail className='absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground' />
                   <Input
                     id='email'
                     type='email'
-                    placeholder='votre@email.com'
+                    placeholder='Enter your email address'
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     required
@@ -98,28 +82,27 @@ export default function ForgotPasswordPage() {
 
               <Button 
                 type='submit' 
-                className='w-full bg-teal-600 hover:bg-teal-700'
+                className='w-full'
                 disabled={loading}
               >
-                {loading ? 'Envoi en cours...' : 'Envoyer le lien'}
+                {loading ? 'Sending...' : 'Send reset link'}
               </Button>
             </form>
           </>
         ) : (
-          /* Success State */
           <div className='text-center'>
-            <div className='w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6'>
-              <CheckCircle className='w-8 h-8 text-green-600' />
+            <div className='h-16 w-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6'>
+              <CheckCircle className='h-8 w-8 text-green-600' />
             </div>
-            <h2 className='text-xl font-semibold text-gray-900 mb-2'>
-              Email envoyé !
+            <h2 className='text-xl font-semibold text-foreground mb-2'>
+              Email sent!
             </h2>
-            <p className='text-gray-500 mb-6'>
-              Si un compte existe avec l&apos;adresse <strong>{email}</strong>, vous recevrez un email avec les instructions pour réinitialiser votre mot de passe.
+            <p className='text-muted-foreground mb-6'>
+              If an account exists with <strong>{email}</strong>, you will receive an email with instructions to reset your password.
             </p>
             <Link href='/'>
               <Button variant='outline' className='w-full'>
-                Retour à la connexion
+                Back to login
               </Button>
             </Link>
           </div>
