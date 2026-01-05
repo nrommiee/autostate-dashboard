@@ -1,7 +1,7 @@
 'use client'
 
 import { motion } from 'framer-motion'
-import type { CSSProperties } from 'react'
+import type { MotionStyle, Transition } from 'framer-motion'
 
 import { cn } from '@/lib/utils'
 
@@ -11,8 +11,9 @@ interface BorderBeamProps {
   delay?: number
   colorFrom?: string
   colorTo?: string
+  transition?: Transition
   className?: string
-  style?: CSSProperties
+  style?: React.CSSProperties
   reverse?: boolean
   initialOffset?: number
   borderWidth?: number
@@ -23,34 +24,38 @@ function BorderBeam({
   size = 50,
   delay = 0,
   duration = 6,
-  colorFrom = '#0d9488',
-  colorTo = '#14b8a6',
+  colorFrom = 'var(--destructive)',
+  colorTo = 'var(--primary)',
+  transition,
   style,
   reverse = false,
   initialOffset = 0,
-  borderWidth = 1.5
+  borderWidth = 1
 }: BorderBeamProps) {
   return (
     <div
-      className='pointer-events-none absolute inset-0 rounded-[inherit]'
-      style={{
-        border: `${borderWidth}px solid transparent`,
-        WebkitMask: 'linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0)',
-        WebkitMaskComposite: 'xor',
-        maskComposite: 'exclude'
-      }}
+      className='pointer-events-none absolute inset-0 rounded-[inherit] border-(length:--border-beam-width) border-transparent [mask-image:linear-gradient(transparent,transparent),linear-gradient(#000,#000)] [mask-composite:intersect] [mask-clip:padding-box,border-box]'
+      style={
+        {
+          '--border-beam-width': `${borderWidth}px`
+        } as React.CSSProperties
+      }
     >
       <motion.div
         className={cn(
-          'absolute aspect-square rounded-full',
+          'absolute aspect-square',
+          'rounded-full bg-gradient-to-l from-[var(--color-from)] via-[var(--color-to)] to-transparent',
           className
         )}
-        style={{
-          width: size,
-          background: `linear-gradient(to left, ${colorFrom}, ${colorTo}, transparent)`,
-          offsetPath: `rect(0 auto auto 0 round ${size}px)`,
-          ...style
-        }}
+        style={
+          {
+            width: size,
+            offsetPath: `rect(0 auto auto 0 round ${size}px)`,
+            '--color-from': colorFrom,
+            '--color-to': colorTo,
+            ...style
+          } as MotionStyle
+        }
         initial={{ offsetDistance: `${initialOffset}%` }}
         animate={{
           offsetDistance: reverse
@@ -61,7 +66,8 @@ function BorderBeam({
           repeat: Infinity,
           ease: 'linear',
           duration,
-          delay: -delay
+          delay: -delay,
+          ...transition
         }}
       />
     </div>
