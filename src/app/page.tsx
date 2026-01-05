@@ -4,15 +4,17 @@ import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 
-import { EyeIcon, EyeOffIcon, Smartphone, RefreshCw } from 'lucide-react'
+import { ChevronLeftIcon, EyeIcon, EyeOffIcon, Smartphone, RefreshCw } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 
 import { BorderBeam } from '@/components/ui/border-beam'
+import Logo from '@/components/shadcn-studio/logo'
 import AuthFullBackgroundShape from '@/assets/svg/auth-full-background-shape'
 
 export default function LoginPage() {
@@ -156,15 +158,21 @@ export default function LoginPage() {
 
   return (
     <div className='h-dvh lg:grid lg:grid-cols-6'>
-      {/* Dashboard Preview - Left Side */}
+      {/* Dashboard Preview */}
       <div className='max-lg:hidden lg:col-span-3 xl:col-span-4'>
-        <div className='bg-teal-600 relative z-1 flex h-full items-center justify-center px-6'>
-          <div className='relative shrink rounded-[20px] p-2.5 outline outline-2 outline-white/20 -outline-offset-[2px]'>
+        <div className='bg-muted relative z-1 flex h-full items-center justify-center px-6'>
+          <div className='outline-border relative shrink rounded-[20px] p-2.5 outline-2 -outline-offset-[2px]'>
             <img
               src='https://cdn.shadcnstudio.com/ss-assets/blocks/marketing/auth/image-1.png'
-              className='max-h-[444px] w-full rounded-lg object-contain'
-              alt='AutoState Dashboard'
+              className='max-h-111 w-full rounded-lg object-contain dark:hidden'
+              alt='Dashboards'
             />
+            <img
+              src='https://cdn.shadcnstudio.com/ss-assets/blocks/marketing/auth/image-1-dark.png'
+              className='hidden max-h-111 w-full rounded-lg object-contain dark:inline-block'
+              alt='Dashboards'
+            />
+
             <BorderBeam duration={8} borderWidth={2} size={100} />
           </div>
 
@@ -174,40 +182,36 @@ export default function LoginPage() {
         </div>
       </div>
 
-      {/* Login Form - Right Side */}
+      {/* Login Form */}
       <div className='flex h-full flex-col items-center justify-center py-10 sm:px-5 lg:col-span-3 xl:col-span-2'>
         <div className='w-full max-w-md px-6'>
-          {/* Logo */}
-          <div className='flex items-center gap-3 mb-8'>
-            <div className='w-10 h-10 bg-teal-600 rounded-xl flex items-center justify-center'>
-              <svg viewBox='0 0 24 24' fill='none' className='w-6 h-6 text-white' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round'>
-                <path d='M3 21h18' />
-                <path d='M3 21V3l18 18' />
-                <path d='M7 17h4' />
-                <path d='M11 13v4' />
-              </svg>
-            </div>
-            <span className='text-xl font-semibold'>AutoState</span>
-          </div>
+          <a href='#' className='text-muted-foreground group mb-12 flex items-center gap-2 sm:mb-16 lg:mb-24'>
+            <ChevronLeftIcon className='transition-transform duration-200 group-hover:-translate-x-0.5' />
+            <p>Back to the website</p>
+          </a>
 
           <div className='flex flex-col gap-6'>
-            {/* Header */}
+            <Logo className='gap-3' />
+
             <div>
-              <h2 className='mb-1.5 text-2xl font-semibold'>Connexion</h2>
-              <p className='text-muted-foreground'>Connectez-vous à votre compte administrateur</p>
+              <h2 className='mb-1.5 text-2xl font-semibold'>Sign in to AutoState</h2>
+              <p className='text-muted-foreground'>Manage your property inspections.</p>
             </div>
 
-            {/* Form */}
+            {/* SUPPRIMÉ: Magic Link */}
+            {/* SUPPRIMÉ: Login as User / Login as Admin */}
+
+            {/* Form - CODE EXACT DU TEMPLATE */}
             <form className='space-y-4' onSubmit={handleLogin}>
               {/* Email */}
               <div className='space-y-1'>
                 <Label className='leading-5' htmlFor='userEmail'>
-                  Email
+                  Email address*
                 </Label>
                 <Input 
                   type='email' 
                   id='userEmail' 
-                  placeholder='votre@email.com'
+                  placeholder='Enter your email address'
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
@@ -217,7 +221,7 @@ export default function LoginPage() {
               {/* Password */}
               <div className='w-full space-y-1'>
                 <Label className='leading-5' htmlFor='password'>
-                  Mot de passe
+                  Password*
                 </Label>
                 <div className='relative'>
                   <Input 
@@ -237,15 +241,20 @@ export default function LoginPage() {
                     className='text-muted-foreground focus-visible:ring-ring/50 absolute inset-y-0 right-0 rounded-l-none hover:bg-transparent'
                   >
                     {isVisible ? <EyeOffIcon /> : <EyeIcon />}
-                    <span className='sr-only'>{isVisible ? 'Masquer' : 'Afficher'}</span>
+                    <span className='sr-only'>{isVisible ? 'Hide password' : 'Show password'}</span>
                   </Button>
                 </div>
               </div>
 
-              {/* Forgot Password */}
-              <div className='flex items-center justify-end'>
-                <a href='/forgot-password' className='text-teal-600 hover:underline text-sm'>
-                  Mot de passe oublié ?
+              {/* Remember Me and Forgot Password */}
+              <div className='flex items-center justify-between gap-y-2'>
+                <div className='flex items-center gap-3'>
+                  <Checkbox id='rememberMe' className='size-6' />
+                  <Label htmlFor='rememberMe'> Remember Me</Label>
+                </div>
+
+                <a href='/forgot-password' className='hover:underline'>
+                  Forgot Password?
                 </a>
               </div>
 
@@ -256,34 +265,35 @@ export default function LoginPage() {
                 </div>
               )}
 
-              <Button className='w-full bg-teal-600 hover:bg-teal-700' type='submit' disabled={loading}>
-                {loading ? 'Connexion...' : 'Se connecter'}
+              <Button className='w-full' type='submit' disabled={loading}>
+                {loading ? 'Signing in...' : 'Sign in to AutoState'}
               </Button>
             </form>
 
-            {/* Separator + QR Code */}
             <div className='space-y-4'>
+              {/* SUPPRIMÉ: New on our platform? Create an account */}
+
               <div className='flex items-center gap-4'>
                 <Separator className='flex-1' />
-                <p className='text-muted-foreground text-sm'>ou</p>
+                <p>or</p>
                 <Separator className='flex-1' />
               </div>
 
-              {/* QR Code Section */}
+              {/* QR CODE - REMPLACE "Sign in with google" */}
               <div className='text-center space-y-3'>
-                <div className='flex items-center justify-center gap-2 text-gray-700'>
+                <div className='flex items-center justify-center gap-2 text-muted-foreground'>
                   <Smartphone className='w-5 h-5' />
-                  <span className='font-medium'>Connexion avec l&apos;app</span>
+                  <span className='font-medium'>Sign in with app</span>
                 </div>
-                <p className='text-sm text-gray-500'>
-                  Scannez ce QR code depuis l&apos;application AutoState
+                <p className='text-sm text-muted-foreground'>
+                  Scan this QR code from the AutoState app
                 </p>
 
                 {/* QR Code */}
                 <div className='flex justify-center'>
                   {qrStatus === 'loading' && (
-                    <div className='w-44 h-44 flex items-center justify-center bg-gray-100 rounded-lg'>
-                      <RefreshCw className='w-8 h-8 text-gray-400 animate-spin' />
+                    <div className='w-44 h-44 flex items-center justify-center bg-muted rounded-lg'>
+                      <RefreshCw className='w-8 h-8 text-muted-foreground animate-spin' />
                     </div>
                   )}
 
@@ -304,22 +314,22 @@ export default function LoginPage() {
                       <svg className='w-14 h-14 text-green-500 mb-2' fill='none' viewBox='0 0 24 24' stroke='currentColor'>
                         <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M5 13l4 4L19 7' />
                       </svg>
-                      <span className='text-green-600 font-medium'>Connexion...</span>
+                      <span className='text-green-600 font-medium'>Connecting...</span>
                     </div>
                   )}
 
                   {qrStatus === 'expired' && (
-                    <div className='w-44 h-44 flex flex-col items-center justify-center bg-gray-100 rounded-lg'>
-                      <svg className='w-10 h-10 text-gray-400 mb-2' fill='none' viewBox='0 0 24 24' stroke='currentColor'>
+                    <div className='w-44 h-44 flex flex-col items-center justify-center bg-muted rounded-lg'>
+                      <svg className='w-10 h-10 text-muted-foreground mb-2' fill='none' viewBox='0 0 24 24' stroke='currentColor'>
                         <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' />
                       </svg>
-                      <span className='text-gray-500 text-sm mb-2'>Code expiré</span>
+                      <span className='text-muted-foreground text-sm mb-2'>Code expired</span>
                       <button
                         onClick={generateQRToken}
-                        className='text-teal-600 hover:text-teal-700 text-sm font-medium flex items-center gap-1'
+                        className='text-primary hover:text-primary/80 text-sm font-medium flex items-center gap-1'
                       >
                         <RefreshCw className='w-4 h-4' />
-                        Régénérer
+                        Regenerate
                       </button>
                     </div>
                   )}
@@ -329,13 +339,13 @@ export default function LoginPage() {
                       <svg className='w-10 h-10 text-red-400 mb-2' fill='none' viewBox='0 0 24 24' stroke='currentColor'>
                         <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z' />
                       </svg>
-                      <span className='text-red-500 text-sm mb-2'>Erreur</span>
+                      <span className='text-red-500 text-sm mb-2'>Error</span>
                       <button
                         onClick={generateQRToken}
-                        className='text-teal-600 hover:text-teal-700 text-sm font-medium flex items-center gap-1'
+                        className='text-primary hover:text-primary/80 text-sm font-medium flex items-center gap-1'
                       >
                         <RefreshCw className='w-4 h-4' />
-                        Réessayer
+                        Retry
                       </button>
                     </div>
                   )}
@@ -343,8 +353,8 @@ export default function LoginPage() {
 
                 {/* Timer */}
                 {qrStatus === 'ready' && timeLeft > 0 && (
-                  <p className='text-xs text-gray-400'>
-                    Expire dans {formatTime(timeLeft)}
+                  <p className='text-xs text-muted-foreground'>
+                    Expires in {formatTime(timeLeft)}
                   </p>
                 )}
               </div>
