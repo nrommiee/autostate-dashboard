@@ -53,6 +53,11 @@ const navItems: NavItem[] = [
     icon: <LayoutDashboard className="h-4 w-4" />,
   },
   {
+    title: 'Missions',
+    href: '/dashboard/missions',
+    icon: <FolderOpen className="h-4 w-4" />,
+  },
+  {
     title: 'Utilisateurs',
     href: '/dashboard/users',
     icon: <Users className="h-4 w-4" />,
