@@ -1,13 +1,15 @@
 'use client'
+
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { QRCodeSVG } from 'qrcode.react'
-import { Smartphone, RefreshCw } from 'lucide-react'
+import { Separator } from '@/components/ui/separator'
+import { BorderBeam } from '@/components/ui/border-beam'
+
+import AutoStateLogo from '@/components/login/logo'
+import LoginForm from '@/components/login/login-form'
+import QRCodeSection from '@/components/login/qr-code-section'
+import AuthBackgroundShape from '@/assets/svg/auth-background-shape'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -141,148 +143,119 @@ export default function LoginPage() {
     generateQRToken()
   }, [generateQRToken])
 
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60)
-    const secs = seconds % 60
-    return `${mins}:${secs.toString().padStart(2, '0')}`
-  }
-
-  const qrValue = qrToken ? `autostate://auth?token=${qrToken}` : ''
-
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-teal-50 to-cyan-100 p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader className="text-center">
-          <div className="mx-auto mb-4 w-16 h-16 bg-teal-600 rounded-2xl flex items-center justify-center">
-            <span className="text-3xl">📐</span>
+    <div className='min-h-screen lg:grid lg:grid-cols-2'>
+      {/* Left Side - Branding */}
+      <div className='hidden lg:flex bg-gradient-to-br from-teal-600 to-teal-700 relative overflow-hidden'>
+        <div className='relative z-10 flex flex-col items-center justify-center w-full px-12'>
+          {/* Dashboard Preview Card */}
+          <div className='relative rounded-2xl p-1 bg-white/10 backdrop-blur-sm'>
+            <div className='bg-white rounded-xl overflow-hidden shadow-2xl'>
+              <img
+                src='/dashboard-preview.png'
+                alt='AutoState Dashboard'
+                className='w-full max-w-md object-cover'
+                onError={(e) => {
+                  // Fallback si l'image n'existe pas
+                  e.currentTarget.style.display = 'none'
+                  e.currentTarget.parentElement!.innerHTML = `
+                    <div class="w-96 h-64 bg-gradient-to-br from-gray-50 to-gray-100 flex flex-col items-center justify-center p-8 text-center">
+                      <div class="w-16 h-16 bg-teal-600 rounded-2xl flex items-center justify-center mb-4">
+                        <svg class="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
+                        </svg>
+                      </div>
+                      <h3 class="text-lg font-semibold text-gray-800">AutoState Dashboard</h3>
+                      <p class="text-sm text-gray-500 mt-1">Gérez vos états des lieux</p>
+                    </div>
+                  `
+                }}
+              />
+            </div>
+            <BorderBeam duration={8} borderWidth={2} size={100} />
           </div>
-          <CardTitle className="text-2xl">AutoState Admin</CardTitle>
-          <CardDescription>
-            Connectez-vous avec votre compte
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          {/* Formulaire classique */}
-          <form onSubmit={handleLogin} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="votre@email.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-              />
+
+          {/* Tagline */}
+          <div className='mt-12 text-center text-white'>
+            <h2 className='text-2xl font-bold mb-2'>États des lieux simplifiés</h2>
+            <p className='text-teal-100 max-w-sm'>
+              Gérez vos inspections immobilières avec l'IA et gagnez du temps sur chaque mission.
+            </p>
+          </div>
+
+          {/* Stats */}
+          <div className='mt-8 flex gap-8'>
+            <div className='text-center'>
+              <div className='text-3xl font-bold text-white'>500+</div>
+              <div className='text-sm text-teal-200'>Missions</div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">Mot de passe</Label>
-              <Input
-                id="password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-              />
+            <div className='text-center'>
+              <div className='text-3xl font-bold text-white'>50+</div>
+              <div className='text-sm text-teal-200'>Utilisateurs</div>
             </div>
-            {error && (
-              <div className="text-sm text-red-600 bg-red-50 p-3 rounded-md">
-                {error}
-              </div>
-            )}
-            <Button type="submit" className="w-full bg-teal-600 hover:bg-teal-700" disabled={loading}>
-              {loading ? 'Connexion...' : 'Se connecter'}
-            </Button>
-          </form>
+            <div className='text-center'>
+              <div className='text-3xl font-bold text-white'>98%</div>
+              <div className='text-sm text-teal-200'>Satisfaction</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Background Shape */}
+        <div className='absolute inset-0 opacity-30'>
+          <AuthBackgroundShape className='absolute -right-32 -bottom-32 w-[800px] h-[800px]' />
+        </div>
+      </div>
+
+      {/* Right Side - Login Form */}
+      <div className='flex min-h-screen flex-col items-center justify-center bg-gray-50 px-6 py-12 lg:bg-white'>
+        <div className='w-full max-w-sm'>
+          {/* Logo */}
+          <div className='mb-8'>
+            <AutoStateLogo />
+          </div>
+
+          {/* Header */}
+          <div className='mb-8'>
+            <h1 className='text-2xl font-semibold text-gray-900'>
+              Bienvenue
+            </h1>
+            <p className='mt-1 text-gray-500'>
+              Connectez-vous à votre compte administrateur
+            </p>
+          </div>
+
+          {/* Login Form */}
+          <LoginForm
+            email={email}
+            setEmail={setEmail}
+            password={password}
+            setPassword={setPassword}
+            error={error}
+            loading={loading}
+            onSubmit={handleLogin}
+          />
 
           {/* Divider */}
-          <div className="flex items-center">
-            <div className="flex-1 border-t border-gray-200"></div>
-            <span className="px-4 text-sm text-gray-500">ou</span>
-            <div className="flex-1 border-t border-gray-200"></div>
+          <div className='my-8 flex items-center gap-4'>
+            <Separator className='flex-1' />
+            <span className='text-sm text-gray-400'>ou</span>
+            <Separator className='flex-1' />
           </div>
 
           {/* QR Code Section */}
-          <div className="text-center space-y-3">
-            <div className="flex items-center justify-center gap-2 text-gray-700">
-              <Smartphone className="w-5 h-5" />
-              <span className="font-medium">Connexion avec l'app</span>
-            </div>
-            <p className="text-sm text-gray-500">
-              Scannez ce QR code depuis l'application AutoState
-            </p>
+          <QRCodeSection
+            qrToken={qrToken}
+            qrStatus={qrStatus}
+            timeLeft={timeLeft}
+            onRegenerate={generateQRToken}
+          />
+        </div>
 
-            {/* QR Code */}
-            <div className="flex justify-center">
-              {qrStatus === 'loading' && (
-                <div className="w-44 h-44 flex items-center justify-center bg-gray-100 rounded-lg">
-                  <RefreshCw className="w-8 h-8 text-gray-400 animate-spin" />
-                </div>
-              )}
-
-              {qrStatus === 'ready' && qrToken && (
-                <div className="p-3 bg-white rounded-lg shadow-sm border">
-                  <QRCodeSVG
-                    value={qrValue}
-                    size={160}
-                    level="M"
-                    includeMargin={false}
-                    fgColor="#0d9488"
-                  />
-                </div>
-              )}
-
-              {qrStatus === 'approved' && (
-                <div className="w-44 h-44 flex flex-col items-center justify-center bg-green-50 rounded-lg border border-green-200">
-                  <svg className="w-14 h-14 text-green-500 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                  <span className="text-green-600 font-medium">Connexion...</span>
-                </div>
-              )}
-
-              {qrStatus === 'expired' && (
-                <div className="w-44 h-44 flex flex-col items-center justify-center bg-gray-100 rounded-lg">
-                  <svg className="w-10 h-10 text-gray-400 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  <span className="text-gray-500 text-sm mb-2">Code expiré</span>
-                  <button
-                    onClick={generateQRToken}
-                    className="text-teal-600 hover:text-teal-700 text-sm font-medium flex items-center gap-1"
-                  >
-                    <RefreshCw className="w-4 h-4" />
-                    Régénérer
-                  </button>
-                </div>
-              )}
-
-              {qrStatus === 'error' && (
-                <div className="w-44 h-44 flex flex-col items-center justify-center bg-red-50 rounded-lg">
-                  <svg className="w-10 h-10 text-red-400 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                  </svg>
-                  <span className="text-red-500 text-sm mb-2">Erreur</span>
-                  <button
-                    onClick={generateQRToken}
-                    className="text-teal-600 hover:text-teal-700 text-sm font-medium flex items-center gap-1"
-                  >
-                    <RefreshCw className="w-4 h-4" />
-                    Réessayer
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {/* Timer */}
-            {qrStatus === 'ready' && timeLeft > 0 && (
-              <p className="text-xs text-gray-400">
-                Expire dans {formatTime(timeLeft)}
-              </p>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+        {/* Footer */}
+        <div className='mt-12 text-center text-xs text-gray-400'>
+          © 2024 AutoState. Tous droits réservés.
+        </div>
+      </div>
     </div>
   )
 }
