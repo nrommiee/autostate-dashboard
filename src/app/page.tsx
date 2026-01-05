@@ -304,11 +304,11 @@ export default function LoginPage() {
                   )}
 
                   {qrStatus === 'approved' && (
-                    <div className='w-44 h-44 flex flex-col items-center justify-center bg-green-50 rounded-lg border border-green-200'>
-                      <svg className='h-14 w-14 text-green-500 mb-2' fill='none' viewBox='0 0 24 24' stroke='currentColor'>
+                    <div className='w-44 h-44 flex flex-col items-center justify-center bg-muted rounded-lg border border-border'>
+                      <svg className='h-14 w-14 text-foreground mb-2' fill='none' viewBox='0 0 24 24' stroke='currentColor'>
                         <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M5 13l4 4L19 7' />
                       </svg>
-                      <span className='text-green-600 font-medium'>Connecting...</span>
+                      <span className='text-foreground font-medium'>Connecting...</span>
                     </div>
                   )}
 
