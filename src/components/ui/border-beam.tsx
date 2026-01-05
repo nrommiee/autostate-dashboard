@@ -1,7 +1,7 @@
 'use client'
 
-import { motion } from 'framer-motion'
-import type { MotionStyle, Transition } from 'framer-motion'
+import { motion } from 'motion/react'
+import type { MotionStyle, Transition } from 'motion/react'
 
 import { cn } from '@/lib/utils'
 
@@ -34,12 +34,16 @@ function BorderBeam({
 }: BorderBeamProps) {
   return (
     <div
-      className='pointer-events-none absolute inset-0 rounded-[inherit] border-(length:--border-beam-width) border-transparent [mask-image:linear-gradient(transparent,transparent),linear-gradient(#000,#000)] [mask-composite:intersect] [mask-clip:padding-box,border-box]'
-      style={
-        {
-          '--border-beam-width': `${borderWidth}px`
-        } as React.CSSProperties
-      }
+      className='pointer-events-none absolute inset-0 rounded-[inherit]'
+      style={{
+        border: `${borderWidth}px solid transparent`,
+        maskImage: 'linear-gradient(transparent, transparent), linear-gradient(#000, #000)',
+        maskComposite: 'intersect',
+        maskClip: 'padding-box, border-box',
+        WebkitMaskImage: 'linear-gradient(transparent, transparent), linear-gradient(#000, #000)',
+        WebkitMaskComposite: 'source-in',
+        WebkitMaskClip: 'padding-box, border-box'
+      }}
     >
       <motion.div
         className={cn(
