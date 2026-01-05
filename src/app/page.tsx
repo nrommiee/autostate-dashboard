@@ -161,7 +161,7 @@ export default function LoginPage() {
       {/* Dashboard Preview */}
       <div className='max-lg:hidden lg:col-span-3 xl:col-span-4'>
         <div className='bg-muted relative z-1 flex h-full items-center justify-center px-6'>
-          <div className='outline-border relative shrink rounded-[20px] p-2.5 outline-2 -outline-offset-[2px]'>
+          <div className='relative shrink-0 rounded-[20px] p-2.5 outline outline-2 outline-border -outline-offset-2'>
             <img
               src='https://cdn.shadcnstudio.com/ss-assets/blocks/marketing/auth/image-1.png'
               className='max-h-111 w-full rounded-lg object-contain dark:hidden'
@@ -198,10 +198,7 @@ export default function LoginPage() {
               <p className='text-muted-foreground'>Manage your property inspections.</p>
             </div>
 
-            {/* SUPPRIMÉ: Magic Link */}
-            {/* SUPPRIMÉ: Login as User / Login as Admin */}
-
-            {/* Form - CODE EXACT DU TEMPLATE */}
+            {/* Form */}
             <form className='space-y-4' onSubmit={handleLogin}>
               {/* Email */}
               <div className='space-y-1'>
@@ -249,7 +246,7 @@ export default function LoginPage() {
               {/* Remember Me and Forgot Password */}
               <div className='flex items-center justify-between gap-y-2'>
                 <div className='flex items-center gap-3'>
-                  <Checkbox id='rememberMe' className='size-6' />
+                  <Checkbox id='rememberMe' className='h-6 w-6' />
                   <Label htmlFor='rememberMe'> Remember Me</Label>
                 </div>
 
@@ -271,29 +268,26 @@ export default function LoginPage() {
             </form>
 
             <div className='space-y-4'>
-              {/* SUPPRIMÉ: New on our platform? Create an account */}
-
               <div className='flex items-center gap-4'>
                 <Separator className='flex-1' />
                 <p>or</p>
                 <Separator className='flex-1' />
               </div>
 
-              {/* QR CODE - REMPLACE "Sign in with google" */}
+              {/* QR CODE */}
               <div className='text-center space-y-3'>
                 <div className='flex items-center justify-center gap-2 text-muted-foreground'>
-                  <Smartphone className='w-5 h-5' />
+                  <Smartphone className='h-5 w-5' />
                   <span className='font-medium'>Sign in with app</span>
                 </div>
                 <p className='text-sm text-muted-foreground'>
                   Scan this QR code from the AutoState app
                 </p>
 
-                {/* QR Code */}
                 <div className='flex justify-center'>
                   {qrStatus === 'loading' && (
                     <div className='w-44 h-44 flex items-center justify-center bg-muted rounded-lg'>
-                      <RefreshCw className='w-8 h-8 text-muted-foreground animate-spin' />
+                      <RefreshCw className='h-8 w-8 text-muted-foreground animate-spin' />
                     </div>
                   )}
 
@@ -311,7 +305,7 @@ export default function LoginPage() {
 
                   {qrStatus === 'approved' && (
                     <div className='w-44 h-44 flex flex-col items-center justify-center bg-green-50 rounded-lg border border-green-200'>
-                      <svg className='w-14 h-14 text-green-500 mb-2' fill='none' viewBox='0 0 24 24' stroke='currentColor'>
+                      <svg className='h-14 w-14 text-green-500 mb-2' fill='none' viewBox='0 0 24 24' stroke='currentColor'>
                         <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M5 13l4 4L19 7' />
                       </svg>
                       <span className='text-green-600 font-medium'>Connecting...</span>
@@ -320,7 +314,7 @@ export default function LoginPage() {
 
                   {qrStatus === 'expired' && (
                     <div className='w-44 h-44 flex flex-col items-center justify-center bg-muted rounded-lg'>
-                      <svg className='w-10 h-10 text-muted-foreground mb-2' fill='none' viewBox='0 0 24 24' stroke='currentColor'>
+                      <svg className='h-10 w-10 text-muted-foreground mb-2' fill='none' viewBox='0 0 24 24' stroke='currentColor'>
                         <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' />
                       </svg>
                       <span className='text-muted-foreground text-sm mb-2'>Code expired</span>
@@ -328,7 +322,7 @@ export default function LoginPage() {
                         onClick={generateQRToken}
                         className='text-primary hover:text-primary/80 text-sm font-medium flex items-center gap-1'
                       >
-                        <RefreshCw className='w-4 h-4' />
+                        <RefreshCw className='h-4 w-4' />
                         Regenerate
                       </button>
                     </div>
@@ -336,7 +330,7 @@ export default function LoginPage() {
 
                   {qrStatus === 'error' && (
                     <div className='w-44 h-44 flex flex-col items-center justify-center bg-red-50 rounded-lg'>
-                      <svg className='w-10 h-10 text-red-400 mb-2' fill='none' viewBox='0 0 24 24' stroke='currentColor'>
+                      <svg className='h-10 w-10 text-red-400 mb-2' fill='none' viewBox='0 0 24 24' stroke='currentColor'>
                         <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z' />
                       </svg>
                       <span className='text-red-500 text-sm mb-2'>Error</span>
@@ -344,14 +338,13 @@ export default function LoginPage() {
                         onClick={generateQRToken}
                         className='text-primary hover:text-primary/80 text-sm font-medium flex items-center gap-1'
                       >
-                        <RefreshCw className='w-4 h-4' />
+                        <RefreshCw className='h-4 w-4' />
                         Retry
                       </button>
                     </div>
                   )}
                 </div>
 
-                {/* Timer */}
                 {qrStatus === 'ready' && timeLeft > 0 && (
                   <p className='text-xs text-muted-foreground'>
                     Expires in {formatTime(timeLeft)}
