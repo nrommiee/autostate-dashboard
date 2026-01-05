@@ -32,12 +32,12 @@ export default function ResetPasswordPage() {
     setError('')
 
     if (password !== confirmPassword) {
-      setError('Les mots de passe ne correspondent pas')
+      setError('Passwords do not match')
       return
     }
 
     if (password.length < 8) {
-      setError('Le mot de passe doit contenir au moins 8 caractères')
+      setError('Password must be at least 8 characters')
       return
     }
 
@@ -56,46 +56,31 @@ export default function ResetPasswordPage() {
         router.push('/')
       }, 3000)
     } catch (err: any) {
-      setError(err.message || 'Une erreur est survenue')
+      setError(err.message || 'An error occurred')
     } finally {
       setLoading(false)
     }
   }
 
   return (
-    <div className='min-h-screen flex items-center justify-center bg-gray-50 px-6 py-12'>
+    <div className='min-h-screen flex items-center justify-center bg-background px-6 py-12'>
       <div className='w-full max-w-sm'>
-        {/* Logo */}
-        <div className='flex items-center gap-3 mb-8'>
-          <div className='w-10 h-10 bg-teal-600 rounded-xl flex items-center justify-center'>
-            <svg viewBox='0 0 24 24' fill='none' className='w-6 h-6 text-white' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round'>
-              <path d='M3 21h18' />
-              <path d='M3 21V3l18 18' />
-              <path d='M7 17h4' />
-              <path d='M11 13v4' />
-            </svg>
-          </div>
-          <span className='text-xl font-semibold'>AutoState</span>
-        </div>
-
         {!success ? (
           <>
-            {/* Header */}
             <div className='mb-8'>
-              <h1 className='text-2xl font-semibold text-gray-900'>
-                Nouveau mot de passe
+              <h1 className='text-2xl font-semibold text-foreground'>
+                New password
               </h1>
-              <p className='mt-2 text-gray-500'>
-                Choisissez un nouveau mot de passe sécurisé pour votre compte.
+              <p className='mt-2 text-muted-foreground'>
+                Choose a new secure password for your account.
               </p>
             </div>
 
-            {/* Form */}
             <form onSubmit={handleSubmit} className='space-y-4'>
               <div className='space-y-1.5'>
-                <Label htmlFor='password'>Nouveau mot de passe</Label>
+                <Label htmlFor='password'>New password</Label>
                 <div className='relative'>
-                  <Lock className='absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400' />
+                  <Lock className='absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground' />
                   <Input
                     id='password'
                     type={isVisible ? 'text' : 'password'}
@@ -110,18 +95,18 @@ export default function ResetPasswordPage() {
                     variant='ghost'
                     size='icon'
                     onClick={() => setIsVisible(prev => !prev)}
-                    className='absolute inset-y-0 right-0 h-full px-3 text-gray-400 hover:text-gray-600 hover:bg-transparent'
+                    className='absolute inset-y-0 right-0 h-full px-3 text-muted-foreground hover:text-foreground hover:bg-transparent'
                   >
-                    {isVisible ? <EyeOffIcon className='w-5 h-5' /> : <EyeIcon className='w-5 h-5' />}
+                    {isVisible ? <EyeOffIcon className='h-5 w-5' /> : <EyeIcon className='h-5 w-5' />}
                   </Button>
                 </div>
-                <p className='text-xs text-gray-400'>Minimum 8 caractères</p>
+                <p className='text-xs text-muted-foreground'>Minimum 8 characters</p>
               </div>
 
               <div className='space-y-1.5'>
-                <Label htmlFor='confirmPassword'>Confirmer le mot de passe</Label>
+                <Label htmlFor='confirmPassword'>Confirm password</Label>
                 <div className='relative'>
-                  <Lock className='absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400' />
+                  <Lock className='absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground' />
                   <Input
                     id='confirmPassword'
                     type={isVisible ? 'text' : 'password'}
@@ -142,24 +127,23 @@ export default function ResetPasswordPage() {
 
               <Button 
                 type='submit' 
-                className='w-full bg-teal-600 hover:bg-teal-700'
+                className='w-full'
                 disabled={loading}
               >
-                {loading ? 'Mise à jour...' : 'Mettre à jour le mot de passe'}
+                {loading ? 'Updating...' : 'Update password'}
               </Button>
             </form>
           </>
         ) : (
-          /* Success State */
           <div className='text-center'>
-            <div className='w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6'>
-              <CheckCircle className='w-8 h-8 text-green-600' />
+            <div className='h-16 w-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6'>
+              <CheckCircle className='h-8 w-8 text-green-600' />
             </div>
-            <h2 className='text-xl font-semibold text-gray-900 mb-2'>
-              Mot de passe mis à jour !
+            <h2 className='text-xl font-semibold text-foreground mb-2'>
+              Password updated!
             </h2>
-            <p className='text-gray-500'>
-              Vous allez être redirigé vers la page de connexion...
+            <p className='text-muted-foreground'>
+              You will be redirected to the login page...
             </p>
           </div>
         )}
