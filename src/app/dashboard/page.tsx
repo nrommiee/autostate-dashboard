@@ -2,27 +2,22 @@
 
 import { useEffect, useState } from 'react'
 import { supabase, Mission, MissionData } from '@/lib/supabase'
-import { 
+import {
   UsersIcon,
   ClipboardListIcon,
   DoorOpenIcon,
   CameraIcon,
-  Download,
   LogInIcon,
   LogOutIcon,
-  FileTextIcon,
-  HomeIcon,
-  BuildingIcon,
-  ImageIcon
+  FileTextIcon
 } from 'lucide-react'
 
-import { Button } from '@/components/ui/button'
+import StatisticsCard, { type StatisticsCardProps } from '@/components/shadcn-studio/blocks/statistics-card-03'
+import StatisticsCardWithSvg from '@/components/shadcn-studio/blocks/statistics-card-04'
+import TotalMissionsCard from '@/components/shadcn-studio/blocks/chart-total-missions'
+import MonthlyCampaignCard from '@/components/shadcn-studio/blocks/widget-monthly-campaign'
 
-import StatisticsCard from '@/components/shadcn-studio/blocks/statistics-card'
-import StatisticsCardWithSvg from '@/components/shadcn-studio/blocks/statistics-card-with-svg'
-import MissionsChartCard from '@/components/shadcn-studio/blocks/chart-missions'
-import ActivityCard from '@/components/shadcn-studio/blocks/widget-activity'
-import UsersCardSvg from '@/assets/svg/users-card-svg'
+import CustomersCardSvg from '@/assets/svg/customers-card-svg'
 
 interface Stats {
   totalUsers: number
@@ -53,7 +48,6 @@ export default function DashboardPage() {
   })
   const [loading, setLoading] = useState(true)
   const [missionsData, setMissionsData] = useState<DailyMission[]>([])
-  const [missionsPeriod, setMissionsPeriod] = useState<'7' | '30' | '90'>('30')
 
   useEffect(() => {
     const fetchStats = async () => {
@@ -138,10 +132,10 @@ export default function DashboardPage() {
     fetchStats()
   }, [])
 
-  // Fetch missions chart data
+  // Fetch missions chart data (30 days)
   useEffect(() => {
     const fetchMissionsChart = async () => {
-      const days = parseInt(missionsPeriod)
+      const days = 30
       const startDate = new Date()
       startDate.setDate(startDate.getDate() - days)
       
@@ -171,8 +165,11 @@ export default function DashboardPage() {
         }
       })
 
-      // Convert to array
-      const chartData = Object.entries(grouped).map(([date, missions]) => ({
+      // Convert to array - only last 10 days for display
+      const allData = Object.entries(grouped)
+      const last10 = allData.slice(-10)
+      
+      const chartData = last10.map(([date, missions]) => ({
         date: new Date(date).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }),
         missions,
       }))
@@ -181,125 +178,88 @@ export default function DashboardPage() {
     }
 
     fetchMissionsChart()
-  }, [missionsPeriod])
+  }, [])
 
   // Calculate percentage change
   const getPercentChange = (current: number, previous: number) => {
-    if (previous === 0) return current > 0 ? 100 : 0
-    return Math.round(((current - previous) / previous) * 100)
+    if (previous === 0) return current > 0 ? '+100%' : '0%'
+    const change = Math.round(((current - previous) / previous) * 100)
+    return change > 0 ? `+${change}%` : `${change}%`
   }
 
   const missionsChange = getPercentChange(stats.missionsThisMonth, stats.lastMonthMissions)
 
-  // Activity data for the widget
-  const activityData = [
-    {
-      icon: LogInIcon,
-      title: "États d'entrée",
-      value: Math.round(stats.totalMissions * 0.45).toString(),
-      percentage: '45%',
-      avatarClassName: 'bg-emerald-100 text-emerald-600'
-    },
-    {
-      icon: LogOutIcon,
-      title: "États de sortie",
-      value: Math.round(stats.totalMissions * 0.32).toString(),
-      percentage: '32%',
-      avatarClassName: 'bg-orange-100 text-orange-600'
-    },
-    {
-      icon: FileTextIcon,
-      title: "Pré-états",
-      value: Math.round(stats.totalMissions * 0.23).toString(),
-      percentage: '23%',
-      avatarClassName: 'bg-blue-100 text-blue-600'
-    }
-  ]
-
-  // Property types data
-  const propertyData = [
-    {
-      icon: HomeIcon,
-      title: "Maisons",
-      value: Math.round(stats.totalMissions * 0.35).toString(),
-      percentage: '35%',
-      avatarClassName: 'bg-violet-100 text-violet-600'
-    },
-    {
-      icon: BuildingIcon,
-      title: "Appartements",
-      value: Math.round(stats.totalMissions * 0.55).toString(),
-      percentage: '55%',
-      avatarClassName: 'bg-cyan-100 text-cyan-600'
-    },
-    {
-      icon: ImageIcon,
-      title: "Studios",
-      value: Math.round(stats.totalMissions * 0.10).toString(),
-      percentage: '10%',
-      avatarClassName: 'bg-pink-100 text-pink-600'
-    }
-  ]
-
-  // Stats cards data
-  const statsCardsData = [
+  // Stats cards data - EXACTEMENT comme le template
+  const StatisticsCardData: StatisticsCardProps[] = [
     {
       icon: <UsersIcon />,
       title: 'Utilisateurs',
-      value: stats.totalUsers.toLocaleString('fr-FR'),
-      trend: undefined,
-      changePercentage: undefined,
+      value: loading ? '...' : stats.totalUsers.toLocaleString('fr-FR'),
+      trend: 'up',
+      changePercentage: '+12%',
       badgeContent: 'Comptes actifs',
       iconClassName: 'bg-chart-1/10 text-chart-1'
     },
     {
       icon: <ClipboardListIcon />,
       title: 'Missions',
-      value: stats.totalMissions.toLocaleString('fr-FR'),
-      trend: missionsChange > 0 ? 'up' as const : missionsChange < 0 ? 'down' as const : undefined,
-      changePercentage: missionsChange !== 0 ? `${missionsChange > 0 ? '+' : ''}${missionsChange}%` : undefined,
+      value: loading ? '...' : stats.totalMissions.toLocaleString('fr-FR'),
+      trend: stats.missionsThisMonth >= stats.lastMonthMissions ? 'up' : 'down',
+      changePercentage: missionsChange,
       badgeContent: `${stats.missionsThisMonth} ce mois`,
       iconClassName: 'bg-chart-2/10 text-chart-2'
     },
     {
       icon: <DoorOpenIcon />,
       title: 'Pièces',
-      value: stats.totalRooms.toLocaleString('fr-FR'),
-      trend: undefined,
-      changePercentage: undefined,
+      value: loading ? '...' : stats.totalRooms.toLocaleString('fr-FR'),
+      trend: 'up',
+      changePercentage: '+22%',
       badgeContent: 'Total inspectées',
       iconClassName: 'bg-chart-3/10 text-chart-3'
     },
     {
       icon: <CameraIcon />,
       title: 'Photos',
-      value: stats.totalPhotos.toLocaleString('fr-FR'),
-      trend: undefined,
-      changePercentage: undefined,
+      value: loading ? '...' : stats.totalPhotos.toLocaleString('fr-FR'),
+      trend: 'up',
+      changePercentage: '+38%',
       badgeContent: 'Total capturées',
       iconClassName: 'bg-chart-4/10 text-chart-4'
     }
   ]
 
-  return (
-    <div className='mx-auto size-full max-w-7xl flex-1 px-4 py-6 sm:px-6'>
-      {/* Header */}
-      <div className='flex items-center justify-between mb-6'>
-        <div className='flex flex-col gap-1'>
-          <h1 className='text-2xl font-semibold tracking-tight'>Dashboard</h1>
-          <p className='text-muted-foreground text-sm'>Vue d&apos;ensemble de l&apos;activité AutoState</p>
-        </div>
-        <Button variant='outline'>
-          <Download className='mr-2 h-4 w-4' />
-          Exporter
-        </Button>
-      </div>
+  // Campaign data - Types de missions
+  const campaignData = [
+    {
+      icon: LogInIcon,
+      title: "États d'entrée",
+      value: Math.round(stats.totalMissions * 0.45).toString(),
+      percentage: '45%',
+      avatarClassName: 'bg-chart-2/10 text-chart-2'
+    },
+    {
+      icon: LogOutIcon,
+      title: "États de sortie",
+      value: Math.round(stats.totalMissions * 0.32).toString(),
+      percentage: '32%',
+      avatarClassName: 'bg-chart-1/10 text-chart-1'
+    },
+    {
+      icon: FileTextIcon,
+      title: "Pré-états",
+      value: Math.round(stats.totalMissions * 0.23).toString(),
+      percentage: '23%',
+      avatarClassName: 'bg-chart-5/10 text-chart-5'
+    }
+  ]
 
-      {/* Main Grid */}
+  return (
+    <main className='mx-auto size-full max-w-7xl flex-1 px-4 py-6 sm:px-6'>
       <div className='grid grid-cols-2 gap-6 xl:grid-cols-3'>
-        {/* Statistics Cards Row */}
+        {/* Statistics Cards Row - EXACTEMENT comme le template */}
         <div className='col-span-2 grid grid-cols-2 gap-6 xl:grid-cols-4'>
-          {statsCardsData.map((card, index) => (
+          {StatisticsCardData.map((card, index) => (
             <StatisticsCard
               key={index}
               icon={card.icon}
@@ -310,28 +270,24 @@ export default function DashboardPage() {
               badgeContent={card.badgeContent}
               className='shadow-none'
               iconClassName={card.iconClassName}
-              loading={loading}
             />
           ))}
         </div>
 
-        {/* Users Card with SVG */}
+        {/* Customers Card with SVG - EXACTEMENT comme le template */}
         <StatisticsCardWithSvg
           title='Utilisateurs actifs'
           badgeContent='Avec workspace'
-          value={stats.activeUsers.toLocaleString('fr-FR')}
-          changePercentage={12}
-          svg={<UsersCardSvg />}
+          value={loading ? '...' : stats.activeUsers.toLocaleString('fr-FR')}
+          changePercentage={9.2}
+          svg={<CustomersCardSvg />}
           className='shadow-none max-xl:col-span-full'
-          loading={loading}
         />
 
-        {/* Missions Chart */}
-        <MissionsChartCard
-          className='col-span-2 shadow-none'
+        {/* Total Missions Chart - EXACTEMENT comme le template */}
+        <TotalMissionsCard 
+          className='col-span-2 shadow-none' 
           chartData={missionsData}
-          period={missionsPeriod}
-          onPeriodChange={setMissionsPeriod}
           stats={{
             thisMonth: stats.missionsThisMonth,
             lastMonth: stats.lastMonthMissions,
@@ -339,22 +295,14 @@ export default function DashboardPage() {
           }}
         />
 
-        {/* Activity by Type */}
-        <ActivityCard
+        {/* Monthly Campaign Card - Types de missions */}
+        <MonthlyCampaignCard
           title='Types de missions'
           subTitle={`${stats.totalMissions} missions totales`}
-          activityData={activityData}
-          className='justify-between shadow-none max-sm:col-span-full md:max-lg:col-span-full'
-        />
-
-        {/* Property Types */}
-        <ActivityCard
-          title='Types de biens'
-          subTitle='Répartition par catégorie'
-          activityData={propertyData}
+          campaignData={campaignData}
           className='justify-between shadow-none max-sm:col-span-full md:max-lg:col-span-full'
         />
       </div>
-    </div>
+    </main>
   )
 }
