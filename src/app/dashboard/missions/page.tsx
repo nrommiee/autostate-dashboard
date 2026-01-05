@@ -17,8 +17,19 @@ import {
   ChevronRight,
   ArrowUpDown,
   Eye,
-  Filter
+  HardDrive,
+  FileText,
+  Database
 } from 'lucide-react'
+
+// ============================================
+// CONSTANTS
+// ============================================
+// Supabase Storage pricing: $0.021/GB/month
+const STORAGE_COST_PER_GB_MONTH = 0.021
+
+// UUID regex to detect inspection folders
+const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-/
 
 // ============================================
 // TYPES
@@ -40,9 +51,15 @@ interface Mission {
   user_id: string
   user_email?: string
   user_name?: string
-  // Costs (calculated)
+  // API Costs
   total_api_cost: number
   api_costs_breakdown: ApiCostBreakdown[]
+  // Storage
+  storage_bytes: number
+  storage_files: number
+  storage_cost: number
+  // Combined
+  total_cost: number
 }
 
 interface ApiCostBreakdown {
@@ -52,6 +69,28 @@ interface ApiCostBreakdown {
   cost: number
 }
 
+interface StorageByInspection {
+  inspection_id: string
+  total_bytes: number
+  file_count: number
+}
+
+// ============================================
+// HELPERS
+// ============================================
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`
+}
+
+function calculateStorageCost(bytes: number): number {
+  const gb = bytes / (1024 * 1024 * 1024)
+  return gb * STORAGE_COST_PER_GB_MONTH
+}
+
 // ============================================
 // MAIN COMPONENT
 // ============================================
@@ -59,10 +98,15 @@ export default function MissionsPage() {
   const [loading, setLoading] = useState(true)
   const [missions, setMissions] = useState<Mission[]>([])
   const [searchQuery, setSearchQuery] = useState('')
-  const [sortField, setSortField] = useState<'date_time' | 'total_api_cost'>('date_time')
+  const [sortField, setSortField] = useState<'date_time' | 'total_cost'>('date_time')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
   const [currentPage, setCurrentPage] = useState(1)
   const [totalCount, setTotalCount] = useState(0)
+  
+  // Global stats
+  const [totalStorageBytes, setTotalStorageBytes] = useState(0)
+  const [totalFiles, setTotalFiles] = useState(0)
+  
   const pageSize = 20
 
   useEffect(() => {
@@ -72,7 +116,7 @@ export default function MissionsPage() {
   async function loadMissions() {
     setLoading(true)
     try {
-      // Fetch inspections with user info
+      // 1. Fetch inspections with user info
       let query = supabase
         .from('inspections')
         .select(`
@@ -93,7 +137,7 @@ export default function MissionsPage() {
             full_name
           )
         `, { count: 'exact' })
-        .order(sortField, { ascending: sortOrder === 'asc' })
+        .order('date_time', { ascending: sortOrder === 'asc' })
         .range((currentPage - 1) * pageSize, currentPage * pageSize - 1)
 
       const { data: inspectionsData, count, error } = await query
@@ -112,15 +156,15 @@ export default function MissionsPage() {
         return
       }
 
-      // Get API costs for each inspection
       const inspectionIds = inspectionsData.map(i => i.id)
-      
+
+      // 2. Get API costs for each inspection
       const { data: apiLogs } = await supabase
         .from('api_usage_logs')
         .select('*')
         .in('inspection_id', inspectionIds)
 
-      // Group costs by inspection
+      // Group API costs by inspection
       const costsByInspection: Record<string, ApiCostBreakdown[]> = {}
       
       if (apiLogs) {
@@ -149,10 +193,59 @@ export default function MissionsPage() {
         })
       }
 
-      // Map to Mission objects
+      // 3. Get storage for ALL inspection-related files
+      // Query storage.objects and group by first folder (if it's a UUID)
+      const { data: storageData } = await supabase
+        .rpc('get_storage_by_inspection')
+        .in('inspection_id', inspectionIds)
+
+      // If RPC doesn't exist, fallback to direct query
+      let storageByInspection: Record<string, StorageByInspection> = {}
+      
+      if (storageData) {
+        storageData.forEach((s: StorageByInspection) => {
+          storageByInspection[s.inspection_id] = s
+        })
+      } else {
+        // Fallback: fetch all storage objects and filter client-side
+        const { data: allObjects } = await supabase
+          .from('storage_objects_view')
+          .select('name, metadata')
+        
+        if (allObjects) {
+          allObjects.forEach((obj: any) => {
+            const firstFolder = obj.name?.split('/')[0]
+            if (firstFolder && UUID_REGEX.test(firstFolder)) {
+              if (!storageByInspection[firstFolder]) {
+                storageByInspection[firstFolder] = {
+                  inspection_id: firstFolder,
+                  total_bytes: 0,
+                  file_count: 0
+                }
+              }
+              storageByInspection[firstFolder].total_bytes += parseInt(obj.metadata?.size) || 0
+              storageByInspection[firstFolder].file_count++
+            }
+          })
+        }
+      }
+
+      // 4. Get global storage stats
+      const { data: globalStorage } = await supabase
+        .rpc('get_total_storage')
+      
+      if (globalStorage) {
+        setTotalStorageBytes(globalStorage.total_bytes || 0)
+        setTotalFiles(globalStorage.file_count || 0)
+      }
+
+      // 5. Map to Mission objects
       const mappedMissions: Mission[] = inspectionsData.map((inspection: any) => {
-        const costs = costsByInspection[inspection.id] || []
-        const totalCost = costs.reduce((acc, c) => acc + c.cost, 0)
+        const apiCosts = costsByInspection[inspection.id] || []
+        const totalApiCost = apiCosts.reduce((acc, c) => acc + c.cost, 0)
+        
+        const storage = storageByInspection[inspection.id] || { total_bytes: 0, file_count: 0 }
+        const storageCost = calculateStorageCost(storage.total_bytes)
         
         return {
           id: inspection.id,
@@ -169,10 +262,23 @@ export default function MissionsPage() {
           user_id: inspection.user_id,
           user_email: inspection.profiles?.email,
           user_name: inspection.profiles?.full_name,
-          total_api_cost: totalCost,
-          api_costs_breakdown: costs
+          total_api_cost: totalApiCost,
+          api_costs_breakdown: apiCosts,
+          storage_bytes: storage.total_bytes,
+          storage_files: storage.file_count,
+          storage_cost: storageCost,
+          total_cost: totalApiCost + storageCost
         }
       })
+
+      // Sort by total_cost if needed
+      if (sortField === 'total_cost') {
+        mappedMissions.sort((a, b) => 
+          sortOrder === 'asc' 
+            ? a.total_cost - b.total_cost 
+            : b.total_cost - a.total_cost
+        )
+      }
 
       setMissions(mappedMissions)
     } catch (error) {
@@ -194,6 +300,11 @@ export default function MissionsPage() {
       m.user_email?.toLowerCase().includes(query)
     )
   })
+
+  // Calculate page stats
+  const pageTotalCost = filteredMissions.reduce((acc, m) => acc + m.total_cost, 0)
+  const pageStorageBytes = filteredMissions.reduce((acc, m) => acc + m.storage_bytes, 0)
+  const pageFiles = filteredMissions.reduce((acc, m) => acc + m.storage_files, 0)
 
   // Format date
   const formatDate = (dateStr: string) => {
@@ -239,7 +350,7 @@ export default function MissionsPage() {
   }
 
   // Toggle sort
-  const toggleSort = (field: 'date_time' | 'total_api_cost') => {
+  const toggleSort = (field: 'date_time' | 'total_cost') => {
     if (sortField === field) {
       setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')
     } else {
@@ -257,7 +368,7 @@ export default function MissionsPage() {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold">Missions</h1>
-          <p className="text-gray-500 text-sm">États des lieux avec coûts API détaillés</p>
+          <p className="text-gray-500 text-sm">États des lieux avec coûts API et stockage</p>
         </div>
         
         {/* Search */}
@@ -272,30 +383,38 @@ export default function MissionsPage() {
         </div>
       </div>
 
-      {/* Stats */}
+      {/* Stats - 4 blocs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <Card className="p-4">
-          <div className="text-gray-500 text-sm mb-1">Total missions</div>
+          <div className="flex items-center gap-2 text-gray-500 text-sm mb-1">
+            <Calendar className="h-4 w-4" />
+            Total missions
+          </div>
           <div className="text-2xl font-bold">{totalCount}</div>
         </Card>
         <Card className="p-4">
-          <div className="text-gray-500 text-sm mb-1">Cette page</div>
-          <div className="text-2xl font-bold">{filteredMissions.length}</div>
+          <div className="flex items-center gap-2 text-gray-500 text-sm mb-1">
+            <HardDrive className="h-4 w-4" />
+            Stockage total
+          </div>
+          <div className="text-2xl font-bold">{formatBytes(totalStorageBytes || pageStorageBytes)}</div>
         </Card>
         <Card className="p-4">
-          <div className="text-gray-500 text-sm mb-1">Coût total (page)</div>
+          <div className="flex items-center gap-2 text-gray-500 text-sm mb-1">
+            <DollarSign className="h-4 w-4" />
+            Coût total
+          </div>
           <div className="text-2xl font-bold text-teal-600">
-            ${filteredMissions.reduce((acc, m) => acc + m.total_api_cost, 0).toFixed(2)}
+            ${pageTotalCost.toFixed(2)}
           </div>
+          <div className="text-xs text-gray-400">API + Stockage</div>
         </Card>
         <Card className="p-4">
-          <div className="text-gray-500 text-sm mb-1">Coût moyen/mission</div>
-          <div className="text-2xl font-bold">
-            ${filteredMissions.length > 0 
-              ? (filteredMissions.reduce((acc, m) => acc + m.total_api_cost, 0) / filteredMissions.length).toFixed(3)
-              : '0.000'
-            }
+          <div className="flex items-center gap-2 text-gray-500 text-sm mb-1">
+            <FileText className="h-4 w-4" />
+            Total fichiers
           </div>
+          <div className="text-2xl font-bold">{totalFiles || pageFiles}</div>
         </Card>
       </div>
 
@@ -334,30 +453,41 @@ export default function MissionsPage() {
                   </div>
                 </th>
                 <th className="text-left p-4 font-medium text-gray-600">Statut</th>
-                <th className="text-right p-4 font-medium text-gray-600">
+                <th className="text-center p-4 font-medium text-gray-600">
+                  <div className="flex items-center gap-1 justify-center">
+                    <HardDrive className="h-4 w-4" />
+                    Stockage
+                  </div>
+                </th>
+                <th className="text-center p-4 font-medium text-gray-600">
+                  <div className="flex items-center gap-1 justify-center">
+                    <FileText className="h-4 w-4" />
+                    Fichiers
+                  </div>
+                </th>
+                <th className="text-right p-4 font-medium text-teal-600">
                   <button 
-                    onClick={() => toggleSort('total_api_cost')}
-                    className="flex items-center gap-1 hover:text-gray-900 ml-auto"
+                    onClick={() => toggleSort('total_cost')}
+                    className="flex items-center gap-1 hover:text-teal-700 ml-auto"
                   >
                     <DollarSign className="h-4 w-4" />
-                    Coût API
+                    Coût total
                     <ArrowUpDown className="h-3 w-3" />
                   </button>
                 </th>
-                <th className="text-left p-4 font-medium text-gray-600">Détail coûts</th>
-                <th className="p-4"></th>
+                <th className="p-4 w-10"></th>
               </tr>
             </thead>
             <tbody className="divide-y">
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="p-8 text-center text-gray-500">
+                  <td colSpan={9} className="p-8 text-center text-gray-500">
                     Chargement...
                   </td>
                 </tr>
               ) : filteredMissions.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="p-8 text-center text-gray-500">
+                  <td colSpan={9} className="p-8 text-center text-gray-500">
                     Aucune mission trouvée
                   </td>
                 </tr>
@@ -386,27 +516,24 @@ export default function MissionsPage() {
                     <td className="p-4">
                       {statusBadge(mission.status)}
                     </td>
-                    <td className="p-4 text-right">
-                      <span className={`font-bold ${mission.total_api_cost > 0 ? 'text-teal-600' : 'text-gray-400'}`}>
-                        ${mission.total_api_cost.toFixed(3)}
+                    <td className="p-4 text-center">
+                      <span className={mission.storage_bytes > 0 ? 'font-medium' : 'text-gray-400'}>
+                        {formatBytes(mission.storage_bytes)}
                       </span>
                     </td>
-                    <td className="p-4">
-                      {mission.api_costs_breakdown.length > 0 ? (
-                        <div className="flex flex-wrap gap-1">
-                          {mission.api_costs_breakdown.map((cost) => (
-                            <span 
-                              key={cost.function_id}
-                              className="inline-flex items-center gap-1 px-2 py-0.5 bg-gray-100 rounded text-xs"
-                              title={`${cost.function_name}: ${cost.count} requêtes, $${cost.cost.toFixed(4)}`}
-                            >
-                              <span className="font-medium">{cost.function_id.replace('_', ' ')}</span>
-                              <span className="text-gray-500">×{cost.count}</span>
-                            </span>
-                          ))}
+                    <td className="p-4 text-center">
+                      <span className={mission.storage_files > 0 ? 'font-medium' : 'text-gray-400'}>
+                        {mission.storage_files}
+                      </span>
+                    </td>
+                    <td className="p-4 text-right">
+                      <div className={`font-bold ${mission.total_cost > 0 ? 'text-teal-600' : 'text-gray-400'}`}>
+                        ${mission.total_cost.toFixed(3)}
+                      </div>
+                      {mission.total_cost > 0 && (
+                        <div className="text-xs text-gray-400">
+                          API: ${mission.total_api_cost.toFixed(3)}
                         </div>
-                      ) : (
-                        <span className="text-gray-400 text-sm">-</span>
                       )}
                     </td>
                     <td className="p-4">
@@ -424,11 +551,14 @@ export default function MissionsPage() {
         </div>
 
         {/* Pagination */}
-        {totalPages > 1 && (
-          <div className="flex items-center justify-between p-4 border-t">
-            <div className="text-sm text-gray-500">
-              Page {currentPage} sur {totalPages} ({totalCount} missions)
-            </div>
+        <div className="flex items-center justify-between p-4 border-t bg-gray-50">
+          <div className="text-sm text-gray-500">
+            {totalPages > 1 
+              ? `Page ${currentPage} sur ${totalPages} (${totalCount} missions)`
+              : `${totalCount} mission${totalCount > 1 ? 's' : ''}`
+            }
+          </div>
+          {totalPages > 1 && (
             <div className="flex items-center gap-2">
               <Button
                 variant="outline"
@@ -447,8 +577,8 @@ export default function MissionsPage() {
                 <ChevronRight className="h-4 w-4" />
               </Button>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </Card>
     </div>
   )
