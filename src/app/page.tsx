@@ -298,7 +298,7 @@ export default function LoginPage() {
                         size={160}
                         level='M'
                         includeMargin={false}
-                        fgColor='#0d9488'
+                        fgColor='#000000'
                       />
                     </div>
                   )}
