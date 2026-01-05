@@ -8,7 +8,6 @@ import { ArrowLeft, Mail, CheckCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import AutoStateLogo from '@/components/login/logo'
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('')
@@ -49,8 +48,16 @@ export default function ForgotPasswordPage() {
         </Link>
 
         {/* Logo */}
-        <div className='mb-8'>
-          <AutoStateLogo />
+        <div className='flex items-center gap-3 mb-8'>
+          <div className='w-10 h-10 bg-teal-600 rounded-xl flex items-center justify-center'>
+            <svg viewBox='0 0 24 24' fill='none' className='w-6 h-6 text-white' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round'>
+              <path d='M3 21h18' />
+              <path d='M3 21V3l18 18' />
+              <path d='M7 17h4' />
+              <path d='M11 13v4' />
+            </svg>
+          </div>
+          <span className='text-xl font-semibold'>AutoState</span>
         </div>
 
         {!success ? (
@@ -78,7 +85,7 @@ export default function ForgotPasswordPage() {
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     required
-                    className='h-11 pl-10'
+                    className='pl-10'
                   />
                 </div>
               </div>
@@ -91,7 +98,7 @@ export default function ForgotPasswordPage() {
 
               <Button 
                 type='submit' 
-                className='w-full h-11 bg-teal-600 hover:bg-teal-700'
+                className='w-full bg-teal-600 hover:bg-teal-700'
                 disabled={loading}
               >
                 {loading ? 'Envoi en cours...' : 'Envoyer le lien'}
@@ -108,7 +115,7 @@ export default function ForgotPasswordPage() {
               Email envoyé !
             </h2>
             <p className='text-gray-500 mb-6'>
-              Si un compte existe avec l'adresse <strong>{email}</strong>, vous recevrez un email avec les instructions pour réinitialiser votre mot de passe.
+              Si un compte existe avec l&apos;adresse <strong>{email}</strong>, vous recevrez un email avec les instructions pour réinitialiser votre mot de passe.
             </p>
             <Link href='/'>
               <Button variant='outline' className='w-full'>
