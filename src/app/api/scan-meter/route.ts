@@ -19,10 +19,14 @@ export async function POST(request: NextRequest) {
   let success = false
   let errorMessage: string | null = null
   let matchedModelId: string | null = null
+  let inspectionId: string | undefined
+  let userId: string | undefined
 
   try {
     const body = await request.json()
     const { photo, modelId, propertyId } = body
+    inspectionId = body.inspectionId
+    userId = body.userId
 
     if (!photo) {
       return NextResponse.json({ error: 'Photo requise' }, { status: 400 })
@@ -237,7 +241,9 @@ RETOURNE: {"serial": "N° série ou null", "reading": "Index avec virgule ou nul
       success,
       responseTimeMs: timer.elapsed(),
       modelId: matchedModelId || undefined,
-      errorMessage: errorMessage || undefined
+      errorMessage: errorMessage || undefined,
+      inspectionId,
+      userId
     })
   }
 }
