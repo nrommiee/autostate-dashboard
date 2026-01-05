@@ -1,6 +1,8 @@
 'use client'
 
-import { motion } from 'framer-motion'
+import { motion } from 'motion/react'
+import type { MotionStyle, Transition } from 'motion/react'
+
 import { cn } from '@/lib/utils'
 
 interface BorderBeamProps {
@@ -9,68 +11,69 @@ interface BorderBeamProps {
   delay?: number
   colorFrom?: string
   colorTo?: string
+  transition?: Transition
   className?: string
+  style?: React.CSSProperties
+  reverse?: boolean
+  initialOffset?: number
   borderWidth?: number
 }
 
 function BorderBeam({
   className,
-  size = 100,
+  size = 50,
   delay = 0,
-  duration = 8,
-  colorFrom = '#ffaa40',
-  colorTo = '#9c40ff',
-  borderWidth = 2
+  duration = 6,
+  colorFrom = 'var(--destructive)',
+  colorTo = 'var(--primary)',
+  transition,
+  style,
+  reverse = false,
+  initialOffset = 0,
+  borderWidth = 1
 }: BorderBeamProps) {
   return (
     <div
-      className={cn(
-        'pointer-events-none absolute inset-0 rounded-[inherit] overflow-hidden',
-        className
-      )}
+      className='pointer-events-none absolute inset-0 rounded-[inherit]'
+      style={{
+        border: `${borderWidth}px solid transparent`,
+        maskImage: 'linear-gradient(transparent, transparent), linear-gradient(#000, #000)',
+        maskComposite: 'intersect',
+        maskClip: 'padding-box, border-box',
+        WebkitMaskImage: 'linear-gradient(transparent, transparent), linear-gradient(#000, #000)',
+        WebkitMaskComposite: 'xor',
+        WebkitMaskClip: 'padding-box, border-box'
+      }}
     >
-      {/* Border container */}
-      <div 
-        className='absolute inset-0 rounded-[inherit]'
-        style={{
-          padding: borderWidth,
-          background: 'transparent',
+      <motion.div
+        className={cn(
+          'absolute aspect-square',
+          'rounded-full bg-gradient-to-l from-[var(--color-from)] via-[var(--color-to)] to-transparent',
+          className
+        )}
+        style={
+          {
+            width: size,
+            offsetPath: `rect(0 auto auto 0 round ${size}px)`,
+            '--color-from': colorFrom,
+            '--color-to': colorTo,
+            ...style
+          } as MotionStyle
+        }
+        initial={{ offsetDistance: `${initialOffset}%` }}
+        animate={{
+          offsetDistance: reverse
+            ? [`${100 - initialOffset}%`, `${-initialOffset}%`]
+            : [`${initialOffset}%`, `${100 + initialOffset}%`]
         }}
-      >
-        {/* Animated gradient beam */}
-        <svg
-          className='absolute inset-0 h-full w-full rounded-[inherit]'
-          style={{ overflow: 'visible' }}
-        >
-          <defs>
-            <linearGradient id='beam-gradient' x1='0%' y1='0%' x2='100%' y2='0%'>
-              <stop offset='0%' stopColor='transparent' />
-              <stop offset='50%' stopColor={colorTo} />
-              <stop offset='100%' stopColor={colorFrom} />
-            </linearGradient>
-          </defs>
-          <motion.rect
-            x='0'
-            y='0'
-            width='100%'
-            height='100%'
-            rx='20'
-            ry='20'
-            fill='none'
-            stroke='url(#beam-gradient)'
-            strokeWidth={borderWidth}
-            strokeDasharray={`${size} 1000`}
-            initial={{ strokeDashoffset: 0 }}
-            animate={{ strokeDashoffset: -1100 }}
-            transition={{
-              duration,
-              repeat: Infinity,
-              ease: 'linear',
-              delay,
-            }}
-          />
-        </svg>
-      </div>
+        transition={{
+          repeat: Infinity,
+          ease: 'linear',
+          duration,
+          delay: -delay,
+          ...transition
+        }}
+      />
     </div>
   )
 }
