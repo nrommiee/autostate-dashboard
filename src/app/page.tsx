@@ -1,261 +1,182 @@
+// src/app/page.tsx
+// Login page with role-based redirect
+
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { Separator } from '@/components/ui/separator'
-import { BorderBeam } from '@/components/ui/border-beam'
-
-import AutoStateLogo from '@/components/login/logo'
-import LoginForm from '@/components/login/login-form'
-import QRCodeSection from '@/components/login/qr-code-section'
-import AuthBackgroundShape from '@/assets/svg/auth-background-shape'
+import { getCurrentUser, getRedirectPath } from '@/lib/auth'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Card } from '@/components/ui/card'
+import { Loader2, Eye, EyeOff } from 'lucide-react'
 
 export default function LoginPage() {
   const router = useRouter()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [error, setError] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
-  
-  // QR Auth state
-  const [qrToken, setQrToken] = useState<string | null>(null)
-  const [qrStatus, setQrStatus] = useState<'idle' | 'loading' | 'ready' | 'approved' | 'expired' | 'error'>('idle')
-  const [timeLeft, setTimeLeft] = useState<number>(0)
-  const [expiresAt, setExpiresAt] = useState<Date | null>(null)
+  const [checkingSession, setCheckingSession] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-  // Login classique
+  // Check existing session on mount
+  useEffect(() => {
+    const checkSession = async () => {
+      const user = await getCurrentUser()
+      
+      if (user) {
+        // Redirect based on role
+        const redirectPath = getRedirectPath(user.role)
+        router.push(redirectPath)
+      } else {
+        setCheckingSession(false)
+      }
+    }
+    
+    checkSession()
+  }, [router])
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
-    setError('')
+    setError(null)
 
-    const { data, error: authError } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    })
+    try {
+      const { data, error: authError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      })
 
-    if (authError) {
-      setError(authError.message)
+      if (authError) throw authError
+
+      if (data.user) {
+        // Get user profile to check role
+        const user = await getCurrentUser()
+        
+        if (user) {
+          const redirectPath = getRedirectPath(user.role)
+          router.push(redirectPath)
+        } else {
+          // Fallback to portal if no profile
+          router.push('/portal')
+        }
+      }
+    } catch (err: any) {
+      console.error('Login error:', err)
+      setError(err.message === 'Invalid login credentials' 
+        ? 'Email ou mot de passe incorrect' 
+        : err.message)
+    } finally {
       setLoading(false)
-      return
-    }
-
-    if (data.user) {
-      router.push('/dashboard')
     }
   }
 
-  // Générer un token QR
-  const generateQRToken = useCallback(async () => {
-    setQrStatus('loading')
-    
-    try {
-      const { data, error } = await supabase.rpc('create_auth_token', {
-        p_ip_address: null,
-        p_user_agent: navigator.userAgent
-      })
-
-      if (error) throw error
-
-      if (data && data.length > 0) {
-        setQrToken(data[0].token)
-        setExpiresAt(new Date(data[0].expires_at))
-        setQrStatus('ready')
-      }
-    } catch (error) {
-      console.error('Error generating token:', error)
-      setQrStatus('error')
-    }
-  }, [])
-
-  // Polling pour vérifier le statut
-  useEffect(() => {
-    if (!qrToken || qrStatus !== 'ready') return
-
-    const pollInterval = setInterval(async () => {
-      try {
-        const { data, error } = await supabase.rpc('check_auth_token', {
-          p_token: qrToken
-        })
-
-        if (error) throw error
-
-        if (data) {
-          if (data.status === 'approved') {
-            setQrStatus('approved')
-            clearInterval(pollInterval)
-            
-            // Créer la session via l'API
-            const response = await fetch('/api/qr-auth', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                userId: data.user_id,
-                email: data.user_email
-              })
-            })
-            
-            const result = await response.json()
-            
-            if (result.success && result.authUrl) {
-              // Rediriger vers le magic link
-              window.location.href = result.authUrl
-            } else {
-              setError(result.error || 'Erreur de connexion')
-              setQrStatus('error')
-            }
-          } else if (data.status === 'expired') {
-            setQrStatus('expired')
-            clearInterval(pollInterval)
-          }
-        }
-      } catch (error) {
-        console.error('Error polling token:', error)
-      }
-    }, 2000)
-
-    return () => clearInterval(pollInterval)
-  }, [qrToken, qrStatus, router])
-
-  // Timer countdown
-  useEffect(() => {
-    if (!expiresAt || qrStatus !== 'ready') return
-
-    const updateTimer = () => {
-      const now = new Date()
-      const diff = Math.max(0, Math.floor((expiresAt.getTime() - now.getTime()) / 1000))
-      setTimeLeft(diff)
-
-      if (diff === 0) {
-        setQrStatus('expired')
-      }
-    }
-
-    updateTimer()
-    const timerInterval = setInterval(updateTimer, 1000)
-
-    return () => clearInterval(timerInterval)
-  }, [expiresAt, qrStatus])
-
-  // Générer le token au mount
-  useEffect(() => {
-    generateQRToken()
-  }, [generateQRToken])
+  // Show loading while checking session
+  if (checkingSession) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100">
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="h-8 w-8 animate-spin text-teal-600" />
+          <p className="text-sm text-muted-foreground">Chargement...</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
-    <div className='min-h-screen lg:grid lg:grid-cols-2'>
-      {/* Left Side - Branding */}
-      <div className='hidden lg:flex bg-gradient-to-br from-teal-600 to-teal-700 relative overflow-hidden'>
-        <div className='relative z-10 flex flex-col items-center justify-center w-full px-12'>
-          {/* Dashboard Preview Card */}
-          <div className='relative rounded-2xl p-1 bg-white/10 backdrop-blur-sm'>
-            <div className='bg-white rounded-xl overflow-hidden shadow-2xl'>
-              <img
-                src='/dashboard-preview.png'
-                alt='AutoState Dashboard'
-                className='w-full max-w-md object-cover'
-                onError={(e) => {
-                  // Fallback si l'image n'existe pas
-                  e.currentTarget.style.display = 'none'
-                  e.currentTarget.parentElement!.innerHTML = `
-                    <div class="w-96 h-64 bg-gradient-to-br from-gray-50 to-gray-100 flex flex-col items-center justify-center p-8 text-center">
-                      <div class="w-16 h-16 bg-teal-600 rounded-2xl flex items-center justify-center mb-4">
-                        <svg class="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
-                        </svg>
-                      </div>
-                      <h3 class="text-lg font-semibold text-gray-800">AutoState Dashboard</h3>
-                      <p class="text-sm text-gray-500 mt-1">Gérez vos états des lieux</p>
-                    </div>
-                  `
-                }}
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 p-4">
+      <Card className="w-full max-w-md p-8">
+        {/* Logo */}
+        <div className="flex flex-col items-center mb-8">
+          <div className="w-16 h-16 bg-teal-600 rounded-2xl flex items-center justify-center mb-4">
+            <span className="text-3xl">📐</span>
+          </div>
+          <h1 className="text-2xl font-bold">AutoState</h1>
+          <p className="text-muted-foreground text-sm mt-1">Connectez-vous à votre compte</p>
+        </div>
+
+        {/* Error message */}
+        {error && (
+          <div className="mb-6 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
+            {error}
+          </div>
+        )}
+
+        {/* Login form */}
+        <form onSubmit={handleLogin} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="email">Email</Label>
+            <Input
+              id="email"
+              type="email"
+              placeholder="votre@email.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              autoComplete="email"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="password">Mot de passe</Label>
+            <div className="relative">
+              <Input
+                id="password"
+                type={showPassword ? 'text' : 'password'}
+                placeholder="••••••••"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                autoComplete="current-password"
               />
+              <button
+                type="button"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                onClick={() => setShowPassword(!showPassword)}
+              >
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
             </div>
-            <BorderBeam duration={8} borderWidth={2} size={100} />
           </div>
 
-          {/* Tagline */}
-          <div className='mt-12 text-center text-white'>
-            <h2 className='text-2xl font-bold mb-2'>États des lieux simplifiés</h2>
-            <p className='text-teal-100 max-w-sm'>
-              Gérez vos inspections immobilières avec l'IA et gagnez du temps sur chaque mission.
-            </p>
-          </div>
+          <Button 
+            type="submit" 
+            className="w-full bg-teal-600 hover:bg-teal-700"
+            disabled={loading}
+          >
+            {loading ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Connexion...
+              </>
+            ) : (
+              'Se connecter'
+            )}
+          </Button>
+        </form>
 
-          {/* Stats */}
-          <div className='mt-8 flex gap-8'>
-            <div className='text-center'>
-              <div className='text-3xl font-bold text-white'>500+</div>
-              <div className='text-sm text-teal-200'>Missions</div>
+        {/* Demo accounts info (for testing) */}
+        <div className="mt-8 pt-6 border-t">
+          <p className="text-xs text-center text-muted-foreground mb-3">Comptes de démonstration</p>
+          <div className="space-y-2 text-xs text-muted-foreground">
+            <div className="flex justify-between p-2 bg-slate-50 rounded">
+              <span>Admin:</span>
+              <span className="font-mono">nrommiee@icloud.com</span>
             </div>
-            <div className='text-center'>
-              <div className='text-3xl font-bold text-white'>50+</div>
-              <div className='text-sm text-teal-200'>Utilisateurs</div>
+            <div className="flex justify-between p-2 bg-blue-50 rounded">
+              <span>Propriétaire:</span>
+              <span className="font-mono">demo-owner@autostate.be</span>
             </div>
-            <div className='text-center'>
-              <div className='text-3xl font-bold text-white'>98%</div>
-              <div className='text-sm text-teal-200'>Satisfaction</div>
+            <div className="flex justify-between p-2 bg-green-50 rounded">
+              <span>Locataire:</span>
+              <span className="font-mono">demo-tenant@autostate.be</span>
             </div>
           </div>
         </div>
-
-        {/* Background Shape */}
-        <div className='absolute inset-0 opacity-30'>
-          <AuthBackgroundShape className='absolute -right-32 -bottom-32 w-[800px] h-[800px]' />
-        </div>
-      </div>
-
-      {/* Right Side - Login Form */}
-      <div className='flex min-h-screen flex-col items-center justify-center bg-gray-50 px-6 py-12 lg:bg-white'>
-        <div className='w-full max-w-sm'>
-          {/* Logo */}
-          <div className='mb-8'>
-            <AutoStateLogo />
-          </div>
-
-          {/* Header */}
-          <div className='mb-8'>
-            <h1 className='text-2xl font-semibold text-gray-900'>
-              Bienvenue
-            </h1>
-            <p className='mt-1 text-gray-500'>
-              Connectez-vous à votre compte administrateur
-            </p>
-          </div>
-
-          {/* Login Form */}
-          <LoginForm
-            email={email}
-            setEmail={setEmail}
-            password={password}
-            setPassword={setPassword}
-            error={error}
-            loading={loading}
-            onSubmit={handleLogin}
-          />
-
-          {/* Divider */}
-          <div className='my-8 flex items-center gap-4'>
-            <Separator className='flex-1' />
-            <span className='text-sm text-gray-400'>ou</span>
-            <Separator className='flex-1' />
-          </div>
-
-          {/* QR Code Section */}
-          <QRCodeSection
-            qrToken={qrToken}
-            qrStatus={qrStatus}
-            timeLeft={timeLeft}
-            onRegenerate={generateQRToken}
-          />
-        </div>
-
-        {/* Footer */}
-        <div className='mt-12 text-center text-xs text-gray-400'>
-          © 2024 AutoState. Tous droits réservés.
-        </div>
-      </div>
+      </Card>
     </div>
   )
 }
