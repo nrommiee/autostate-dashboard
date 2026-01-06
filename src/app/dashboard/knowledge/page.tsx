@@ -1,493 +1,645 @@
-'use client'
+'use client';
 
-import { useState, useMemo } from 'react'
+import { useState, useEffect, useCallback } from 'react';
+import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { 
-  Book, 
-  Search, 
-  Filter, 
-  Download,
-  ExternalLink,
-  ChevronRight,
+  FileText, 
+  Upload, 
+  Trash2, 
+  RefreshCw, 
+  CheckCircle, 
+  XCircle, 
+  Clock,
+  AlertTriangle,
   ChevronDown,
-  Scale,
-  Home,
-  User,
-  Info,
-  FileText,
-  MapPin
-} from 'lucide-react'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Badge } from '@/components/ui/badge'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import {
-  ALL_REPAIRS,
-  LEGAL_CATEGORIES,
-  LEGAL_SOURCES,
-  type Region,
-  type RepairResponsibility,
-  getRegionDisplayName,
-  getRegionFlag,
-  getRegionFromPostalCode,
-  getCategoryStats,
-} from '@/lib/legal-knowledge'
+  ChevronUp,
+  Search,
+  Plus,
+  Eye
+} from 'lucide-react';
 
-export default function KnowledgePage() {
-  const [selectedRegion, setSelectedRegion] = useState<Region | 'all'>('all')
-  const [selectedCategory, setSelectedCategory] = useState<string | 'all'>('all')
-  const [searchQuery, setSearchQuery] = useState('')
-  const [expandedCategories, setExpandedCategories] = useState<string[]>([])
-  const [postalCodeInput, setPostalCodeInput] = useState('')
-  const [detectedRegion, setDetectedRegion] = useState<Region | null>(null)
+// Types
+interface LegalDocument {
+  id: string;
+  region: 'wallonia' | 'brussels' | 'flanders';
+  title: string;
+  official_title?: string;
+  source: string;
+  publication_date?: string;
+  official_url?: string;
+  pdf_storage_path?: string;
+  extraction_status: 'pending' | 'processing' | 'completed' | 'failed';
+  extraction_error?: string;
+  rules_count: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
 
-  // Filter repairs based on selection
-  const filteredRepairs = useMemo(() => {
-    let repairs = ALL_REPAIRS
+interface LegalRule {
+  id: string;
+  document_id: string;
+  region: string;
+  category: string;
+  item: string;
+  landlord_responsibility: string;
+  tenant_responsibility: string;
+  notes?: string;
+  keywords: string[];
+  late_reporting_impact: boolean;
+  sort_order: number;
+  is_active: boolean;
+}
 
-    if (selectedRegion !== 'all') {
-      repairs = repairs.filter(r => r.region === selectedRegion)
+interface RulesVersion {
+  version: number;
+  updated_at: string;
+}
+
+const REGIONS = [
+  { id: 'wallonia', name: 'Wallonie', flag: '🐓' },
+  { id: 'brussels', name: 'Bruxelles', flag: '🏛️' },
+  { id: 'flanders', name: 'Flandre', flag: '🦁' },
+];
+
+const CATEGORIES = [
+  { id: 'gardens', name: 'Jardins & Extérieurs', icon: '🌳' },
+  { id: 'heating', name: 'Chauffage', icon: '🔥' },
+  { id: 'plumbing', name: 'Plomberie', icon: '🚿' },
+  { id: 'sanitary', name: 'Sanitaires', icon: '🚽' },
+  { id: 'electricity', name: 'Électricité', icon: '⚡' },
+  { id: 'woodwork', name: 'Menuiseries', icon: '🚪' },
+  { id: 'coatings', name: 'Revêtements', icon: '🎨' },
+  { id: 'exteriors', name: 'Extérieurs', icon: '🏠' },
+  { id: 'security', name: 'Sécurité', icon: '🔒' },
+  { id: 'appliances', name: 'Électroménagers', icon: '🧊' },
+  { id: 'elevator', name: 'Ascenseurs', icon: '🛗' },
+  { id: 'cleaning', name: 'Nettoyage', icon: '✨' },
+  { id: 'misc', name: 'Divers', icon: '📦' },
+];
+
+export default function LegalKnowledgePage() {
+  const supabase = createClientComponentClient();
+  
+  // State
+  const [documents, setDocuments] = useState<LegalDocument[]>([]);
+  const [rules, setRules] = useState<LegalRule[]>([]);
+  const [version, setVersion] = useState<RulesVersion | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [extracting, setExtracting] = useState<string | null>(null);
+  const [selectedDocument, setSelectedDocument] = useState<string | null>(null);
+  const [expandedRules, setExpandedRules] = useState<Set<string>>(new Set());
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterRegion, setFilterRegion] = useState<string>('all');
+  const [filterCategory, setFilterCategory] = useState<string>('all');
+  
+  // Upload form state
+  const [showUploadForm, setShowUploadForm] = useState(false);
+  const [uploadForm, setUploadForm] = useState({
+    region: 'wallonia' as 'wallonia' | 'brussels' | 'flanders',
+    title: '',
+    source: '',
+    official_url: '',
+  });
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+
+  // Load data
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    
+    // Load version
+    const { data: versionData } = await supabase
+      .rpc('get_legal_version')
+      .single();
+    if (versionData) setVersion(versionData);
+    
+    // Load documents
+    const { data: docsData } = await supabase
+      .from('legal_documents')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (docsData) setDocuments(docsData);
+    
+    // Load rules
+    const { data: rulesData } = await supabase
+      .from('legal_repair_rules')
+      .select('*')
+      .order('region, category, sort_order');
+    if (rulesData) setRules(rulesData);
+    
+    setLoading(false);
+  }, [supabase]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  // Upload PDF
+  const handleUpload = async () => {
+    if (!selectedFile || !uploadForm.title || !uploadForm.source) {
+      alert('Veuillez remplir tous les champs obligatoires');
+      return;
     }
 
-    if (selectedCategory !== 'all') {
-      repairs = repairs.filter(r => r.category === selectedCategory)
-    }
+    setUploading(true);
 
-    if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase()
-      repairs = repairs.filter(r =>
-        r.item.toLowerCase().includes(query) ||
-        r.landlordResponsibility.toLowerCase().includes(query) ||
-        r.tenantResponsibility.toLowerCase().includes(query)
-      )
-    }
+    try {
+      // 1. Upload file to storage
+      const fileName = `${uploadForm.region}/${Date.now()}-${selectedFile.name}`;
+      const { error: uploadError } = await supabase.storage
+        .from('legal-docs')
+        .upload(fileName, selectedFile);
 
-    return repairs
-  }, [selectedRegion, selectedCategory, searchQuery])
+      if (uploadError) throw uploadError;
 
-  // Group repairs by category
-  const repairsByCategory = useMemo(() => {
-    const grouped: Record<string, RepairResponsibility[]> = {}
-    filteredRepairs.forEach(repair => {
-      if (!grouped[repair.category]) {
-        grouped[repair.category] = []
+      // 2. Create document record
+      const { data: doc, error: docError } = await supabase
+        .from('legal_documents')
+        .insert({
+          region: uploadForm.region,
+          title: uploadForm.title,
+          source: uploadForm.source,
+          official_url: uploadForm.official_url || null,
+          pdf_storage_path: fileName,
+          extraction_status: 'pending',
+        })
+        .select()
+        .single();
+
+      if (docError) throw docError;
+
+      // Reset form
+      setShowUploadForm(false);
+      setUploadForm({ region: 'wallonia', title: '', source: '', official_url: '' });
+      setSelectedFile(null);
+      
+      // Reload data
+      await loadData();
+      
+      // Auto-start extraction
+      if (doc) {
+        await handleExtract(doc.id);
       }
-      grouped[repair.category].push(repair)
-    })
-    return grouped
-  }, [filteredRepairs])
 
-  const toggleCategory = (categoryId: string) => {
-    setExpandedCategories(prev =>
-      prev.includes(categoryId)
-        ? prev.filter(id => id !== categoryId)
-        : [...prev, categoryId]
-    )
-  }
-
-  const handlePostalCodeLookup = () => {
-    const region = getRegionFromPostalCode(postalCodeInput)
-    setDetectedRegion(region)
-    if (region) {
-      setSelectedRegion(region)
+    } catch (error: any) {
+      console.error('Upload error:', error);
+      alert(`Erreur: ${error.message}`);
+    } finally {
+      setUploading(false);
     }
-  }
+  };
 
-  const totalWallonia = ALL_REPAIRS.filter(r => r.region === 'wallonia').length
-  const totalBrussels = ALL_REPAIRS.filter(r => r.region === 'brussels').length
+  // Extract PDF
+  const handleExtract = async (documentId: string) => {
+    setExtracting(documentId);
+
+    try {
+      const response = await fetch(
+        `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/extract-legal-pdf`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY}`,
+          },
+          body: JSON.stringify({ document_id: documentId }),
+        }
+      );
+
+      const result = await response.json();
+
+      if (!result.success) {
+        throw new Error(result.error || 'Extraction failed');
+      }
+
+      alert(`✅ Extraction réussie: ${result.rules_count} règles extraites`);
+      await loadData();
+
+    } catch (error: any) {
+      console.error('Extraction error:', error);
+      alert(`Erreur d'extraction: ${error.message}`);
+      await loadData();
+    } finally {
+      setExtracting(null);
+    }
+  };
+
+  // Delete document
+  const handleDeleteDocument = async (documentId: string) => {
+    if (!confirm('Supprimer ce document et toutes ses règles ?')) return;
+
+    try {
+      const doc = documents.find(d => d.id === documentId);
+      
+      // Delete from storage
+      if (doc?.pdf_storage_path) {
+        await supabase.storage.from('legal-docs').remove([doc.pdf_storage_path]);
+      }
+      
+      // Delete document (rules will cascade)
+      await supabase.from('legal_documents').delete().eq('id', documentId);
+      
+      await loadData();
+    } catch (error: any) {
+      alert(`Erreur: ${error.message}`);
+    }
+  };
+
+  // Filter rules
+  const filteredRules = rules.filter(rule => {
+    if (filterRegion !== 'all' && rule.region !== filterRegion) return false;
+    if (filterCategory !== 'all' && rule.category !== filterCategory) return false;
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      return (
+        rule.item.toLowerCase().includes(query) ||
+        rule.landlord_responsibility.toLowerCase().includes(query) ||
+        rule.tenant_responsibility.toLowerCase().includes(query) ||
+        rule.keywords.some(k => k.toLowerCase().includes(query))
+      );
+    }
+    return true;
+  });
+
+  // Group rules by category
+  const rulesByCategory = filteredRules.reduce((acc, rule) => {
+    if (!acc[rule.category]) acc[rule.category] = [];
+    acc[rule.category].push(rule);
+    return acc;
+  }, {} as Record<string, LegalRule[]>);
+
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'completed': return <CheckCircle className="w-5 h-5 text-green-500" />;
+      case 'processing': return <RefreshCw className="w-5 h-5 text-blue-500 animate-spin" />;
+      case 'failed': return <XCircle className="w-5 h-5 text-red-500" />;
+      default: return <Clock className="w-5 h-5 text-gray-400" />;
+    }
+  };
+
+  const getRegionFlag = (region: string) => {
+    return REGIONS.find(r => r.id === region)?.flag || '🇧🇪';
+  };
+
+  const getCategoryInfo = (categoryId: string) => {
+    return CATEGORIES.find(c => c.id === categoryId) || { name: categoryId, icon: '📄' };
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <RefreshCw className="w-8 h-8 animate-spin text-teal-500" />
+      </div>
+    );
+  }
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Book className="h-6 w-6 text-teal-600" />
-            Base de connaissances EDL
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            Répartition des réparations entre bailleur et locataire selon la législation belge
+          <h1 className="text-2xl font-bold text-gray-900">Base juridique</h1>
+          <p className="text-sm text-gray-500 mt-1">
+            Version {version?.version || 1} • Dernière MAJ: {version?.updated_at ? new Date(version.updated_at).toLocaleDateString('fr-BE') : '-'}
           </p>
+        </div>
+        <button
+          onClick={() => setShowUploadForm(true)}
+          className="flex items-center gap-2 px-4 py-2 bg-teal-500 text-white rounded-xl hover:bg-teal-600 transition-colors"
+        >
+          <Plus className="w-5 h-5" />
+          Ajouter un document
+        </button>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-4 gap-4">
+        <div className="bg-white rounded-xl p-4 border border-gray-200">
+          <div className="text-2xl font-bold text-gray-900">{documents.length}</div>
+          <div className="text-sm text-gray-500">Documents</div>
+        </div>
+        <div className="bg-white rounded-xl p-4 border border-gray-200">
+          <div className="text-2xl font-bold text-gray-900">{rules.length}</div>
+          <div className="text-sm text-gray-500">Règles totales</div>
+        </div>
+        <div className="bg-white rounded-xl p-4 border border-gray-200">
+          <div className="text-2xl font-bold text-gray-900">
+            {rules.filter(r => r.region === 'wallonia').length}
+          </div>
+          <div className="text-sm text-gray-500">🐓 Wallonie</div>
+        </div>
+        <div className="bg-white rounded-xl p-4 border border-gray-200">
+          <div className="text-2xl font-bold text-gray-900">
+            {rules.filter(r => r.region === 'brussels').length}
+          </div>
+          <div className="text-sm text-gray-500">🏛️ Bruxelles</div>
         </div>
       </div>
 
-      {/* Quick Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-4">
-              <div className="p-3 bg-teal-100 rounded-lg">
-                <Scale className="h-6 w-6 text-teal-600" />
-              </div>
+      {/* Upload Form Modal */}
+      {showUploadForm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-lg mx-4">
+            <h2 className="text-xl font-bold mb-4">Ajouter un document juridique</h2>
+            
+            <div className="space-y-4">
               <div>
-                <p className="text-2xl font-bold">{ALL_REPAIRS.length}</p>
-                <p className="text-sm text-muted-foreground">Éléments référencés</p>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Région *</label>
+                <select
+                  value={uploadForm.region}
+                  onChange={(e) => setUploadForm({ ...uploadForm, region: e.target.value as any })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                >
+                  {REGIONS.map(r => (
+                    <option key={r.id} value={r.id}>{r.flag} {r.name}</option>
+                  ))}
+                </select>
               </div>
-            </div>
-          </CardContent>
-        </Card>
 
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-4">
-              <div className="p-3 bg-amber-100 rounded-lg">
-                <span className="text-2xl">🐓</span>
-              </div>
               <div>
-                <p className="text-2xl font-bold">{totalWallonia}</p>
-                <p className="text-sm text-muted-foreground">Règles Wallonie</p>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Titre *</label>
+                <input
+                  type="text"
+                  value={uploadForm.title}
+                  onChange={(e) => setUploadForm({ ...uploadForm, title: e.target.value })}
+                  placeholder="Ex: Répartition des réparations Wallonie 2017"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                />
               </div>
-            </div>
-          </CardContent>
-        </Card>
 
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-4">
-              <div className="p-3 bg-blue-100 rounded-lg">
-                <span className="text-2xl">🏛️</span>
-              </div>
               <div>
-                <p className="text-2xl font-bold">{totalBrussels}</p>
-                <p className="text-sm text-muted-foreground">Règles Bruxelles</p>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Source *</label>
+                <input
+                  type="text"
+                  value={uploadForm.source}
+                  onChange={(e) => setUploadForm({ ...uploadForm, source: e.target.value })}
+                  placeholder="Ex: Moniteur Belge, SNPC, ..."
+                  className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                />
               </div>
-            </div>
-          </CardContent>
-        </Card>
 
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-4">
-              <div className="p-3 bg-purple-100 rounded-lg">
-                <FileText className="h-6 w-6 text-purple-600" />
-              </div>
               <div>
-                <p className="text-2xl font-bold">{LEGAL_SOURCES.length}</p>
-                <p className="text-sm text-muted-foreground">Sources officielles</p>
+                <label className="block text-sm font-medium text-gray-700 mb-1">URL officielle</label>
+                <input
+                  type="url"
+                  value={uploadForm.official_url}
+                  onChange={(e) => setUploadForm({ ...uploadForm, official_url: e.target.value })}
+                  placeholder="https://..."
+                  className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                />
               </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
 
-      {/* Postal Code Lookup */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center gap-2">
-            <MapPin className="h-4 w-4" />
-            Détection automatique de la région
-          </CardTitle>
-          <CardDescription>
-            Entrez le code postal du bien pour déterminer la législation applicable
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex gap-2 items-center">
-            <Input
-              placeholder="Code postal (ex: 4000)"
-              value={postalCodeInput}
-              onChange={(e) => setPostalCodeInput(e.target.value)}
-              className="max-w-[200px]"
-              onKeyDown={(e) => e.key === 'Enter' && handlePostalCodeLookup()}
-            />
-            <Button onClick={handlePostalCodeLookup} variant="secondary">
-              Détecter
-            </Button>
-            {detectedRegion && (
-              <Badge variant="outline" className="ml-2 flex items-center gap-1">
-                {getRegionFlag(detectedRegion)} {getRegionDisplayName(detectedRegion)}
-              </Badge>
-            )}
-            {postalCodeInput && detectedRegion === null && (
-              <Badge variant="destructive" className="ml-2">
-                Code postal non reconnu
-              </Badge>
-            )}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Main Content */}
-      <Tabs defaultValue="browse" className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="browse">Parcourir</TabsTrigger>
-          <TabsTrigger value="sources">Sources officielles</TabsTrigger>
-        </TabsList>
-
-        {/* Browse Tab */}
-        <TabsContent value="browse" className="space-y-4">
-          {/* Filters */}
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex flex-wrap gap-4">
-                <div className="flex-1 min-w-[200px]">
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input
-                      placeholder="Rechercher (ex: robinet, chaudière, mur...)"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="pl-10"
-                    />
-                  </div>
-                </div>
-
-                <Select value={selectedRegion} onValueChange={(v) => setSelectedRegion(v as Region | 'all')}>
-                  <SelectTrigger className="w-[180px]">
-                    <SelectValue placeholder="Région" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Toutes les régions</SelectItem>
-                    <SelectItem value="wallonia">🐓 Wallonie</SelectItem>
-                    <SelectItem value="brussels">🏛️ Bruxelles</SelectItem>
-                  </SelectContent>
-                </Select>
-
-                <Select value={selectedCategory} onValueChange={setSelectedCategory}>
-                  <SelectTrigger className="w-[200px]">
-                    <SelectValue placeholder="Catégorie" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Toutes les catégories</SelectItem>
-                    {LEGAL_CATEGORIES.map(cat => (
-                      <SelectItem key={cat.id} value={cat.id}>
-                        {cat.icon} {cat.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Results */}
-          <div className="space-y-2">
-            <p className="text-sm text-muted-foreground">
-              {filteredRepairs.length} élément(s) trouvé(s)
-            </p>
-
-            {Object.entries(repairsByCategory).map(([categoryId, repairs]) => {
-              const category = LEGAL_CATEGORIES.find(c => c.id === categoryId)
-              if (!category) return null
-
-              const isExpanded = expandedCategories.includes(categoryId)
-
-              return (
-                <Card key={categoryId}>
-                  <button
-                    onClick={() => toggleCategory(categoryId)}
-                    className="w-full px-6 py-4 flex items-center justify-between hover:bg-muted/50 transition-colors"
-                  >
-                    <div className="flex items-center gap-3">
-                      <span className="text-2xl">{category.icon}</span>
-                      <div className="text-left">
-                        <h3 className="font-semibold">{category.name}</h3>
-                        <p className="text-sm text-muted-foreground">
-                          {repairs.length} élément(s)
-                        </p>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Fichier PDF *</label>
+                <div className="border-2 border-dashed border-gray-300 rounded-xl p-4 text-center">
+                  <input
+                    type="file"
+                    accept=".pdf"
+                    onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+                    className="hidden"
+                    id="pdf-upload"
+                  />
+                  <label htmlFor="pdf-upload" className="cursor-pointer">
+                    {selectedFile ? (
+                      <div className="flex items-center justify-center gap-2 text-teal-600">
+                        <FileText className="w-5 h-5" />
+                        {selectedFile.name}
                       </div>
-                    </div>
-                    {isExpanded ? (
-                      <ChevronDown className="h-5 w-5 text-muted-foreground" />
                     ) : (
-                      <ChevronRight className="h-5 w-5 text-muted-foreground" />
-                    )}
-                  </button>
-
-                  {isExpanded && (
-                    <CardContent className="pt-0 pb-4">
-                      <div className="border-t pt-4 space-y-4">
-                        {repairs.map((repair) => (
-                          <RepairCard key={repair.id} repair={repair} />
-                        ))}
+                      <div className="text-gray-500">
+                        <Upload className="w-8 h-8 mx-auto mb-2" />
+                        Cliquez pour sélectionner un PDF
                       </div>
-                    </CardContent>
-                  )}
-                </Card>
-              )
-            })}
-
-            {filteredRepairs.length === 0 && (
-              <Card>
-                <CardContent className="py-12 text-center">
-                  <Search className="h-12 w-12 text-muted-foreground/30 mx-auto mb-4" />
-                  <h3 className="font-semibold mb-2">Aucun résultat</h3>
-                  <p className="text-sm text-muted-foreground">
-                    Essayez de modifier vos critères de recherche
-                  </p>
-                </CardContent>
-              </Card>
-            )}
-          </div>
-        </TabsContent>
-
-        {/* Sources Tab */}
-        <TabsContent value="sources" className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {LEGAL_SOURCES.map((source) => (
-              <Card key={source.id}>
-                <CardHeader>
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="text-2xl">
-                        {source.region === 'wallonia' ? '🐓' : '🏛️'}
-                      </span>
-                      <div>
-                        <CardTitle className="text-base">{source.title}</CardTitle>
-                        <CardDescription>{source.source}</CardDescription>
-                      </div>
-                    </div>
-                    <Badge variant="outline">
-                      {new Date(source.publicationDate).toLocaleDateString('fr-BE')}
-                    </Badge>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground mb-4">
-                    {source.officialTitle}
-                  </p>
-                  <div className="flex gap-2">
-                    <Button variant="outline" size="sm" asChild>
-                      <a href={source.url} target="_blank" rel="noopener noreferrer">
-                        <ExternalLink className="h-4 w-4 mr-2" />
-                        Source officielle
-                      </a>
-                    </Button>
-                    {source.pdfStoragePath && (
-                      <Button variant="outline" size="sm">
-                        <Download className="h-4 w-4 mr-2" />
-                        Télécharger PDF
-                      </Button>
                     )}
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-
-          {/* Additional Resources */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Ressources complémentaires</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <a
-                  href="https://logement.wallonie.be/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors"
-                >
-                  <div className="p-2 bg-amber-100 rounded-lg">
-                    <span className="text-xl">🐓</span>
-                  </div>
-                  <div>
-                    <p className="font-medium text-sm">Logement Wallonie</p>
-                    <p className="text-xs text-muted-foreground">Site officiel</p>
-                  </div>
-                  <ExternalLink className="h-4 w-4 text-muted-foreground ml-auto" />
-                </a>
-
-                <a
-                  href="https://logement.brussels/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors"
-                >
-                  <div className="p-2 bg-blue-100 rounded-lg">
-                    <span className="text-xl">🏛️</span>
-                  </div>
-                  <div>
-                    <p className="font-medium text-sm">Logement Brussels</p>
-                    <p className="text-xs text-muted-foreground">Site officiel</p>
-                  </div>
-                  <ExternalLink className="h-4 w-4 text-muted-foreground ml-auto" />
-                </a>
-
-                <a
-                  href="https://www.ejustice.just.fgov.be/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors"
-                >
-                  <div className="p-2 bg-gray-100 rounded-lg">
-                    <Scale className="h-5 w-5 text-gray-600" />
-                  </div>
-                  <div>
-                    <p className="font-medium text-sm">Moniteur Belge</p>
-                    <p className="text-xs text-muted-foreground">Législation officielle</p>
-                  </div>
-                  <ExternalLink className="h-4 w-4 text-muted-foreground ml-auto" />
-                </a>
+                  </label>
+                </div>
               </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
-    </div>
-  )
-}
+            </div>
 
-// Repair Card Component
-function RepairCard({ repair }: { repair: RepairResponsibility }) {
-  return (
-    <div className="p-4 rounded-lg border bg-card">
-      <div className="flex items-start justify-between mb-3">
-        <div>
-          <h4 className="font-medium">{repair.item}</h4>
-          {repair.subcategory && (
-            <p className="text-xs text-muted-foreground">{repair.subcategory}</p>
-          )}
-        </div>
-        <Badge variant="outline" className="flex items-center gap-1">
-          {repair.region === 'wallonia' ? '🐓' : '🏛️'}
-          {repair.region === 'wallonia' ? 'Wallonie' : 'Bruxelles'}
-        </Badge>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Landlord */}
-        <div className="p-3 rounded-lg bg-blue-50 border border-blue-100">
-          <div className="flex items-center gap-2 mb-2">
-            <Home className="h-4 w-4 text-blue-600" />
-            <span className="text-sm font-medium text-blue-900">Bailleur (propriétaire)</span>
-          </div>
-          <p className="text-sm text-blue-800">
-            {repair.landlordResponsibility || (
-              <span className="italic text-blue-600">Aucune obligation spécifique</span>
-            )}
-          </p>
-        </div>
-
-        {/* Tenant */}
-        <div className="p-3 rounded-lg bg-amber-50 border border-amber-100">
-          <div className="flex items-center gap-2 mb-2">
-            <User className="h-4 w-4 text-amber-600" />
-            <span className="text-sm font-medium text-amber-900">Locataire (preneur)</span>
-          </div>
-          <p className="text-sm text-amber-800">
-            {repair.tenantResponsibility || (
-              <span className="italic text-amber-600">Aucune obligation spécifique</span>
-            )}
-          </p>
-        </div>
-      </div>
-
-      {repair.notes && (
-        <div className="mt-3 p-3 rounded-lg bg-red-50 border border-red-100">
-          <div className="flex items-start gap-2">
-            <Info className="h-4 w-4 text-red-600 mt-0.5 shrink-0" />
-            <p className="text-sm text-red-800">{repair.notes}</p>
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setShowUploadForm(false)}
+                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50"
+              >
+                Annuler
+              </button>
+              <button
+                onClick={handleUpload}
+                disabled={uploading || !selectedFile}
+                className="flex-1 px-4 py-2 bg-teal-500 text-white rounded-xl hover:bg-teal-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {uploading ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    Upload...
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-4 h-4" />
+                    Uploader & Extraire
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}
+
+      {/* Documents List */}
+      <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
+          <h2 className="font-semibold text-gray-900">Documents sources</h2>
+        </div>
+        <div className="divide-y divide-gray-100">
+          {documents.length === 0 ? (
+            <div className="p-8 text-center text-gray-500">
+              Aucun document. Ajoutez votre premier PDF juridique.
+            </div>
+          ) : (
+            documents.map(doc => (
+              <div key={doc.id} className="p-4 hover:bg-gray-50 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="text-2xl">{getRegionFlag(doc.region)}</div>
+                  <div>
+                    <div className="font-medium text-gray-900">{doc.title}</div>
+                    <div className="text-sm text-gray-500">
+                      {doc.source} • {doc.rules_count} règles
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  {getStatusIcon(doc.extraction_status)}
+                  
+                  {doc.extraction_status === 'failed' && doc.extraction_error && (
+                    <div className="text-xs text-red-500 max-w-xs truncate" title={doc.extraction_error}>
+                      {doc.extraction_error}
+                    </div>
+                  )}
+                  
+                  {(doc.extraction_status === 'pending' || doc.extraction_status === 'failed') && (
+                    <button
+                      onClick={() => handleExtract(doc.id)}
+                      disabled={extracting === doc.id}
+                      className="px-3 py-1 text-sm bg-teal-50 text-teal-700 rounded-lg hover:bg-teal-100 disabled:opacity-50"
+                    >
+                      {extracting === doc.id ? 'Extraction...' : 'Extraire'}
+                    </button>
+                  )}
+                  
+                  <button
+                    onClick={() => setSelectedDocument(selectedDocument === doc.id ? null : doc.id)}
+                    className="p-2 hover:bg-gray-100 rounded-lg"
+                  >
+                    <Eye className="w-4 h-4 text-gray-500" />
+                  </button>
+                  
+                  <button
+                    onClick={() => handleDeleteDocument(doc.id)}
+                    className="p-2 hover:bg-red-50 rounded-lg"
+                  >
+                    <Trash2 className="w-4 h-4 text-red-500" />
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* Rules Browser */}
+      <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold text-gray-900">Règles de réparation</h2>
+            <div className="flex items-center gap-3">
+              {/* Search */}
+              <div className="relative">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Rechercher..."
+                  className="pl-9 pr-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                />
+              </div>
+              
+              {/* Region filter */}
+              <select
+                value={filterRegion}
+                onChange={(e) => setFilterRegion(e.target.value)}
+                className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500"
+              >
+                <option value="all">Toutes régions</option>
+                {REGIONS.map(r => (
+                  <option key={r.id} value={r.id}>{r.flag} {r.name}</option>
+                ))}
+              </select>
+              
+              {/* Category filter */}
+              <select
+                value={filterCategory}
+                onChange={(e) => setFilterCategory(e.target.value)}
+                className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500"
+              >
+                <option value="all">Toutes catégories</option>
+                {CATEGORIES.map(c => (
+                  <option key={c.id} value={c.id}>{c.icon} {c.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div className="divide-y divide-gray-100">
+          {Object.keys(rulesByCategory).length === 0 ? (
+            <div className="p-8 text-center text-gray-500">
+              Aucune règle trouvée
+            </div>
+          ) : (
+            Object.entries(rulesByCategory).map(([categoryId, categoryRules]) => {
+              const category = getCategoryInfo(categoryId);
+              const isExpanded = expandedRules.has(categoryId);
+              
+              return (
+                <div key={categoryId}>
+                  <button
+                    onClick={() => {
+                      const newExpanded = new Set(expandedRules);
+                      if (isExpanded) {
+                        newExpanded.delete(categoryId);
+                      } else {
+                        newExpanded.add(categoryId);
+                      }
+                      setExpandedRules(newExpanded);
+                    }}
+                    className="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-50"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="text-xl">{category.icon}</span>
+                      <span className="font-medium text-gray-900">{category.name}</span>
+                      <span className="text-sm text-gray-500">({categoryRules.length})</span>
+                    </div>
+                    {isExpanded ? (
+                      <ChevronUp className="w-5 h-5 text-gray-400" />
+                    ) : (
+                      <ChevronDown className="w-5 h-5 text-gray-400" />
+                    )}
+                  </button>
+                  
+                  {isExpanded && (
+                    <div className="bg-gray-50 px-4 py-2 space-y-3">
+                      {categoryRules.map(rule => (
+                        <div key={rule.id} className="bg-white rounded-xl p-4 border border-gray-200">
+                          <div className="flex items-start justify-between mb-2">
+                            <div className="font-medium text-gray-900 flex items-center gap-2">
+                              {getRegionFlag(rule.region)} {rule.item}
+                              {rule.late_reporting_impact && (
+                                <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-xs rounded-full flex items-center gap-1">
+                                  <AlertTriangle className="w-3 h-3" />
+                                  Délai important
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          
+                          <div className="grid grid-cols-2 gap-4 text-sm">
+                            <div>
+                              <div className="text-xs font-medium text-blue-600 mb-1">Propriétaire</div>
+                              <div className="text-gray-700">{rule.landlord_responsibility || '-'}</div>
+                            </div>
+                            <div>
+                              <div className="text-xs font-medium text-orange-600 mb-1">Locataire</div>
+                              <div className="text-gray-700">{rule.tenant_responsibility || '-'}</div>
+                            </div>
+                          </div>
+                          
+                          {rule.notes && (
+                            <div className="mt-2 text-xs text-gray-500 italic">
+                              💡 {rule.notes}
+                            </div>
+                          )}
+                          
+                          {rule.keywords.length > 0 && (
+                            <div className="mt-2 flex flex-wrap gap-1">
+                              {rule.keywords.map((kw, i) => (
+                                <span key={i} className="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded">
+                                  {kw}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
     </div>
-  )
+  );
 }
