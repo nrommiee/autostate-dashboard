@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { supabase } from '@/lib/supabase';
 import { 
   FileText, 
   Upload, 
@@ -79,8 +79,6 @@ const CATEGORIES = [
 ];
 
 export default function LegalKnowledgePage() {
-  const supabase = createClientComponentClient();
-  
   // State
   const [documents, setDocuments] = useState<LegalDocument[]>([]);
   const [rules, setRules] = useState<LegalRule[]>([]);
@@ -129,7 +127,7 @@ export default function LegalKnowledgePage() {
     if (rulesData) setRules(rulesData);
     
     setLoading(false);
-  }, [supabase]);
+  }, []);
 
   useEffect(() => {
     loadData();
@@ -141,18 +139,14 @@ export default function LegalKnowledgePage() {
       alert('Veuillez remplir tous les champs obligatoires');
       return;
     }
-
     setUploading(true);
-
     try {
       // 1. Upload file to storage
       const fileName = `${uploadForm.region}/${Date.now()}-${selectedFile.name}`;
       const { error: uploadError } = await supabase.storage
         .from('legal-docs')
         .upload(fileName, selectedFile);
-
       if (uploadError) throw uploadError;
-
       // 2. Create document record
       const { data: doc, error: docError } = await supabase
         .from('legal_documents')
@@ -166,9 +160,7 @@ export default function LegalKnowledgePage() {
         })
         .select()
         .single();
-
       if (docError) throw docError;
-
       // Reset form
       setShowUploadForm(false);
       setUploadForm({ region: 'wallonia', title: '', source: '', official_url: '' });
@@ -181,10 +173,10 @@ export default function LegalKnowledgePage() {
       if (doc) {
         await handleExtract(doc.id);
       }
-
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Upload error:', error);
-      alert(`Erreur: ${error.message}`);
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      alert(`Erreur: ${message}`);
     } finally {
       setUploading(false);
     }
@@ -193,7 +185,6 @@ export default function LegalKnowledgePage() {
   // Extract PDF
   const handleExtract = async (documentId: string) => {
     setExtracting(documentId);
-
     try {
       const response = await fetch(
         `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/extract-legal-pdf`,
@@ -206,19 +197,16 @@ export default function LegalKnowledgePage() {
           body: JSON.stringify({ document_id: documentId }),
         }
       );
-
       const result = await response.json();
-
       if (!result.success) {
         throw new Error(result.error || 'Extraction failed');
       }
-
       alert(`✅ Extraction réussie: ${result.rules_count} règles extraites`);
       await loadData();
-
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Extraction error:', error);
-      alert(`Erreur d'extraction: ${error.message}`);
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      alert(`Erreur d'extraction: ${message}`);
       await loadData();
     } finally {
       setExtracting(null);
@@ -228,7 +216,6 @@ export default function LegalKnowledgePage() {
   // Delete document
   const handleDeleteDocument = async (documentId: string) => {
     if (!confirm('Supprimer ce document et toutes ses règles ?')) return;
-
     try {
       const doc = documents.find(d => d.id === documentId);
       
@@ -241,8 +228,9 @@ export default function LegalKnowledgePage() {
       await supabase.from('legal_documents').delete().eq('id', documentId);
       
       await loadData();
-    } catch (error: any) {
-      alert(`Erreur: ${error.message}`);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      alert(`Erreur: ${message}`);
     }
   };
 
@@ -295,7 +283,7 @@ export default function LegalKnowledgePage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="p-6 space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -348,7 +336,7 @@ export default function LegalKnowledgePage() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Région *</label>
                 <select
                   value={uploadForm.region}
-                  onChange={(e) => setUploadForm({ ...uploadForm, region: e.target.value as any })}
+                  onChange={(e) => setUploadForm({ ...uploadForm, region: e.target.value as 'wallonia' | 'brussels' | 'flanders' })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-teal-500 focus:border-transparent"
                 >
                   {REGIONS.map(r => (
@@ -356,7 +344,6 @@ export default function LegalKnowledgePage() {
                   ))}
                 </select>
               </div>
-
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Titre *</label>
                 <input
@@ -367,7 +354,6 @@ export default function LegalKnowledgePage() {
                   className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-teal-500 focus:border-transparent"
                 />
               </div>
-
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Source *</label>
                 <input
@@ -378,7 +364,6 @@ export default function LegalKnowledgePage() {
                   className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-teal-500 focus:border-transparent"
                 />
               </div>
-
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">URL officielle</label>
                 <input
@@ -389,7 +374,6 @@ export default function LegalKnowledgePage() {
                   className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-teal-500 focus:border-transparent"
                 />
               </div>
-
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Fichier PDF *</label>
                 <div className="border-2 border-dashed border-gray-300 rounded-xl p-4 text-center">
@@ -416,7 +400,6 @@ export default function LegalKnowledgePage() {
                 </div>
               </div>
             </div>
-
             <div className="flex gap-3 mt-6">
               <button
                 onClick={() => setShowUploadForm(false)}
@@ -551,7 +534,6 @@ export default function LegalKnowledgePage() {
             </div>
           </div>
         </div>
-
         <div className="divide-y divide-gray-100">
           {Object.keys(rulesByCategory).length === 0 ? (
             <div className="p-8 text-center text-gray-500">
