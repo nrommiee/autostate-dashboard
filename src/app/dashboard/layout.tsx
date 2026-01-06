@@ -25,7 +25,8 @@ import {
   User,
   CreditCard,
   Bell,
-  Zap
+  Book,
+  Scale
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -52,11 +53,6 @@ const navItems: NavItem[] = [
     title: 'Dashboard',
     href: '/dashboard',
     icon: <LayoutDashboard className="h-4 w-4" />,
-  },
-  {
-    title: 'Missions',
-    href: '/dashboard/missions',
-    icon: <FolderOpen className="h-4 w-4" />,
   },
   {
     title: 'Utilisateurs',
@@ -88,13 +84,17 @@ const navItems: NavItem[] = [
     ]
   },
   {
+    title: 'Base juridique',
+    href: '/dashboard/knowledge',
+    icon: <Scale className="h-4 w-4" />,
+  },
+  {
     title: 'Analytics',
     href: '/dashboard/analytics',
     icon: <BarChart3 className="h-4 w-4" />,
     children: [
       { title: 'Usage', href: '/dashboard/analytics/usage', icon: <Activity className="h-4 w-4" /> },
       { title: 'Coûts', href: '/dashboard/analytics/cost', icon: <DollarSign className="h-4 w-4" /> },
-      { title: 'Fonctions API', href: '/dashboard/analytics/functions', icon: <Zap className="h-4 w-4" /> },
     ]
   },
 ]
