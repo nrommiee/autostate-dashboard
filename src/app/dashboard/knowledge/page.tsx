@@ -110,21 +110,21 @@ export default function LegalKnowledgePage() {
     const { data: versionData } = await supabase
       .rpc('get_legal_version')
       .single();
-    if (versionData) setVersion(versionData);
+    if (versionData) setVersion(versionData as RulesVersion);
     
     // Load documents
     const { data: docsData } = await supabase
       .from('legal_documents')
       .select('*')
       .order('created_at', { ascending: false });
-    if (docsData) setDocuments(docsData);
+    if (docsData) setDocuments(docsData as LegalDocument[]);
     
     // Load rules
     const { data: rulesData } = await supabase
       .from('legal_repair_rules')
       .select('*')
       .order('region, category, sort_order');
-    if (rulesData) setRules(rulesData);
+    if (rulesData) setRules(rulesData as LegalRule[]);
     
     setLoading(false);
   }, []);
