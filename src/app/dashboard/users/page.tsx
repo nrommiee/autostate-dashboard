@@ -1,12 +1,31 @@
+// src/app/dashboard/users/page.tsx
+// Users page with impersonation button
+
 'use client'
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase, Profile } from '@/lib/supabase'
+import { startImpersonation, ROLE_CONFIG, UserRole } from '@/lib/auth'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { 
   Select,
   SelectContent,
@@ -28,35 +47,20 @@ import {
   TrendingUp,
   TrendingDown,
   MoreHorizontal,
-  ArrowUpDown
+  ArrowUpDown,
+  Eye,
+  Mail,
+  UserCog,
+  Loader2
 } from 'lucide-react'
 import { format, formatDistanceToNow } from 'date-fns'
 import { fr } from 'date-fns/locale'
-
-// Types de compte
-type AccountType = 'free' | 'subscription' | 'per_folder' | 'trial'
+import { cn } from '@/lib/utils'
 
 interface UserWithStats extends Profile {
   missions_count?: number
   last_activity?: string
-}
-
-// Configuration des types de compte
-const ACCOUNT_TYPES: Record<AccountType, { label: string; color: string; bgColor: string; icon: string }> = {
-  free: { label: 'Gratuit', color: 'text-gray-600', bgColor: 'bg-gray-100', icon: '○' },
-  subscription: { label: 'Abonnement', color: 'text-green-700', bgColor: 'bg-green-100', icon: '●' },
-  per_folder: { label: 'Par dossier', color: 'text-blue-700', bgColor: 'bg-blue-100', icon: '◐' },
-  trial: { label: 'Test', color: 'text-orange-700', bgColor: 'bg-orange-100', icon: '◔' },
-}
-
-// Mapper le subscription_status vers AccountType
-function getAccountType(status: string): AccountType {
-  switch (status) {
-    case 'active': return 'subscription'
-    case 'trialing': return 'trial'
-    case 'per_folder': return 'per_folder'
-    default: return 'free'
-  }
+  role: UserRole
 }
 
 export default function UsersPage() {
@@ -74,18 +78,17 @@ export default function UsersPage() {
   const [sortColumn, setSortColumn] = useState<string>('created_at')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc')
   
+  // Impersonation dialog
+  const [impersonateDialog, setImpersonateDialog] = useState(false)
+  const [selectedUser, setSelectedUser] = useState<UserWithStats | null>(null)
+  const [impersonating, setImpersonating] = useState(false)
+  
   // Stats
   const [stats, setStats] = useState({
     total: 0,
-    free: 0,
-    subscription: 0,
-    per_folder: 0,
-    trial: 0,
-    // Évolutions (simulées pour l'instant)
-    totalChange: 12.5,
-    freeChange: 8.2,
-    subscriptionChange: 25.0,
-    trialChange: -5.0,
+    admin: 0,
+    owner: 0,
+    tenant: 0,
   })
 
   useEffect(() => {
@@ -95,14 +98,12 @@ export default function UsersPage() {
   async function fetchUsers() {
     setLoading(true)
     
-    // Récupérer les profils
     const { data: profiles, error } = await supabase
       .from('profiles')
       .select('*')
       .order('created_at', { ascending: false })
 
     if (profiles) {
-      // Récupérer le nombre de missions par utilisateur
       const { data: missionCounts } = await supabase
         .from('missions')
         .select('created_by')
@@ -114,6 +115,7 @@ export default function UsersPage() {
 
       const usersWithStats: UserWithStats[] = profiles.map(p => ({
         ...p,
+        role: (p.role || 'owner') as UserRole,
         missions_count: countByUser[p.id] || 0,
         last_activity: p.last_sign_in_at || p.updated_at || p.created_at
       }))
@@ -121,14 +123,13 @@ export default function UsersPage() {
       setUsers(usersWithStats)
       setFilteredUsers(usersWithStats)
 
-      // Calculer les stats
+      // Calculate stats by role
       const total = profiles.length
-      const free = profiles.filter(p => getAccountType(p.subscription_status) === 'free').length
-      const subscription = profiles.filter(p => getAccountType(p.subscription_status) === 'subscription').length
-      const per_folder = profiles.filter(p => getAccountType(p.subscription_status) === 'per_folder').length
-      const trial = profiles.filter(p => getAccountType(p.subscription_status) === 'trial').length
+      const admin = profiles.filter(p => p.role === 'admin').length
+      const owner = profiles.filter(p => p.role === 'owner' || !p.role).length
+      const tenant = profiles.filter(p => p.role === 'tenant').length
 
-      setStats(prev => ({ ...prev, total, free, subscription, per_folder, trial }))
+      setStats({ total, admin, owner, tenant })
     }
 
     setLoading(false)
@@ -142,8 +143,7 @@ export default function UsersPage() {
       const q = searchQuery.toLowerCase()
       filtered = filtered.filter(u => 
         u.email?.toLowerCase().includes(q) ||
-        u.full_name?.toLowerCase().includes(q) ||
-        u.company_name?.toLowerCase().includes(q)
+        u.full_name?.toLowerCase().includes(q)
       )
     }
 
@@ -151,11 +151,6 @@ export default function UsersPage() {
     filtered.sort((a, b) => {
       let aVal: any = a[sortColumn as keyof UserWithStats]
       let bVal: any = b[sortColumn as keyof UserWithStats]
-      
-      if (sortColumn === 'missions_count') {
-        aVal = a.missions_count || 0
-        bVal = b.missions_count || 0
-      }
       
       if (aVal === null || aVal === undefined) aVal = ''
       if (bVal === null || bVal === undefined) bVal = ''
@@ -190,103 +185,106 @@ export default function UsersPage() {
     }
   }
 
-  // Composant pour les stats cards
-  function StatCard({ 
-    title, 
-    value, 
-    change, 
-    icon: Icon, 
-    iconBg 
-  }: { 
-    title: string
-    value: number
-    change: number
-    icon: any
-    iconBg: string
-  }) {
-    const isPositive = change >= 0
-    return (
-      <Card className="p-5">
-        <div className="flex items-start justify-between">
-          <div>
-            <p className="text-sm text-gray-500 mb-1">{title}</p>
-            <p className="text-3xl font-bold">{value.toLocaleString()}</p>
-          </div>
-          <div className={`p-2 rounded-lg ${iconBg}`}>
-            <Icon className="h-5 w-5" />
-          </div>
-        </div>
-        <div className="flex items-center gap-1 mt-3">
-          {isPositive ? (
-            <TrendingUp className="h-4 w-4 text-green-600" />
-          ) : (
-            <TrendingDown className="h-4 w-4 text-red-600" />
-          )}
-          <span className={`text-sm font-medium ${isPositive ? 'text-green-600' : 'text-red-600'}`}>
-            {isPositive ? '+' : ''}{change}%
-          </span>
-          <span className="text-sm text-gray-500 ml-1">vs mois dernier</span>
-        </div>
-      </Card>
-    )
+  async function handleImpersonate() {
+    if (!selectedUser) return
+    
+    setImpersonating(true)
+    
+    const result = await startImpersonation(selectedUser.id, 'Support client depuis dashboard admin')
+    
+    if (result.success) {
+      // Redirect to portal as the impersonated user
+      router.push('/portal')
+    } else {
+      alert('Erreur: ' + result.error)
+    }
+    
+    setImpersonating(false)
+    setImpersonateDialog(false)
   }
 
-  // Badge de type de compte
-  function AccountTypeBadge({ type }: { type: AccountType }) {
-    const config = ACCOUNT_TYPES[type]
+  function openImpersonateDialog(user: UserWithStats) {
+    setSelectedUser(user)
+    setImpersonateDialog(true)
+  }
+
+  // Role Badge component
+  function RoleBadge({ role }: { role: UserRole }) {
+    const config = ROLE_CONFIG[role] || ROLE_CONFIG.owner
     return (
-      <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${config.bgColor} ${config.color}`}>
-        <span className="text-[10px]">{config.icon}</span>
+      <Badge className={cn("text-xs font-medium", config.bgColor, config.color)}>
         {config.label}
-      </div>
+      </Badge>
     )
   }
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-8">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold">Utilisateurs</h1>
-        <p className="text-gray-500">{users.length} utilisateurs enregistrés</p>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold">Utilisateurs</h1>
+          <p className="text-muted-foreground">Gérer les utilisateurs et leurs accès</p>
+        </div>
+        <Button className="bg-teal-600 hover:bg-teal-700">
+          <UserPlus className="h-4 w-4 mr-2" />
+          Inviter
+        </Button>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard
-          title="Total Utilisateurs"
-          value={stats.total}
-          change={stats.totalChange}
-          icon={Users}
-          iconBg="bg-gray-100"
-        />
-        <StatCard
-          title="Gratuits"
-          value={stats.free}
-          change={stats.freeChange}
-          icon={UserPlus}
-          iconBg="bg-gray-100"
-        />
-        <StatCard
-          title="Abonnements"
-          value={stats.subscription}
-          change={stats.subscriptionChange}
-          icon={UserCheck}
-          iconBg="bg-green-100"
-        />
-        <StatCard
-          title="Test / Essai"
-          value={stats.trial}
-          change={stats.trialChange}
-          icon={Sparkles}
-          iconBg="bg-orange-100"
-        />
+      {/* Stats */}
+      <div className="grid grid-cols-4 gap-4 mb-6">
+        <Card className="p-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-gray-100 rounded-lg">
+              <Users className="h-5 w-5 text-gray-600" />
+            </div>
+            <div>
+              <p className="text-2xl font-bold">{stats.total}</p>
+              <p className="text-sm text-muted-foreground">Total</p>
+            </div>
+          </div>
+        </Card>
+        <Card className="p-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-purple-100 rounded-lg">
+              <UserCog className="h-5 w-5 text-purple-600" />
+            </div>
+            <div>
+              <p className="text-2xl font-bold">{stats.admin}</p>
+              <p className="text-sm text-muted-foreground">Admins</p>
+            </div>
+          </div>
+        </Card>
+        <Card className="p-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-blue-100 rounded-lg">
+              <UserCheck className="h-5 w-5 text-blue-600" />
+            </div>
+            <div>
+              <p className="text-2xl font-bold">{stats.owner}</p>
+              <p className="text-sm text-muted-foreground">Propriétaires</p>
+            </div>
+          </div>
+        </Card>
+        <Card className="p-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-green-100 rounded-lg">
+              <Users className="h-5 w-5 text-green-600" />
+            </div>
+            <div>
+              <p className="text-2xl font-bold">{stats.tenant}</p>
+              <p className="text-sm text-muted-foreground">Locataires</p>
+            </div>
+          </div>
+        </Card>
       </div>
 
       {/* Table Card */}
       <Card>
-        {/* Search & Filters */}
-        <div className="p-4 border-b flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
-          <div className="relative w-full sm:w-80">
+        {/* Search */}
+        <div className="p-4 border-b">
+          <div className="relative w-80">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
             <Input
               placeholder="Rechercher par nom, email..."
@@ -314,29 +312,14 @@ export default function UsersPage() {
                 <th className="text-left p-4 font-medium text-gray-600 text-sm">
                   <button 
                     className="flex items-center gap-1 hover:text-gray-900"
-                    onClick={() => handleSort('email')}
+                    onClick={() => handleSort('role')}
                   >
-                    Email
+                    Rôle
                     <ArrowUpDown className="h-3.5 w-3.5" />
                   </button>
                 </th>
                 <th className="text-left p-4 font-medium text-gray-600 text-sm">
-                  <button 
-                    className="flex items-center gap-1 hover:text-gray-900"
-                    onClick={() => handleSort('subscription_status')}
-                  >
-                    Type
-                    <ArrowUpDown className="h-3.5 w-3.5" />
-                  </button>
-                </th>
-                <th className="text-left p-4 font-medium text-gray-600 text-sm">
-                  <button 
-                    className="flex items-center gap-1 hover:text-gray-900"
-                    onClick={() => handleSort('missions_count')}
-                  >
-                    Missions
-                    <ArrowUpDown className="h-3.5 w-3.5" />
-                  </button>
+                  Missions
                 </th>
                 <th className="text-left p-4 font-medium text-gray-600 text-sm">
                   <button 
@@ -348,13 +331,7 @@ export default function UsersPage() {
                   </button>
                 </th>
                 <th className="text-left p-4 font-medium text-gray-600 text-sm">
-                  <button 
-                    className="flex items-center gap-1 hover:text-gray-900"
-                    onClick={() => handleSort('last_activity')}
-                  >
-                    Dernière activité
-                    <ArrowUpDown className="h-3.5 w-3.5" />
-                  </button>
+                  Dernière activité
                 </th>
                 <th className="w-10"></th>
               </tr>
@@ -362,15 +339,13 @@ export default function UsersPage() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="p-8 text-center">
-                    <div className="flex items-center justify-center">
-                      <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-teal-600"></div>
-                    </div>
+                  <td colSpan={6} className="p-8 text-center">
+                    <Loader2 className="h-6 w-6 animate-spin mx-auto text-teal-600" />
                   </td>
                 </tr>
               ) : paginatedUsers.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-8 text-center text-gray-500">
+                  <td colSpan={6} className="p-8 text-center text-gray-500">
                     Aucun utilisateur trouvé
                   </td>
                 </tr>
@@ -378,29 +353,27 @@ export default function UsersPage() {
                 paginatedUsers.map((user) => (
                   <tr 
                     key={user.id} 
-                    className="border-b last:border-0 hover:bg-gray-50 cursor-pointer transition-colors"
-                    onClick={() => router.push(`/dashboard/users/${user.id}`)}
+                    className="border-b last:border-0 hover:bg-gray-50 transition-colors"
                   >
                     <td className="p-4">
                       <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-full bg-teal-100 flex items-center justify-center text-teal-700 font-medium text-sm">
+                        <div className={cn(
+                          "w-9 h-9 rounded-full flex items-center justify-center font-medium text-sm",
+                          ROLE_CONFIG[user.role]?.bgColor || 'bg-gray-100',
+                          ROLE_CONFIG[user.role]?.color || 'text-gray-700'
+                        )}>
                           {user.full_name?.charAt(0)?.toUpperCase() || user.email?.charAt(0)?.toUpperCase() || '?'}
                         </div>
                         <div>
                           <p className="font-medium text-gray-900">
                             {user.full_name || 'Sans nom'}
                           </p>
-                          {user.company_name && (
-                            <p className="text-xs text-gray-500">{user.company_name}</p>
-                          )}
+                          <p className="text-xs text-gray-500">{user.email}</p>
                         </div>
                       </div>
                     </td>
                     <td className="p-4">
-                      <span className="text-gray-600 text-sm">{user.email}</span>
-                    </td>
-                    <td className="p-4">
-                      <AccountTypeBadge type={getAccountType(user.subscription_status)} />
+                      <RoleBadge role={user.role} />
                     </td>
                     <td className="p-4">
                       <span className="text-gray-900 font-medium">{user.missions_count || 0}</span>
@@ -419,9 +392,33 @@ export default function UsersPage() {
                       </span>
                     </td>
                     <td className="p-4">
-                      <Button variant="ghost" size="icon" className="h-8 w-8">
-                        <MoreHorizontal className="h-4 w-4" />
-                      </Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-8 w-8">
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => router.push(`/dashboard/users/${user.id}`)}>
+                            <UserCog className="h-4 w-4 mr-2" />
+                            Voir le profil
+                          </DropdownMenuItem>
+                          <DropdownMenuItem>
+                            <Mail className="h-4 w-4 mr-2" />
+                            Envoyer un email
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          {user.role !== 'admin' && (
+                            <DropdownMenuItem 
+                              onClick={() => openImpersonateDialog(user)}
+                              className="text-amber-600"
+                            >
+                              <Eye className="h-4 w-4 mr-2" />
+                              Se connecter en tant que
+                            </DropdownMenuItem>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </td>
                   </tr>
                 ))
@@ -431,20 +428,18 @@ export default function UsersPage() {
         </div>
 
         {/* Pagination */}
-        <div className="p-4 border-t flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="p-4 border-t flex items-center justify-between">
           <p className="text-sm text-gray-500">
             {filteredUsers.length > 0 ? (
               <>
-                {startIndex + 1}-{Math.min(startIndex + rowsPerPage, filteredUsers.length)} sur {filteredUsers.length} utilisateur(s)
+                {startIndex + 1}-{Math.min(startIndex + rowsPerPage, filteredUsers.length)} sur {filteredUsers.length}
               </>
-            ) : (
-              '0 utilisateur'
-            )}
+            ) : '0 utilisateur'}
           </p>
           
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
-              <span className="text-sm text-gray-500">Lignes par page</span>
+              <span className="text-sm text-gray-500">Lignes</span>
               <Select value={String(rowsPerPage)} onValueChange={(v) => { setRowsPerPage(Number(v)); setCurrentPage(1) }}>
                 <SelectTrigger className="w-16 h-8">
                   <SelectValue />
@@ -458,49 +453,83 @@ export default function UsersPage() {
             </div>
             
             <div className="flex items-center gap-1">
-              <span className="text-sm text-gray-600 mr-2">
-                Page {currentPage} sur {totalPages || 1}
-              </span>
-              <Button 
-                variant="outline" 
-                size="icon" 
-                className="h-8 w-8"
-                onClick={() => setCurrentPage(1)}
-                disabled={currentPage === 1}
-              >
+              <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setCurrentPage(1)} disabled={currentPage === 1}>
                 <ChevronsLeft className="h-4 w-4" />
               </Button>
-              <Button 
-                variant="outline" 
-                size="icon" 
-                className="h-8 w-8"
-                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                disabled={currentPage === 1}
-              >
+              <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}>
                 <ChevronLeft className="h-4 w-4" />
               </Button>
-              <Button 
-                variant="outline" 
-                size="icon" 
-                className="h-8 w-8"
-                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                disabled={currentPage === totalPages || totalPages === 0}
-              >
+              <span className="text-sm text-gray-600 mx-2">
+                {currentPage} / {totalPages || 1}
+              </span>
+              <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages || totalPages === 0}>
                 <ChevronRight className="h-4 w-4" />
               </Button>
-              <Button 
-                variant="outline" 
-                size="icon" 
-                className="h-8 w-8"
-                onClick={() => setCurrentPage(totalPages)}
-                disabled={currentPage === totalPages || totalPages === 0}
-              >
+              <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setCurrentPage(totalPages)} disabled={currentPage === totalPages || totalPages === 0}>
                 <ChevronsRight className="h-4 w-4" />
               </Button>
             </div>
           </div>
         </div>
       </Card>
+
+      {/* Impersonation Dialog */}
+      <Dialog open={impersonateDialog} onOpenChange={setImpersonateDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Eye className="h-5 w-5 text-amber-500" />
+              Se connecter en tant que
+            </DialogTitle>
+            <DialogDescription>
+              Vous allez voir l'application comme si vous étiez cet utilisateur. 
+              Toutes vos actions seront enregistrées.
+            </DialogDescription>
+          </DialogHeader>
+          
+          {selectedUser && (
+            <div className="p-4 bg-muted rounded-lg">
+              <div className="flex items-center gap-3">
+                <div className={cn(
+                  "w-12 h-12 rounded-full flex items-center justify-center font-medium text-lg",
+                  ROLE_CONFIG[selectedUser.role]?.bgColor,
+                  ROLE_CONFIG[selectedUser.role]?.color
+                )}>
+                  {selectedUser.full_name?.charAt(0) || '?'}
+                </div>
+                <div>
+                  <p className="font-medium">{selectedUser.full_name || 'Sans nom'}</p>
+                  <p className="text-sm text-muted-foreground">{selectedUser.email}</p>
+                  <RoleBadge role={selectedUser.role} />
+                </div>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setImpersonateDialog(false)}>
+              Annuler
+            </Button>
+            <Button 
+              onClick={handleImpersonate}
+              disabled={impersonating}
+              className="bg-amber-500 hover:bg-amber-600"
+            >
+              {impersonating ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Connexion...
+                </>
+              ) : (
+                <>
+                  <Eye className="h-4 w-4 mr-2" />
+                  Confirmer
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
