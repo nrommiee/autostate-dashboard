@@ -172,6 +172,11 @@ export default function LabsMetersPage() {
   const [correctionData, setCorrectionData] = useState<Record<string, string>>({})
   const [correctionPhotoId, setCorrectionPhotoId] = useState<string | null>(null)
   
+  // Modal correction test unitaire
+  const [showTestCorrectionModal, setShowTestCorrectionModal] = useState(false)
+  const [testCorrectionSerial, setTestCorrectionSerial] = useState('')
+  const [testCorrectionReading, setTestCorrectionReading] = useState('')
+  
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
   // ============================================================================
@@ -585,52 +590,61 @@ export default function LabsMetersPage() {
 
   // Mettre à jour la photo traitée en temps réel quand on change les sliders
   useEffect(() => {
-    if (!testPhotoFile) return
-    
-    const generateProcessed = () => {
-      const img = new Image()
-      const url = URL.createObjectURL(testPhotoFile)
-      
-      img.onload = () => {
-        const canvas = canvasRef.current
-        if (!canvas) {
-          console.log('Canvas not ready yet')
-          URL.revokeObjectURL(url)
-          return
-        }
-
-        canvas.width = img.width
-        canvas.height = img.height
-        const ctx = canvas.getContext('2d')
-        if (!ctx) {
-          URL.revokeObjectURL(url)
-          return
-        }
-
-        // Appliquer les filtres CSS
-        let filters = ''
-        if (testConfig.grayscale) filters += 'grayscale(100%) '
-        if (testConfig.contrast !== 0) filters += `contrast(${100 + testConfig.contrast}%) `
-        if (testConfig.brightness !== 0) filters += `brightness(${100 + testConfig.brightness}%) `
-        
-        console.log('Applying filters:', filters || 'none')
-        ctx.filter = filters || 'none'
-        ctx.drawImage(img, 0, 0)
-
-        // Convertir en URL
-        const processedUrl = canvas.toDataURL('image/jpeg', 0.9)
-        setTestProcessedUrl(processedUrl)
-        
-        URL.revokeObjectURL(url)
-      }
-      
-      img.src = url
+    if (!testPhotoFile) {
+      setTestProcessedUrl(null)
+      return
     }
     
-    // Petit délai pour s'assurer que le canvas est monté
-    const timeoutId = setTimeout(generateProcessed, 50)
-    return () => clearTimeout(timeoutId)
-  }, [testConfig.grayscale, testConfig.contrast, testConfig.brightness, testConfig.sharpness, testPhotoFile])
+    // Créer une nouvelle image
+    const img = new Image()
+    const objectUrl = URL.createObjectURL(testPhotoFile)
+    
+    img.onload = () => {
+      // Créer un canvas temporaire si le ref n'est pas disponible
+      const canvas = canvasRef.current || document.createElement('canvas')
+      canvas.width = img.width
+      canvas.height = img.height
+      
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        URL.revokeObjectURL(objectUrl)
+        return
+      }
+
+      // Construire la chaîne de filtres CSS
+      const filterParts: string[] = []
+      if (testConfig.grayscale) {
+        filterParts.push('grayscale(100%)')
+      }
+      if (testConfig.contrast !== 0) {
+        filterParts.push(`contrast(${100 + testConfig.contrast}%)`)
+      }
+      if (testConfig.brightness !== 0) {
+        filterParts.push(`brightness(${100 + testConfig.brightness}%)`)
+      }
+      
+      // Appliquer les filtres
+      ctx.filter = filterParts.length > 0 ? filterParts.join(' ') : 'none'
+      ctx.drawImage(img, 0, 0)
+
+      // Convertir en data URL
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.9)
+      setTestProcessedUrl(dataUrl)
+      
+      URL.revokeObjectURL(objectUrl)
+    }
+    
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl)
+    }
+    
+    img.src = objectUrl
+    
+    // Cleanup
+    return () => {
+      URL.revokeObjectURL(objectUrl)
+    }
+  }, [testConfig.grayscale, testConfig.contrast, testConfig.brightness, testPhotoFile])
 
   // Single test
   async function handleSingleTestPhoto(e: React.ChangeEvent<HTMLInputElement>) {
@@ -783,6 +797,57 @@ export default function LabsMetersPage() {
       loadData()
     } catch (err) {
       console.error('Error rejecting test:', err)
+    }
+  }
+
+  // Ouvrir le modal de correction avec les valeurs actuelles
+  function openTestCorrectionModal() {
+    setTestCorrectionSerial(testResult?.extractedSerial || '')
+    setTestCorrectionReading(testResult?.extractedReading || '')
+    setShowTestCorrectionModal(true)
+  }
+
+  // Soumettre la correction du test unitaire
+  async function handleSubmitTestCorrection() {
+    if (!testPhotoFile || !testModelId) return
+    
+    try {
+      const base64 = await fileToBase64(testPhotoFile)
+      
+      await fetch('/api/labs/experiments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          meter_model_id: testModelId,
+          photo_base64: base64,
+          extracted_data: testResult ? {
+            serial: { value: testResult.extractedSerial, confidence: testResult.confidence },
+            reading: { value: testResult.extractedReading, confidence: testResult.confidence }
+          } : {},
+          corrected_data: {
+            serial: testCorrectionSerial,
+            reading: testCorrectionReading
+          },
+          confidence: testResult?.confidence || 0,
+          status: 'corrected',
+          image_config_used: testConfig
+        })
+      })
+      
+      // Reset
+      setShowTestCorrectionModal(false)
+      setTestPhotoUrl(null)
+      setTestPhotoFile(null)
+      setTestProcessedUrl(null)
+      setTestResult(null)
+      setTestCorrectionSerial('')
+      setTestCorrectionReading('')
+      
+      // Refresh
+      loadModelExperiments(testModelId)
+      loadData()
+    } catch (err) {
+      console.error('Error correcting test:', err)
     }
   }
 
@@ -1588,7 +1653,7 @@ export default function LabsMetersPage() {
                             <Button className="bg-green-600 hover:bg-green-700" onClick={handleValidateSingleTest}>
                               <Check className="h-4 w-4 mr-1" />Valider
                             </Button>
-                            <Button variant="outline" onClick={() => setShowCorrectionModal(true)}>
+                            <Button variant="outline" onClick={openTestCorrectionModal}>
                               <Pencil className="h-4 w-4 mr-1" />Corriger
                             </Button>
                             <Button variant="outline" className="text-red-600" onClick={handleRejectSingleTest}>
@@ -1632,7 +1697,7 @@ export default function LabsMetersPage() {
                       </div>
                     ) : (
                       <div className="space-y-2 max-h-64 overflow-y-auto">
-                        {experiments.map(exp => (
+                        {[...experiments].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).map(exp => (
                           <div 
                             key={exp.id} 
                             className={`flex items-center gap-3 p-3 rounded-lg border ${
@@ -1668,13 +1733,19 @@ export default function LabsMetersPage() {
                               )}
                             </div>
                             
-                            {/* Confiance + Date */}
+                            {/* Confiance + Date+Heure */}
                             <div className="text-right text-sm">
                               <Badge variant="outline" className="mb-1">
                                 {(exp.confidence * 100).toFixed(0)}%
                               </Badge>
                               <p className="text-xs text-gray-400">
-                                {new Date(exp.created_at).toLocaleDateString('fr-FR')}
+                                {new Date(exp.created_at).toLocaleDateString('fr-FR', {
+                                  day: '2-digit',
+                                  month: '2-digit',
+                                  year: 'numeric',
+                                  hour: '2-digit',
+                                  minute: '2-digit'
+                                })}
                               </p>
                             </div>
                           </div>
@@ -1846,6 +1917,55 @@ export default function LabsMetersPage() {
           </Card>
         </div>
       )}
+
+      {/* Modal correction test unitaire */}
+      <Dialog open={showTestCorrectionModal} onOpenChange={setShowTestCorrectionModal}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Corriger les valeurs extraites</DialogTitle>
+            <DialogDescription>
+              Modifiez les valeurs pour améliorer la reconnaissance future
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div>
+              <Label>N° série</Label>
+              <Input
+                value={testCorrectionSerial}
+                onChange={(e) => setTestCorrectionSerial(e.target.value)}
+                className="font-mono"
+                placeholder="Ex: 22004338530"
+              />
+              {testResult?.extractedSerial && (
+                <p className="text-xs text-gray-400 mt-1">
+                  Valeur IA: {testResult.extractedSerial}
+                </p>
+              )}
+            </div>
+            <div>
+              <Label>Index</Label>
+              <Input
+                value={testCorrectionReading}
+                onChange={(e) => setTestCorrectionReading(e.target.value)}
+                className="font-mono"
+                placeholder="Ex: 00374.805"
+              />
+              {testResult?.extractedReading && (
+                <p className="text-xs text-gray-400 mt-1">
+                  Valeur IA: {testResult.extractedReading}
+                </p>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowTestCorrectionModal(false)}>Annuler</Button>
+            <Button onClick={handleSubmitTestCorrection} className="bg-purple-600 hover:bg-purple-700">
+              <Check className="h-4 w-4 mr-2" />
+              Enregistrer la correction
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
