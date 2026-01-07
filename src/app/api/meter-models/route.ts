@@ -66,7 +66,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Insert meter model
+    // Insert meter model (always as draft - activation happens in Labs)
     const { data, error } = await supabase
       .from('meter_models')
       .insert({
@@ -79,7 +79,8 @@ export async function POST(request: NextRequest) {
         reference_photos: reference_photos || [],
         zones: zones || [],
         is_verified: is_verified || false,
-        is_active: is_active !== false
+        is_active: is_active !== false,
+        status: 'draft'
       })
       .select()
       .single()
