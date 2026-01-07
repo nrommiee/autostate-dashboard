@@ -303,6 +303,7 @@ export interface MeterModel {
   zones: MeterZone[];
   is_active: boolean;
   is_verified: boolean;
+  status: 'draft' | 'active' | 'archived';
   usage_count: number;
   success_count: number;
   fail_count: number;
