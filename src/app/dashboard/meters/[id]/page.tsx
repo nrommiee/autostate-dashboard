@@ -184,8 +184,29 @@ export default function MeterModelDetailPage() {
       const { data: versionsData } = await supabase.from('meter_model_prompts').select('*').eq('model_id', modelId).order('version', { ascending: false })
       if (versionsData) setVersions(versionsData)
 
-      const { data: testsData } = await supabase.from('meter_model_tests').select('*').eq('model_id', modelId).order('created_at', { ascending: false })
-      if (testsData) setTests(testsData)
+      // Charger les tests depuis les deux sources
+      const [testsOld, testsLabs] = await Promise.all([
+        supabase.from('meter_model_tests').select('*').eq('model_id', modelId).order('created_at', { ascending: false }),
+        supabase.from('lab_experiments').select('*').eq('meter_model_id', modelId).order('created_at', { ascending: false })
+      ])
+      
+      // Combiner les deux sources (formater lab_experiments comme TestRecord)
+      const oldTests = testsOld.data || []
+      const labTests = (testsLabs.data || []).map((t: any) => ({
+        id: t.id,
+        extracted_serial: t.extracted_data?.serial?.value || null,
+        extracted_reading: t.extracted_data?.reading?.value || null,
+        is_validated: t.status === 'validated',
+        is_rejected: t.status === 'rejected',
+        correct_reading: t.corrected_data?.reading || null,
+        rejection_reason: null,
+        created_at: t.created_at,
+        source: 'labs' as const
+      }))
+      
+      setTests([...oldTests, ...labTests].sort((a, b) => 
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      ))
     } catch (error) {
       console.error('Error:', error)
     } finally {
@@ -363,17 +384,32 @@ export default function MeterModelDetailPage() {
       {/* Taux de réussite */}
       <Card className={`p-4 mb-6 ${testStats.total === 0 ? 'bg-gray-50' : testStats.successRate && testStats.successRate >= 80 ? 'bg-green-50 border-green-200' : testStats.successRate && testStats.successRate >= 50 ? 'bg-orange-50 border-orange-200' : 'bg-red-50 border-red-200'}`}>
         {testStats.total === 0 ? (
-          <div className="flex items-center gap-3"><Target className="h-6 w-6 text-gray-400" /><span className="text-gray-500">Pas encore de tests</span></div>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Target className="h-6 w-6 text-gray-400" />
+              <span className="text-gray-500">Pas encore de tests</span>
+            </div>
+            {model?.status === 'active' && (
+              <Button variant="outline" size="sm" onClick={() => router.push(`/dashboard/labs/meters?tab=tests&model=${model.id}`)}>
+                Faire un test →
+              </Button>
+            )}
+          </div>
         ) : (
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               {testStats.successRate && testStats.successRate >= 80 ? <CheckCircle className="h-6 w-6 text-green-600" /> : testStats.successRate && testStats.successRate >= 50 ? <AlertCircle className="h-6 w-6 text-orange-600" /> : <XCircle className="h-6 w-6 text-red-600" />}
               <span className={`text-2xl font-bold ${testStats.successRate && testStats.successRate >= 80 ? 'text-green-700' : testStats.successRate && testStats.successRate >= 50 ? 'text-orange-700' : 'text-red-700'}`}>{testStats.successRate?.toFixed(0)}%</span>
             </div>
-            <div className="flex gap-6 text-sm">
-              <div className="text-center"><div className="font-bold">{testStats.total}</div><div className="text-gray-500">Tests</div></div>
-              <div className="text-center"><div className="font-bold text-green-600">{testStats.validated}</div><div className="text-gray-500">Validés</div></div>
-              <div className="text-center"><div className="font-bold text-red-600">{testStats.rejected}</div><div className="text-gray-500">Rejetés</div></div>
+            <div className="flex items-center gap-6">
+              <div className="flex gap-6 text-sm">
+                <div className="text-center"><div className="font-bold">{testStats.total}</div><div className="text-gray-500">Tests</div></div>
+                <div className="text-center"><div className="font-bold text-green-600">{testStats.validated}</div><div className="text-gray-500">Validés</div></div>
+                <div className="text-center"><div className="font-bold text-red-600">{testStats.rejected}</div><div className="text-gray-500">Rejetés</div></div>
+              </div>
+              <Button variant="outline" size="sm" onClick={() => router.push(`/dashboard/labs/meters?tab=tests&model=${model?.id}`)}>
+                Voir les tests →
+              </Button>
             </div>
           </div>
         )}
@@ -482,7 +518,7 @@ export default function MeterModelDetailPage() {
               <h3 className="font-semibold text-purple-900">Tester ce modèle</h3>
               <p className="text-sm text-purple-700">Les tests se font dans le Labs Vision Compteurs</p>
             </div>
-            <Button onClick={() => router.push('/dashboard/labs/meters?tab=tests')} className="bg-purple-600 hover:bg-purple-700">
+            <Button onClick={() => router.push(`/dashboard/labs/meters?tab=tests&model=${model.id}`)} className="bg-purple-600 hover:bg-purple-700">
               Aller aux Tests
             </Button>
           </div>
