@@ -81,7 +81,8 @@ export default function MeterModelsPage() {
 
   // Calculate stats
   const stats = {
-    totalModels: models.filter(m => m.is_active).length,
+    totalModels: models.filter(m => m.status === 'active').length,
+    draftModels: models.filter(m => m.status === 'draft').length,
     totalScans: models.reduce((acc, m) => acc + (m.total_scans || 0), 0),
     successfulScans: models.reduce((acc, m) => acc + (m.success_count || 0), 0),
     failedScans: models.reduce((acc, m) => acc + (m.fail_count || 0), 0),
@@ -101,8 +102,7 @@ export default function MeterModelsPage() {
       }
     }
     if (filterType !== 'all' && model.meter_type !== filterType) return false
-    if (filterStatus === 'active' && !model.is_active) return false
-    if (filterStatus === 'inactive' && model.is_active) return false
+    if (filterStatus !== 'all' && model.status !== filterStatus) return false
     return true
   })
 
@@ -115,9 +115,10 @@ export default function MeterModelsPage() {
 
   async function toggleActive(model: MeterModel) {
     try {
+      const newStatus = model.status === 'active' ? 'archived' : 'active'
       await supabase
         .from('meter_models')
-        .update({ is_active: !model.is_active })
+        .update({ status: newStatus })
         .eq('id', model.id)
       loadModels()
     } catch (error) {
@@ -264,7 +265,8 @@ export default function MeterModelsPage() {
             <SelectContent>
               <SelectItem value="all">Tous</SelectItem>
               <SelectItem value="active">Actifs</SelectItem>
-              <SelectItem value="inactive">Inactifs</SelectItem>
+              <SelectItem value="draft">Brouillons</SelectItem>
+              <SelectItem value="archived">Archivés</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -357,15 +359,20 @@ export default function MeterModelsPage() {
 
                     {/* Status */}
                     <div>
-                      {model.is_active ? (
+                      {model.status === 'active' ? (
                         <Badge className="bg-green-100 text-green-700 hover:bg-green-100">
                           <span className="w-2 h-2 rounded-full bg-green-500 mr-1.5"></span>
                           Actif
                         </Badge>
+                      ) : model.status === 'draft' ? (
+                        <Badge variant="secondary" className="bg-yellow-100 text-yellow-700">
+                          <span className="w-2 h-2 rounded-full bg-yellow-500 mr-1.5"></span>
+                          Brouillon
+                        </Badge>
                       ) : (
                         <Badge variant="secondary" className="bg-gray-100 text-gray-600">
                           <span className="w-2 h-2 rounded-full bg-gray-400 mr-1.5"></span>
-                          Inactif
+                          Archivé
                         </Badge>
                       )}
                     </div>
@@ -406,10 +413,10 @@ export default function MeterModelsPage() {
                             </Link>
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => toggleActive(model)}>
-                            {model.is_active ? (
+                            {model.status === 'active' ? (
                               <>
                                 <EyeOff className="h-4 w-4 mr-2" />
-                                Désactiver
+                                Archiver
                               </>
                             ) : (
                               <>
