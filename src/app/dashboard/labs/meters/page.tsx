@@ -522,6 +522,25 @@ export default function LabsMetersPage() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [reviewSession, showCorrectionModal])
 
+  // Charger la config du modèle quand on le sélectionne
+  useEffect(() => {
+    if (testModelId) {
+      const model = models.find(m => m.id === testModelId)
+      if (model?.image_config_overrides) {
+        setTestConfig(model.image_config_overrides)
+      } else {
+        setTestConfig(DEFAULT_CONFIG)
+      }
+    }
+  }, [testModelId, models])
+
+  // Mettre à jour la photo traitée en temps réel quand on change les sliders
+  useEffect(() => {
+    if (testPhotoFile) {
+      generateProcessedPhoto(testPhotoFile)
+    }
+  }, [testConfig, testPhotoFile])
+
   // Single test
   async function handleSingleTestPhoto(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -531,6 +550,10 @@ export default function LabsMetersPage() {
     setTestPhotoFile(file)
     setTestPhotoUrl(URL.createObjectURL(file))
     setTestResult(null)
+    setTestProcessedUrl(null)
+    
+    // Générer immédiatement la photo traitée
+    await generateProcessedPhoto(file)
   }
 
   async function runSingleTest() {
@@ -538,17 +561,22 @@ export default function LabsMetersPage() {
     
     setTesting(true)
     try {
-      const base64 = await fileToBase64(testPhotoFile)
-      const model = models.find(m => m.id === testModelId)
+      // Utiliser la photo traitée si disponible
+      let photoToAnalyze: string
+      if (testProcessedUrl) {
+        // Extraire le base64 du data URL
+        photoToAnalyze = testProcessedUrl.split(',')[1]
+      } else {
+        photoToAnalyze = await fileToBase64(testPhotoFile)
+      }
       
-      // Générer la photo traitée via canvas
-      await generateProcessedPhoto(testPhotoFile)
+      const model = models.find(m => m.id === testModelId)
       
       const response = await fetch('/api/test-meter', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          testPhoto: base64,
+          testPhoto: photoToAnalyze,
           modelId: testModelId,
           imageConfig: testConfig,
           promptRules: model?.ai_description
