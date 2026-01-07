@@ -15,19 +15,38 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json()
-    const { testPhoto, modelData } = body
+    const { testPhoto, promptRules, modelData } = body
 
-    if (!testPhoto || !modelData) {
-      return NextResponse.json({ error: 'Photo et modèle requis' }, { status: 400 })
+    if (!testPhoto) {
+      return NextResponse.json({ error: 'Photo requise' }, { status: 400 })
     }
 
-    const { name, manufacturer, meterType, keywords, zones, description } = modelData
+    // Utiliser soit promptRules (nouveau format) soit modelData (ancien format)
+    let prompt: string
+    
+    if (promptRules) {
+      // Nouveau format - prompt déjà généré
+      prompt = `${promptRules}
 
-    // Construire le prompt de test
-    const keywordsText = (keywords || []).slice(0, 10).join(', ')
-    const zonesText = (zones || []).map((z: any) => z.label || z.fieldType).join(', ')
+TÂCHE:
+Analyse cette photo de compteur et extrais les informations demandées.
 
-    const prompt = `Tu dois vérifier si cette photo correspond au modèle de compteur suivant:
+RETOURNE UNIQUEMENT CE JSON:
+{
+  "matches": true,
+  "confidence": 0.0-1.0,
+  "serial": "Numéro de série extrait ou null",
+  "reading": "Index extrait ou null",
+  "reading_day": "Index jour si bi-horaire ou null",
+  "reading_night": "Index nuit si bi-horaire ou null"
+}`
+    } else if (modelData) {
+      // Ancien format
+      const { name, manufacturer, meterType, keywords, zones, description } = modelData
+      const keywordsText = (keywords || []).slice(0, 10).join(', ')
+      const zonesText = (zones || []).map((z: any) => z.label || z.fieldType).join(', ')
+
+      prompt = `Tu dois vérifier si cette photo correspond au modèle de compteur suivant:
 
 MODÈLE ATTENDU:
 - Nom: ${name}
@@ -50,6 +69,25 @@ RETOURNE UNIQUEMENT CE JSON:
   "reading": "Index extrait ou null",
   "reason": "Raison si non reconnu"
 }`
+    } else {
+      // Aucun prompt - analyse générique
+      prompt = `Analyse cette photo de compteur d'énergie (gaz, électricité, eau).
+
+TÂCHE:
+1. Identifie le type de compteur
+2. Extrais le numéro de série si visible
+3. Extrais l'index (la valeur de consommation) si visible
+4. Évalue ta confiance (0.0 à 1.0)
+
+RETOURNE UNIQUEMENT CE JSON:
+{
+  "matches": true,
+  "confidence": 0.0-1.0,
+  "serial": "Numéro de série extrait ou null",
+  "reading": "Index extrait ou null",
+  "meter_type": "gas/electricity/water"
+}`
+    }
 
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
@@ -90,6 +128,8 @@ RETOURNE UNIQUEMENT CE JSON:
       confidence: result.confidence || 0.5,
       extractedSerial: result.serial || null,
       extractedReading: result.reading || null,
+      extractedReadingDay: result.reading_day || null,
+      extractedReadingNight: result.reading_night || null,
       reason: result.reason || null
     })
 
