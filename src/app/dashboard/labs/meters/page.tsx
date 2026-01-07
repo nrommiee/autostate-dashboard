@@ -536,10 +536,42 @@ export default function LabsMetersPage() {
 
   // Mettre à jour la photo traitée en temps réel quand on change les sliders
   useEffect(() => {
-    if (testPhotoFile) {
-      generateProcessedPhoto(testPhotoFile)
+    if (!testPhotoFile || !canvasRef.current) return
+    
+    const generateProcessed = async () => {
+      const img = new Image()
+      const url = URL.createObjectURL(testPhotoFile)
+      
+      img.onload = () => {
+        const canvas = canvasRef.current
+        if (!canvas) return
+
+        canvas.width = img.width
+        canvas.height = img.height
+        const ctx = canvas.getContext('2d')
+        if (!ctx) return
+
+        // Appliquer les filtres CSS
+        let filters = ''
+        if (testConfig.grayscale) filters += 'grayscale(100%) '
+        if (testConfig.contrast !== 0) filters += `contrast(${100 + testConfig.contrast}%) `
+        if (testConfig.brightness !== 0) filters += `brightness(${100 + testConfig.brightness}%) `
+        
+        ctx.filter = filters || 'none'
+        ctx.drawImage(img, 0, 0)
+
+        // Convertir en URL
+        const processedUrl = canvas.toDataURL('image/jpeg', 0.9)
+        setTestProcessedUrl(processedUrl)
+        
+        URL.revokeObjectURL(url)
+      }
+      
+      img.src = url
     }
-  }, [testConfig, testPhotoFile])
+    
+    generateProcessed()
+  }, [testConfig.grayscale, testConfig.contrast, testConfig.brightness, testConfig.sharpness, testPhotoFile])
 
   // Single test
   async function handleSingleTestPhoto(e: React.ChangeEvent<HTMLInputElement>) {
@@ -551,9 +583,6 @@ export default function LabsMetersPage() {
     setTestPhotoUrl(URL.createObjectURL(file))
     setTestResult(null)
     setTestProcessedUrl(null)
-    
-    // Générer immédiatement la photo traitée
-    await generateProcessedPhoto(file)
   }
 
   async function runSingleTest() {
@@ -1185,11 +1214,49 @@ export default function LabsMetersPage() {
                   </DialogHeader>
 
                   <div className="space-y-4 py-4">
-                    {/* Status */}
-                    <div className="flex items-center gap-2">
-                      {selectedModel.status === 'draft' && <Badge className="bg-yellow-100 text-yellow-700">Brouillon</Badge>}
-                      {selectedModel.status === 'active' && <Badge className="bg-green-100 text-green-700">Actif</Badge>}
-                      {selectedModel.status === 'archived' && <Badge className="bg-gray-100 text-gray-600">Archivé</Badge>}
+                    {/* Photo + Status */}
+                    <div className="flex gap-4">
+                      {/* Photo du modèle */}
+                      <div className="w-32 h-32 rounded-lg bg-gray-100 overflow-hidden flex-shrink-0">
+                        {selectedModel.reference_photos?.[0] ? (
+                          <img 
+                            src={selectedModel.reference_photos[0]} 
+                            className="w-full h-full object-cover" 
+                            alt={selectedModel.name}
+                          />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-4xl text-gray-400">
+                            {METER_TYPE_ICONS[selectedModel.meter_type] || '📊'}
+                          </div>
+                        )}
+                      </div>
+                      
+                      {/* Status + Badge */}
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-3">
+                          {selectedModel.status === 'draft' && <Badge className="bg-yellow-100 text-yellow-700">Brouillon</Badge>}
+                          {selectedModel.status === 'active' && <Badge className="bg-green-100 text-green-700">Actif</Badge>}
+                          {selectedModel.status === 'archived' && <Badge className="bg-gray-100 text-gray-600">Archivé</Badge>}
+                        </div>
+                        
+                        {/* Stats mini */}
+                        <div className="grid grid-cols-3 gap-2">
+                          <div className="text-center p-2 bg-gray-50 rounded">
+                            <p className="text-lg font-bold">{selectedModel.total_scans || 0}</p>
+                            <p className="text-xs text-gray-500">Tests</p>
+                          </div>
+                          <div className="text-center p-2 bg-gray-50 rounded">
+                            <p className="text-lg font-bold text-green-600">{selectedModel.success_count || 0}</p>
+                            <p className="text-xs text-gray-500">Réussis</p>
+                          </div>
+                          <div className="text-center p-2 bg-gray-50 rounded">
+                            <p className="text-lg font-bold text-purple-600">
+                              {selectedModel.total_scans ? ((selectedModel.success_count || 0) / selectedModel.total_scans * 100).toFixed(0) : 0}%
+                            </p>
+                            <p className="text-xs text-gray-500">Succès</p>
+                          </div>
+                        </div>
+                      </div>
                     </div>
 
                     {/* Prompt */}
@@ -1201,7 +1268,7 @@ export default function LabsMetersPage() {
                         </Label>
                         <Badge variant="outline" className="text-xs">Auto-généré</Badge>
                       </div>
-                      <div className="p-3 bg-gray-50 rounded-lg text-sm font-mono whitespace-pre-wrap max-h-48 overflow-y-auto">
+                      <div className="p-3 bg-gray-50 rounded-lg text-sm font-mono whitespace-pre-wrap max-h-32 overflow-y-auto">
                         {selectedModel.ai_description || 'Aucun prompt défini'}
                       </div>
                     </div>
@@ -1224,24 +1291,6 @@ export default function LabsMetersPage() {
                         )}
                       </div>
                     </div>
-
-                    {/* Stats */}
-                    <div className="grid grid-cols-3 gap-4">
-                      <div className="p-3 bg-gray-50 rounded-lg text-center">
-                        <p className="text-2xl font-bold">{selectedModel.total_scans || 0}</p>
-                        <p className="text-xs text-gray-500">Tests</p>
-                      </div>
-                      <div className="p-3 bg-gray-50 rounded-lg text-center">
-                        <p className="text-2xl font-bold text-green-600">{selectedModel.success_count || 0}</p>
-                        <p className="text-xs text-gray-500">Réussis</p>
-                      </div>
-                      <div className="p-3 bg-gray-50 rounded-lg text-center">
-                        <p className="text-2xl font-bold text-purple-600">
-                          {selectedModel.total_scans ? ((selectedModel.success_count || 0) / selectedModel.total_scans * 100).toFixed(0) : 0}%
-                        </p>
-                        <p className="text-xs text-gray-500">Succès</p>
-                      </div>
-                    </div>
                   </div>
 
                   <DialogFooter>
@@ -1249,6 +1298,7 @@ export default function LabsMetersPage() {
                       <Button variant="outline" onClick={() => {
                         setSelectedModelId(null)
                         setTestModelId(selectedModel.id)
+                        setTestMode('single')
                         setActiveTab('tests')
                       }}>
                         <TestTube className="h-4 w-4 mr-2" />Tester dans Labs
