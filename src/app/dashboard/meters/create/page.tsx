@@ -444,8 +444,8 @@ RÈGLES DE LECTURE:`
       }
 
       setSaved(true)
-      // Redirection vers le Labs avec le modèle créé
-      setTimeout(() => router.push(`/dashboard/labs/meters?model=${result.id}`), 1500)
+      // Redirection vers la liste des modèles
+      setTimeout(() => router.push('/dashboard/meters'), 1500)
     } catch (err: any) { 
       setError(err.message || 'Erreur lors de la sauvegarde') 
     } finally { 
