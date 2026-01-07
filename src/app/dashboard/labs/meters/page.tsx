@@ -206,13 +206,21 @@ export default function LabsMetersPage() {
   async function loadData() {
     setLoading(true)
     try {
-      const [modelsRes, versionsRes] = await Promise.all([
+      const [modelsRes, versionsRes, allExperimentsRes] = await Promise.all([
         supabase.from('meter_models').select('*').order('name'),
-        supabase.from('recognition_versions').select('*').order('created_at', { ascending: false })
+        supabase.from('recognition_versions').select('*').order('created_at', { ascending: false }),
+        // Charger tous les experiments du mois pour les stats de coût
+        supabase.from('lab_experiments')
+          .select('id, tokens_input, tokens_output, status, created_at')
+          .gte('created_at', new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString())
       ])
       
       if (modelsRes.data) setModels(modelsRes.data)
       if (versionsRes.data) setVersions(versionsRes.data)
+      // Utiliser allExperiments pour les stats globales si pas de modèle sélectionné
+      if (allExperimentsRes.data && !testModelId) {
+        setExperiments(allExperimentsRes.data)
+      }
     } catch (err) {
       console.error('Error loading data:', err)
     }
@@ -1080,7 +1088,7 @@ export default function LabsMetersPage() {
       {activeTab === 'overview' && (
         <div className="space-y-6">
           {/* Stats */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
             <Card className="p-4">
               <p className="text-xs text-gray-500 mb-1">Total modèles</p>
               <p className="text-2xl font-bold">{stats.total}</p>
@@ -1096,6 +1104,12 @@ export default function LabsMetersPage() {
             <Card className="p-4">
               <p className="text-xs text-gray-500 mb-1">Archivés</p>
               <p className="text-2xl font-bold text-gray-400">{stats.archived}</p>
+            </Card>
+            <Card className="p-4 bg-purple-50 border-purple-200">
+              <p className="text-xs text-purple-600 mb-1">Coût Labs (mois)</p>
+              <p className="text-2xl font-bold text-purple-700">
+                ${((experiments.reduce((acc, e) => acc + (e.tokens_input || 0) + (e.tokens_output || 0), 0) / 1000000) * 3).toFixed(2)}
+              </p>
             </Card>
           </div>
 
