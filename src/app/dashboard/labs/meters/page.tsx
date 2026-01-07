@@ -165,6 +165,7 @@ export default function LabsMetersPage() {
   const [testConfig, setTestConfig] = useState<ImageConfig>(DEFAULT_CONFIG)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<any>(null)
+  const [savingTest, setSavingTest] = useState(false)
   
   // Correction modal
   const [showCorrectionModal, setShowCorrectionModal] = useState(false)
@@ -686,6 +687,7 @@ export default function LabsMetersPage() {
   async function handleValidateSingleTest() {
     if (!testPhotoFile || !testModelId || !testResult) return
     
+    setSavingTest(true)
     try {
       const base64 = await fileToBase64(testPhotoFile)
       
@@ -722,12 +724,14 @@ export default function LabsMetersPage() {
     } catch (err) {
       console.error('Error validating test:', err)
     }
+    setSavingTest(false)
   }
 
   // Rejeter test unitaire
   async function handleRejectSingleTest() {
     if (!testPhotoFile || !testModelId) return
     
+    setSavingTest(true)
     try {
       const base64 = await fileToBase64(testPhotoFile)
       
@@ -758,6 +762,7 @@ export default function LabsMetersPage() {
     } catch (err) {
       console.error('Error rejecting test:', err)
     }
+    setSavingTest(false)
   }
 
   // Ouvrir le modal de correction avec les valeurs actuelles
@@ -1617,14 +1622,33 @@ export default function LabsMetersPage() {
                             </div>
                           </div>
                           <div className="grid grid-cols-3 gap-2">
-                            <Button className="bg-green-600 hover:bg-green-700" onClick={handleValidateSingleTest}>
-                              <Check className="h-4 w-4 mr-1" />{testResult.wasCorrected ? 'Valider correction' : 'Valider'}
+                            <Button 
+                              className="bg-green-600 hover:bg-green-700" 
+                              onClick={handleValidateSingleTest}
+                              disabled={savingTest}
+                            >
+                              {savingTest ? (
+                                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                              ) : (
+                                <Check className="h-4 w-4 mr-1" />
+                              )}
+                              {testResult.wasCorrected ? 'Valider correction' : 'Valider'}
                             </Button>
-                            <Button variant="outline" onClick={openTestCorrectionModal}>
+                            <Button variant="outline" onClick={openTestCorrectionModal} disabled={savingTest}>
                               <Pencil className="h-4 w-4 mr-1" />Corriger
                             </Button>
-                            <Button variant="outline" className="text-red-600" onClick={handleRejectSingleTest}>
-                              <X className="h-4 w-4 mr-1" />Rejeter
+                            <Button 
+                              variant="outline" 
+                              className="text-red-600" 
+                              onClick={handleRejectSingleTest}
+                              disabled={savingTest}
+                            >
+                              {savingTest ? (
+                                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                              ) : (
+                                <X className="h-4 w-4 mr-1" />
+                              )}
+                              Rejeter
                             </Button>
                           </div>
                         </div>
