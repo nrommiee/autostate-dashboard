@@ -702,10 +702,17 @@ export default function LabsMetersPage() {
     <div className="p-6 space-y-6">
       <canvas ref={canvasRef} className="hidden" />
 
-      {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold">Vision Compteurs</h1>
-        <p className="text-gray-500">Reconnaissance automatique des index de compteurs</p>
+      {/* Header avec fond mauve */}
+      <div className="bg-gradient-to-r from-purple-600 to-purple-700 -mx-6 -mt-6 p-6 pb-4">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center">
+            <Gauge className="h-6 w-6 text-white" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold text-white">Vision Compteurs</h1>
+            <p className="text-purple-200">Reconnaissance automatique des index de compteurs</p>
+          </div>
+        </div>
       </div>
 
       {/* Tabs */}
