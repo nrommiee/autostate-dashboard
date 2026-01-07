@@ -1933,15 +1933,64 @@ export default function LabsMetersPage() {
                           <span className="font-medium">{group.modelName}</span>
                           <Badge variant="outline">{group.photos.length} photos</Badge>
                         </div>
-                        <Button onClick={() => startReview(group.modelId, group.modelName, group.photos)}>
-                          Reviewer <ArrowRight className="h-4 w-4 ml-1" />
-                        </Button>
+                        <div className="flex gap-2">
+                          {!group.modelId && group.photos[0]?.extractedData && (
+                            <Button 
+                              variant="outline"
+                              onClick={() => {
+                                // Encoder les données extraites pour la création
+                                const photo = group.photos[0]
+                                const params = new URLSearchParams()
+                                if (photo.extractedData?.serial?.value) {
+                                  params.set('serial', photo.extractedData.serial.value)
+                                }
+                                if (photo.extractedData?.reading?.value) {
+                                  params.set('reading', photo.extractedData.reading.value)
+                                }
+                                // Passer aussi l'URL de la photo si possible
+                                if (photo.url) {
+                                  // Stocker temporairement dans sessionStorage car l'URL blob ne survivra pas
+                                  sessionStorage.setItem('newMeterPhoto', photo.url)
+                                  params.set('hasPhoto', 'true')
+                                }
+                                router.push(`/dashboard/meters/new?${params.toString()}`)
+                              }}
+                            >
+                              <Plus className="h-4 w-4 mr-1" />
+                              Créer ce modèle
+                            </Button>
+                          )}
+                          {group.modelId && (
+                            <Button onClick={() => startReview(group.modelId, group.modelName, group.photos)}>
+                              Reviewer <ArrowRight className="h-4 w-4 ml-1" />
+                            </Button>
+                          )}
+                        </div>
                       </div>
                       <div className="flex gap-2 overflow-x-auto pb-2">
                         {group.photos.map(photo => (
-                          <img key={photo.id} src={photo.url} className="h-16 w-16 object-cover rounded-lg border" />
+                          <div key={photo.id} className="relative shrink-0">
+                            <img src={photo.url} className="h-16 w-16 object-cover rounded-lg border" />
+                            {photo.extractedData && (
+                              <div className="absolute -bottom-1 -right-1 bg-blue-500 rounded-full p-0.5">
+                                <Check className="h-3 w-3 text-white" />
+                              </div>
+                            )}
+                          </div>
                         ))}
                       </div>
+                      {/* Afficher les données extraites pour les non reconnus */}
+                      {!group.modelId && group.photos[0]?.extractedData && (
+                        <div className="mt-3 p-2 bg-white rounded border text-sm">
+                          <span className="text-gray-500">Données détectées: </span>
+                          {group.photos[0].extractedData.serial?.value && (
+                            <span className="font-mono mr-3">N°: {group.photos[0].extractedData.serial.value}</span>
+                          )}
+                          {group.photos[0].extractedData.reading?.value && (
+                            <span className="font-mono">Index: {group.photos[0].extractedData.reading.value}</span>
+                          )}
+                        </div>
+                      )}
                     </Card>
                   ))}
                 </div>
