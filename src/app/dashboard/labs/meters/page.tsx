@@ -293,12 +293,12 @@ export default function LabsMetersPage() {
   // HANDLERS
   // ============================================================================
 
-  // Bulk import
-  async function handleBulkImport(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(e.target.files || [])
-    console.log('handleBulkImport called, files:', files.length)
+  // Bulk import - traiter les fichiers
+  async function processBulkFiles(files: File[]) {
+    console.log('processBulkFiles called, files:', files.length)
     if (!files.length) return
 
+    // Créer les objets photo
     const newPhotos: ImportedPhoto[] = files.map(file => ({
       id: crypto.randomUUID(),
       file,
@@ -314,49 +314,62 @@ export default function LabsMetersPage() {
     setImportedPhotos(newPhotos)
     setClassifying(true)
 
-    // Analyze each photo
+    // Analyser chaque photo séquentiellement
     for (let i = 0; i < newPhotos.length; i++) {
       const photo = newPhotos[i]
-      console.log(`Analyzing photo ${i + 1}/${newPhotos.length}`)
+      console.log(`Processing photo ${i + 1}/${newPhotos.length}:`, photo.file.name)
+      
       try {
+        // Mettre à jour le statut à "analyzing"
         photo.status = 'analyzing'
         setImportedPhotos([...newPhotos])
 
+        // Convertir en base64
         const base64 = await fileToBase64(photo.file)
         console.log(`Photo ${i + 1} base64 length:`, base64.length)
         
+        // Appeler l'API de classification
         const response = await fetch('/api/labs/classify-meter', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ photo: base64 })
         })
 
-        console.log(`Photo ${i + 1} response status:`, response.status)
+        console.log(`Photo ${i + 1} response:`, response.status, response.statusText)
         
         if (response.ok) {
           const result = await response.json()
           console.log(`Photo ${i + 1} result:`, result)
+          
           photo.matchedModelId = result.matchedModel?.id || null
-          photo.matchedModelName = result.matchedModel?.name || null
+          photo.matchedModelName = result.matchedModel?.name || 'Non reconnu'
           photo.extractedData = result.extractedData || null
           photo.confidence = result.confidence || 0
           photo.status = 'done'
         } else {
           const errorText = await response.text()
-          console.error(`Photo ${i + 1} error:`, errorText)
+          console.error(`Photo ${i + 1} API error:`, response.status, errorText)
           photo.status = 'error'
-          photo.error = 'Échec de l\'analyse'
+          photo.error = `Erreur API: ${response.status}`
         }
-      } catch (err) {
+      } catch (err: any) {
         console.error(`Photo ${i + 1} exception:`, err)
         photo.status = 'error'
-        photo.error = 'Erreur réseau'
+        photo.error = err.message || 'Erreur inconnue'
       }
+      
+      // Mettre à jour l'état après chaque photo
       setImportedPhotos([...newPhotos])
     }
 
     console.log('Classification complete')
     setClassifying(false)
+  }
+
+  // Legacy handler pour l'input file (garde pour compatibilité)
+  async function handleBulkImport(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files || [])
+    await processBulkFiles(files)
   }
 
   // Start review session
@@ -702,7 +715,6 @@ export default function LabsMetersPage() {
       // Reset
       setTestPhotoUrl(null)
       setTestPhotoFile(null)
-      setTestProcessedUrl(null)
       setTestResult(null)
       
       // Refresh experiments pour ce modèle
@@ -739,7 +751,6 @@ export default function LabsMetersPage() {
       // Reset
       setTestPhotoUrl(null)
       setTestPhotoFile(null)
-      setTestProcessedUrl(null)
       setTestResult(null)
       
       // Refresh experiments
@@ -771,9 +782,19 @@ export default function LabsMetersPage() {
 
   // Utility
   async function fileToBase64(file: File): Promise<string> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const reader = new FileReader()
-      reader.onloadend = () => resolve((reader.result as string).split(',')[1])
+      reader.onloadend = () => {
+        const result = reader.result as string
+        if (result) {
+          // Retirer le préfixe "data:image/jpeg;base64,"
+          const base64 = result.split(',')[1]
+          resolve(base64)
+        } else {
+          reject(new Error('FileReader returned empty result'))
+        }
+      }
+      reader.onerror = () => reject(reader.error)
       reader.readAsDataURL(file)
     })
   }
@@ -1459,7 +1480,6 @@ export default function LabsMetersPage() {
                               setTestPhotoUrl(null)
                               setTestPhotoFile(null)
                               setTestResult(null)
-                              setTestProcessedUrl(null)
                             }}
                           >
                             <RotateCcw className="h-4 w-4" />
@@ -1713,22 +1733,74 @@ export default function LabsMetersPage() {
                   <FolderInput className="h-5 w-5" />
                   Import multiple
                 </h3>
-                <label className="block">
-                  <div className="h-48 flex flex-col items-center justify-center bg-gray-50 rounded-lg border-2 border-dashed hover:border-purple-400 hover:bg-purple-50 cursor-pointer transition-colors">
-                    <Upload className="h-12 w-12 text-gray-400 mb-3" />
-                    <p className="text-gray-600 font-medium">Glissez-déposez vos photos de compteurs</p>
-                    <p className="text-sm text-gray-400 mt-1">ou cliquez pour sélectionner</p>
-                  </div>
-                  <input type="file" accept="image/*" multiple className="hidden" onChange={handleBulkImport} />
-                </label>
+                <div
+                  className="h-48 flex flex-col items-center justify-center bg-gray-50 rounded-lg border-2 border-dashed hover:border-purple-400 hover:bg-purple-50 cursor-pointer transition-colors"
+                  onClick={() => document.getElementById('bulk-file-input')?.click()}
+                  onDragOver={(e) => { e.preventDefault(); e.stopPropagation() }}
+                  onDrop={async (e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'))
+                    if (files.length > 0) {
+                      await processBulkFiles(files)
+                    }
+                  }}
+                >
+                  <Upload className="h-12 w-12 text-gray-400 mb-3" />
+                  <p className="text-gray-600 font-medium">Glissez-déposez vos photos de compteurs</p>
+                  <p className="text-sm text-gray-400 mt-1">ou cliquez pour sélectionner</p>
+                </div>
+                <input 
+                  id="bulk-file-input"
+                  type="file" 
+                  accept="image/*" 
+                  multiple 
+                  className="hidden" 
+                  onChange={(e) => {
+                    const files = Array.from(e.target.files || [])
+                    if (files.length > 0) {
+                      processBulkFiles(files)
+                    }
+                  }} 
+                />
               </Card>
 
-              {/* Same classification results as overview */}
+              {/* Progress during classification */}
               {classifying && (
                 <Card className="p-6">
-                  <div className="flex items-center justify-center gap-3 text-purple-600">
-                    <Loader2 className="h-6 w-6 animate-spin" />
-                    <span>Classification en cours... {importedPhotos.filter(p => p.status === 'done').length}/{importedPhotos.length}</span>
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium">Classification en cours...</span>
+                      <span className="text-purple-600 font-semibold">
+                        {importedPhotos.filter(p => p.status === 'done' || p.status === 'error').length}/{importedPhotos.length}
+                      </span>
+                    </div>
+                    <Progress 
+                      value={(importedPhotos.filter(p => p.status === 'done' || p.status === 'error').length / importedPhotos.length) * 100} 
+                      className="h-2"
+                    />
+                    <div className="flex gap-2 overflow-x-auto pb-2">
+                      {importedPhotos.map(photo => (
+                        <div key={photo.id} className="relative shrink-0">
+                          <img src={photo.url} className="h-16 w-16 object-cover rounded-lg border" />
+                          {photo.status === 'analyzing' && (
+                            <div className="absolute inset-0 bg-black/50 rounded-lg flex items-center justify-center">
+                              <Loader2 className="h-5 w-5 text-white animate-spin" />
+                            </div>
+                          )}
+                          {photo.status === 'done' && (
+                            <div className="absolute -top-1 -right-1 bg-green-500 rounded-full p-0.5">
+                              <Check className="h-3 w-3 text-white" />
+                            </div>
+                          )}
+                          {photo.status === 'error' && (
+                            <div className="absolute -top-1 -right-1 bg-red-500 rounded-full p-0.5">
+                              <X className="h-3 w-3 text-white" />
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </Card>
               )}
