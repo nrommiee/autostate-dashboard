@@ -132,6 +132,7 @@ export default function LabsMetersPage() {
   const [originalPhotoUrl, setOriginalPhotoUrl] = useState<string | null>(null)
   const [processedPhotoUrl, setProcessedPhotoUrl] = useState<string | null>(null)
   const [imageConfig, setImageConfig] = useState<ImageConfig>(DEFAULT_CONFIG)
+  const [savedModelConfig, setSavedModelConfig] = useState<ImageConfig>(DEFAULT_CONFIG) // Config sauvegardée du modèle
   const [configModified, setConfigModified] = useState(false)
 
   // Testing
@@ -168,6 +169,7 @@ export default function LabsMetersPage() {
         const baseConfig = version?.default_image_config || DEFAULT_CONFIG
         const mergedConfig = { ...baseConfig, ...(model.image_config_overrides || {}) }
         setImageConfig(mergedConfig)
+        setSavedModelConfig(mergedConfig) // Sauvegarder la config active du modèle
         setConfigModified(false)
         
         // Load experiments for this model
@@ -177,6 +179,7 @@ export default function LabsMetersPage() {
       setSelectedModel(null)
       setActiveVersion(null)
       setImageConfig(DEFAULT_CONFIG)
+      setSavedModelConfig(DEFAULT_CONFIG)
       setExperiments([])
     }
   }, [selectedModelId, models, versions])
@@ -329,9 +332,20 @@ export default function LabsMetersPage() {
     originalImageRef.current = null
   }
 
+  // Vérifier si une valeur est différente de la config sauvegardée
+  function isConfigValueModified(key: keyof ImageConfig): boolean {
+    return imageConfig[key] !== savedModelConfig[key]
+  }
+
   function updateConfig(key: keyof ImageConfig, value: any) {
-    setImageConfig(prev => ({ ...prev, [key]: value }))
-    setConfigModified(true)
+    const newConfig = { ...imageConfig, [key]: value }
+    setImageConfig(newConfig)
+    
+    // Vérifier si la config est différente de la sauvegardée
+    const isDifferent = Object.keys(newConfig).some(
+      k => newConfig[k as keyof ImageConfig] !== savedModelConfig[k as keyof ImageConfig]
+    )
+    setConfigModified(isDifferent)
   }
 
   async function runTest() {
@@ -476,6 +490,8 @@ export default function LabsMetersPage() {
           : m
       ))
 
+      // Mettre à jour la config sauvegardée
+      setSavedModelConfig({ ...imageConfig })
       setConfigModified(false)
     } catch (err) {
       console.error('Error saving config:', err)
@@ -484,10 +500,25 @@ export default function LabsMetersPage() {
     setSavingConfig(false)
   }
 
+  // Réinitialiser à la config sauvegardée du modèle
+  function resetConfigToModel() {
+    setImageConfig({ ...savedModelConfig })
+    setConfigModified(false)
+    
+    if (originalImageRef.current) {
+      applyImageProcessing()
+    }
+  }
+
+  // Réinitialiser aux défauts de la version Aurora
   function resetConfigToDefaults() {
     const versionDefaults = activeVersion?.default_image_config || DEFAULT_CONFIG
-    setImageConfig(versionDefaults)
-    setConfigModified(true)
+    setImageConfig({ ...versionDefaults })
+    // Vérifier si différent de la config sauvegardée
+    const isDifferent = Object.keys(versionDefaults).some(
+      key => versionDefaults[key as keyof ImageConfig] !== savedModelConfig[key as keyof ImageConfig]
+    )
+    setConfigModified(isDifferent)
     
     if (originalImageRef.current) {
       applyImageProcessing()
@@ -661,9 +692,42 @@ export default function LabsMetersPage() {
 
               {/* Sliders */}
               <div className="space-y-4">
+                {/* Config sauvegardée du modèle */}
+                <div className="p-3 bg-gray-50 rounded-lg border text-xs">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-medium text-gray-700">Config active du modèle</span>
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      onClick={resetConfigToModel}
+                      className="h-6 px-2 text-xs"
+                      disabled={!configModified}
+                    >
+                      <RotateCcw className="h-3 w-3 mr-1" />
+                      Réinitialiser
+                    </Button>
+                  </div>
+                  <div className="flex flex-wrap gap-2 text-gray-500">
+                    <span className={savedModelConfig.grayscale ? 'text-purple-600' : ''}>
+                      {savedModelConfig.grayscale ? 'N&B' : 'Couleur'}
+                    </span>
+                    <span>•</span>
+                    <span>Contraste: {savedModelConfig.contrast > 0 ? '+' : ''}{savedModelConfig.contrast}%</span>
+                    <span>•</span>
+                    <span>Lum: {savedModelConfig.brightness > 0 ? '+' : ''}{savedModelConfig.brightness}%</span>
+                    <span>•</span>
+                    <span>Net: {savedModelConfig.sharpness}%</span>
+                  </div>
+                </div>
+
                 {/* Grayscale toggle */}
                 <div className="flex items-center justify-between">
-                  <Label className="text-sm">Noir & Blanc</Label>
+                  <div className="flex items-center gap-2">
+                    <Label className="text-sm">Noir & Blanc</Label>
+                    {isConfigValueModified('grayscale') && (
+                      <span className="w-2 h-2 bg-orange-500 rounded-full" title="Modifié" />
+                    )}
+                  </div>
                   <Switch 
                     checked={imageConfig.grayscale}
                     onCheckedChange={(v) => updateConfig('grayscale', v)}
@@ -673,9 +737,19 @@ export default function LabsMetersPage() {
                 {/* Contrast */}
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <Label className="text-sm">Contraste</Label>
+                    <div className="flex items-center gap-2">
+                      <Label className="text-sm">Contraste</Label>
+                      {isConfigValueModified('contrast') && (
+                        <span className="w-2 h-2 bg-orange-500 rounded-full" title="Modifié" />
+                      )}
+                    </div>
                     <span className="text-xs text-gray-500 font-mono">
                       {imageConfig.contrast > 0 ? '+' : ''}{imageConfig.contrast}%
+                      {isConfigValueModified('contrast') && (
+                        <span className="text-orange-500 ml-1">
+                          (sauvé: {savedModelConfig.contrast > 0 ? '+' : ''}{savedModelConfig.contrast}%)
+                        </span>
+                      )}
                     </span>
                   </div>
                   <input 
@@ -691,9 +765,19 @@ export default function LabsMetersPage() {
                 {/* Brightness */}
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <Label className="text-sm">Luminosité</Label>
+                    <div className="flex items-center gap-2">
+                      <Label className="text-sm">Luminosité</Label>
+                      {isConfigValueModified('brightness') && (
+                        <span className="w-2 h-2 bg-orange-500 rounded-full" title="Modifié" />
+                      )}
+                    </div>
                     <span className="text-xs text-gray-500 font-mono">
                       {imageConfig.brightness > 0 ? '+' : ''}{imageConfig.brightness}%
+                      {isConfigValueModified('brightness') && (
+                        <span className="text-orange-500 ml-1">
+                          (sauvé: {savedModelConfig.brightness > 0 ? '+' : ''}{savedModelConfig.brightness}%)
+                        </span>
+                      )}
                     </span>
                   </div>
                   <input 
@@ -709,8 +793,20 @@ export default function LabsMetersPage() {
                 {/* Sharpness */}
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <Label className="text-sm">Netteté</Label>
-                    <span className="text-xs text-gray-500 font-mono">{imageConfig.sharpness}%</span>
+                    <div className="flex items-center gap-2">
+                      <Label className="text-sm">Netteté</Label>
+                      {isConfigValueModified('sharpness') && (
+                        <span className="w-2 h-2 bg-orange-500 rounded-full" title="Modifié" />
+                      )}
+                    </div>
+                    <span className="text-xs text-gray-500 font-mono">
+                      {imageConfig.sharpness}%
+                      {isConfigValueModified('sharpness') && (
+                        <span className="text-orange-500 ml-1">
+                          (sauvé: {savedModelConfig.sharpness}%)
+                        </span>
+                      )}
+                    </span>
                   </div>
                   <input 
                     type="range" 
@@ -724,7 +820,12 @@ export default function LabsMetersPage() {
 
                 {/* Auto crop toggle */}
                 <div className="flex items-center justify-between">
-                  <Label className="text-sm">Recadrage auto</Label>
+                  <div className="flex items-center gap-2">
+                    <Label className="text-sm">Recadrage auto</Label>
+                    {isConfigValueModified('auto_crop') && (
+                      <span className="w-2 h-2 bg-orange-500 rounded-full" title="Modifié" />
+                    )}
+                  </div>
                   <Switch 
                     checked={imageConfig.auto_crop}
                     onCheckedChange={(v) => updateConfig('auto_crop', v)}
@@ -733,15 +834,22 @@ export default function LabsMetersPage() {
 
                 {/* Action buttons */}
                 <div className="flex gap-2 pt-2">
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    onClick={resetConfigToDefaults}
-                    className="flex-1"
-                  >
-                    <RotateCcw className="h-4 w-4 mr-1" />
-                    Défaut
-                  </Button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={resetConfigToDefaults}
+                        className="flex-1"
+                      >
+                        <RotateCcw className="h-4 w-4 mr-1" />
+                        Aurora
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      Réinitialiser aux valeurs par défaut de la version Aurora
+                    </TooltipContent>
+                  </Tooltip>
                   <Button 
                     size="sm" 
                     onClick={saveConfigToModel}
