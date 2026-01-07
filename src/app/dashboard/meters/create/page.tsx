@@ -32,8 +32,8 @@ import {
 } from '@/components/ui/tooltip'
 import { 
   ArrowLeft, ArrowRight, Loader2, Save, CheckCircle, Upload, 
-  Sparkles, X, Trash2, Plus, Play, Check, RotateCcw, 
-  AlertTriangle, Move, Edit3, Eye, EyeOff, ZoomIn
+  Sparkles, X, Trash2, Plus, Check, 
+  AlertTriangle, Move, Eye, EyeOff, ZoomIn
 } from 'lucide-react'
 
 // Types
@@ -100,25 +100,9 @@ interface Zone {
   decimalDigits: number
 }
 
-interface TestResult {
-  id: string
-  photoUrl: string
-  timestamp: Date
-  success: boolean
-  confidence: number
-  extractedSerial?: string
-  extractedReading?: string
-  correctSerial?: string
-  correctReading?: string
-  isValidated: boolean
-  isRejected: boolean
-  rejectionReason?: string
-}
-
 const STEPS = [
   { id: 1, label: 'Photo & Informations', icon: '📷' },
   { id: 2, label: 'Index & Zones', icon: '🎯' },
-  { id: 3, label: 'Tests', icon: '✅' },
 ]
 
 export default function CreateMeterModelPage() {
@@ -153,19 +137,6 @@ export default function CreateMeterModelPage() {
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null)
   const [repositioningZoneId, setRepositioningZoneId] = useState<string | null>(null)
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null)
-
-  // Tests
-  const [testPhotoFile, setTestPhotoFile] = useState<File | null>(null)
-  const [testPhotoUrl, setTestPhotoUrl] = useState<string | null>(null)
-  const [testing, setTesting] = useState(false)
-  const [currentTestResult, setCurrentTestResult] = useState<TestResult | null>(null)
-  const [testHistory, setTestHistory] = useState<TestResult[]>([])
-
-  // Modal de correction
-  const [showCorrectionModal, setShowCorrectionModal] = useState(false)
-  const [correctionSerial, setCorrectionSerial] = useState('')
-  const [correctionReading, setCorrectionReading] = useState('')
-  const [correctionReason, setCorrectionReason] = useState('')
 
   // Modal lightbox pour agrandir image
   const [showImageLightbox, setShowImageLightbox] = useState(false)
@@ -491,16 +462,6 @@ RÈGLES DE LECTURE:`
       prompt += `\n- ${customDecimalIndicator}`
     }
 
-    // Ajouter les corrections des tests
-    const corrections = testHistory.filter(t => t.isRejected && t.correctReading)
-    if (corrections.length > 0) {
-      prompt += `\n\nCORRECTIONS (erreurs à éviter):`
-      corrections.slice(0, 5).forEach(c => {
-        prompt += `\n- "${c.extractedReading}" → "${c.correctReading}"`
-        if (c.rejectionReason) prompt += ` (${c.rejectionReason})`
-      })
-    }
-
     return prompt
   }
 
@@ -561,17 +522,7 @@ RÈGLES DE LECTURE:`
             keywords: keywords.filter(k => k.selected).map(k => k.value),
             integerDigits,
             decimalDigits,
-            decimalIndicator: finalDecimalIndicator,
-            tests: testHistory.map(t => ({
-              extractedSerial: t.extractedSerial,
-              extractedReading: t.extractedReading,
-              correctSerial: t.correctSerial,
-              correctReading: t.correctReading,
-              confidence: t.confidence,
-              isValidated: t.isValidated,
-              isRejected: t.isRejected,
-              rejectionReason: t.rejectionReason
-            }))
+            decimalIndicator: finalDecimalIndicator
           },
           reference_photos: [uploadedPhotoUrl],
           zones: zones.map(z => ({
@@ -583,7 +534,7 @@ RÈGLES DE LECTURE:`
             hasDecimals: z.fieldType?.includes('reading'),
             decimalDigits: z.decimalDigits || 0
           })),
-          is_verified: testHistory.filter(t => t.isValidated).length > 0,
+          is_verified: false,
           is_active: true
         })
       })
@@ -595,7 +546,8 @@ RÈGLES DE LECTURE:`
       }
 
       setSaved(true)
-      setTimeout(() => router.push('/dashboard/meters'), 1500)
+      // Redirection vers le Labs avec le modèle créé
+      setTimeout(() => router.push(`/dashboard/labs/meters?model=${result.id}`), 1500)
     } catch (err: any) { 
       setError(err.message || 'Erreur lors de la sauvegarde') 
     } finally { 
@@ -613,7 +565,7 @@ RÈGLES DE LECTURE:`
   }
 
   const goToStep = (step: number) => { 
-    if (step < 1 || step > 3) return
+    if (step < 1 || step > 2) return
     
     if (step > currentStep) {
       if (!canProceed(currentStep)) {
@@ -1127,161 +1079,17 @@ RÈGLES DE LECTURE:`
               </div>
             )}
 
-            {/* STEP 3 - TESTS */}
-            {currentStep === 3 && (
-              <div className="space-y-4">
-                <Card className="p-4">
-                  <h2 className="font-semibold mb-1">Tests</h2>
-                  <p className="text-gray-500 text-sm mb-4">Testez avec d'autres photos pour améliorer la reconnaissance. Les corrections enrichissent automatiquement le modèle.</p>
-                  
-                  <div className="grid md:grid-cols-2 gap-4">
-                    <div>
-                      {testPhotoUrl ? (
-                        <div className="relative flex justify-center">
-                          <div className="relative w-[70%]">
-                            <img 
-                              src={testPhotoUrl} 
-                              alt="Test" 
-                              className="w-full object-contain rounded-lg border cursor-pointer hover:opacity-90" 
-                              onClick={() => openLightbox(testPhotoUrl)}
-                            />
-                            <button onClick={resetTestPhoto} className="absolute top-2 right-2 p-1.5 bg-gray-800 text-white rounded-full">
-                              <RotateCcw className="h-4 w-4" />
-                            </button>
-                            <button 
-                              onClick={() => openLightbox(testPhotoUrl)} 
-                              className="absolute bottom-2 right-2 p-1.5 bg-black/50 text-white rounded-full hover:bg-black/70"
-                            >
-                              <ZoomIn className="h-4 w-4" />
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <label className="flex flex-col items-center justify-center h-48 border-2 border-dashed rounded-lg cursor-pointer hover:border-teal-500 hover:bg-teal-50">
-                          <Upload className="h-8 w-8 text-gray-400 mb-2" />
-                          <span className="text-sm text-gray-500">Ajouter une photo de test</span>
-                          <input type="file" accept="image/*" onChange={handleTestPhotoUpload} className="hidden" />
-                        </label>
-                      )}
-                      {testPhotoUrl && !currentTestResult && (
-                        <Button onClick={runTest} disabled={testing} className="w-full mt-3 gap-2">
-                          {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-                          Lancer le test
-                        </Button>
-                      )}
-                    </div>
-
-                    <div>
-                      {currentTestResult && (
-                        <div className={`p-4 rounded-lg ${currentTestResult.success ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
-                          <div className="flex items-center gap-2 mb-2">
-                            {currentTestResult.success ? (
-                              <CheckCircle className="h-5 w-5 text-green-600" />
-                            ) : (
-                              <X className="h-5 w-5 text-red-600" />
-                            )}
-                            <span className={`font-medium ${currentTestResult.success ? 'text-green-700' : 'text-red-700'}`}>
-                              {currentTestResult.success ? 'Reconnu' : 'Non reconnu'}
-                            </span>
-                            <Badge variant="outline">{Math.round(currentTestResult.confidence * 100)}%</Badge>
-                          </div>
-                          {currentTestResult.extractedSerial && (
-                            <p className="text-sm">N°: <span className="font-mono">{currentTestResult.extractedSerial}</span></p>
-                          )}
-                          {currentTestResult.extractedReading && (
-                            <p className="text-sm">Index: <span className="font-mono">{currentTestResult.extractedReading}</span></p>
-                          )}
-                          <div className="flex gap-2 mt-3">
-                            <Button onClick={validateTest} className="flex-1 gap-1">
-                              <Check className="h-4 w-4" /> Valider
-                            </Button>
-                            <Button onClick={openCorrectionModal} variant="outline" className="flex-1 gap-1">
-                              <Edit3 className="h-4 w-4" /> Corriger
-                            </Button>
-                          </div>
-                        </div>
-                      )}
-                      {!testPhotoUrl && !currentTestResult && (
-                        <div className="h-48 flex items-center justify-center text-gray-400 text-sm text-center p-4">
-                          <div>
-                            <p className="mb-2">Les tests sont optionnels</p>
-                            <p className="text-xs">Ils permettent d'améliorer la reconnaissance en corrigeant les erreurs</p>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </Card>
-
-                {/* Historique des tests */}
-                {testHistory.length > 0 && (
-                  <Card className="p-4">
-                    <h3 className="font-semibold mb-3">Historique ({testHistory.length})</h3>
-                    <div className="space-y-2">
-                      {testHistory.map((t, i) => (
-                        <div key={t.id} className={`p-3 rounded-lg border text-sm ${t.isValidated ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
-                          <div className="flex items-center gap-2 mb-1">
-                            {t.isValidated ? <Check className="h-4 w-4 text-green-600" /> : <X className="h-4 w-4 text-red-600" />}
-                            <span className="font-medium">Test #{testHistory.length - i}</span>
-                          </div>
-                          <div className="grid grid-cols-2 gap-2 text-xs">
-                            <div>
-                              <span className="text-gray-500">N°:</span> <span className="font-mono">{t.extractedSerial || '-'}</span>
-                              {t.correctSerial && <span className="text-green-600"> → {t.correctSerial}</span>}
-                            </div>
-                            <div>
-                              <span className="text-gray-500">Index:</span> <span className="font-mono">{t.extractedReading || '-'}</span>
-                              {t.correctReading && <span className="text-green-600"> → {t.correctReading}</span>}
-                            </div>
-                          </div>
-                          {t.rejectionReason && <p className="text-xs text-red-600 mt-1">{t.rejectionReason}</p>}
-                        </div>
-                      ))}
-                    </div>
-                  </Card>
-                )}
-
-                {/* Récapitulatif */}
-                <Card className="p-4">
-                  <h3 className="font-semibold mb-2">Récapitulatif</h3>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                    <div>
-                      <span className="text-gray-500">Nom:</span>
-                      <span className="ml-2 font-medium">{name}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-500">Fabricant:</span>
-                      <span className="ml-2 font-medium">{manufacturer || '-'}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-500">Type:</span>
-                      <span className="ml-2">
-                        {meterType === 'other' 
-                          ? `📊 ${customMeterType || 'Autre'}`
-                          : `${METER_TYPES.find(t => t.value === meterType)?.icon || ''} ${METER_TYPES.find(t => t.value === meterType)?.label || '-'}`
-                        }
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-gray-500">Zones:</span>
-                      <span className="ml-2 font-medium">{zones.filter(z => z.isValidated).length}/{zones.length}</span>
-                    </div>
-                  </div>
-                </Card>
-              </div>
-            )}
-
             {/* Navigation */}
             <div className="flex justify-between mt-6">
               <Button variant="outline" onClick={() => goToStep(currentStep - 1)} disabled={currentStep === 1}>
                 <ArrowLeft className="h-4 w-4 mr-1" /> Retour
               </Button>
-              {currentStep < 3 ? (
-                <Button onClick={() => goToStep(currentStep + 1)} disabled={!canProceed(currentStep)}>
+              {currentStep === 1 ? (
+                <Button onClick={() => goToStep(2)} disabled={!canProceed(1)}>
                   Suivant <ArrowRight className="h-4 w-4 ml-1" />
                 </Button>
               ) : (
-                <Button onClick={handleSave} disabled={saving} className="min-w-32">
+                <Button onClick={handleSave} disabled={saving || !allZonesValidated} className="min-w-32">
                   {saving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Save className="h-4 w-4 mr-1" />}
                   Enregistrer
                 </Button>
@@ -1289,53 +1097,6 @@ RÈGLES DE LECTURE:`
             </div>
           </>
         )}
-
-        {/* Modal de correction */}
-        <Dialog open={showCorrectionModal} onOpenChange={setShowCorrectionModal}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                <Edit3 className="h-5 w-5 text-orange-500" />
-                Corriger le test
-              </DialogTitle>
-              <DialogDescription>
-                Indiquez les valeurs correctes pour améliorer la reconnaissance.
-              </DialogDescription>
-            </DialogHeader>
-            
-            <div className="space-y-4 py-4">
-              <div>
-                <Label className="text-sm">N° série lu par l'IA</Label>
-                <div className="flex items-center gap-2 mt-1">
-                  <Input value={currentTestResult?.extractedSerial || ''} disabled className="bg-gray-100 font-mono" />
-                  <span className="text-gray-400">→</span>
-                  <Input value={correctionSerial} onChange={(e) => setCorrectionSerial(e.target.value)} placeholder="Valeur correcte" className="font-mono" />
-                </div>
-              </div>
-              
-              <div>
-                <Label className="text-sm">Index lu par l'IA</Label>
-                <div className="flex items-center gap-2 mt-1">
-                  <Input value={currentTestResult?.extractedReading || ''} disabled className="bg-gray-100 font-mono" />
-                  <span className="text-gray-400">→</span>
-                  <Input value={correctionReading} onChange={(e) => setCorrectionReading(e.target.value)} placeholder="Valeur correcte" className="font-mono" />
-                </div>
-              </div>
-              
-              <div>
-                <Label className="text-sm">Raison du rejet (optionnel)</Label>
-                <Textarea value={correctionReason} onChange={(e) => setCorrectionReason(e.target.value)} placeholder="Ex: Décimales mal placées..." className="mt-1" rows={2} />
-              </div>
-            </div>
-            
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setShowCorrectionModal(false)}>Annuler</Button>
-              <Button onClick={submitCorrection} className="bg-orange-500 hover:bg-orange-600">
-                <Check className="h-4 w-4 mr-1" /> Enregistrer correction
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
 
         {/* Modal Lightbox pour agrandir les images */}
         <Dialog open={showImageLightbox} onOpenChange={setShowImageLightbox}>
