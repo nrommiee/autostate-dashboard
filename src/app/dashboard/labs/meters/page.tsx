@@ -165,7 +165,8 @@ export default function LabsMetersPage() {
   const [testConfig, setTestConfig] = useState<ImageConfig>(DEFAULT_CONFIG)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<any>(null)
-  const [savingTest, setSavingTest] = useState(false)
+  const [validating, setValidating] = useState(false)
+  const [rejecting, setRejecting] = useState(false)
   
   // Correction modal
   const [showCorrectionModal, setShowCorrectionModal] = useState(false)
@@ -687,7 +688,7 @@ export default function LabsMetersPage() {
   async function handleValidateSingleTest() {
     if (!testPhotoFile || !testModelId || !testResult) return
     
-    setSavingTest(true)
+    setValidating(true)
     try {
       const base64 = await fileToBase64(testPhotoFile)
       
@@ -724,14 +725,14 @@ export default function LabsMetersPage() {
     } catch (err) {
       console.error('Error validating test:', err)
     }
-    setSavingTest(false)
+    setValidating(false)
   }
 
   // Rejeter test unitaire
   async function handleRejectSingleTest() {
     if (!testPhotoFile || !testModelId) return
     
-    setSavingTest(true)
+    setRejecting(true)
     try {
       const base64 = await fileToBase64(testPhotoFile)
       
@@ -762,7 +763,7 @@ export default function LabsMetersPage() {
     } catch (err) {
       console.error('Error rejecting test:', err)
     }
-    setSavingTest(false)
+    setRejecting(false)
   }
 
   // Ouvrir le modal de correction avec les valeurs actuelles
@@ -1505,9 +1506,19 @@ export default function LabsMetersPage() {
                     <Card className="p-4">
                       <h3 className="font-semibold mb-3 flex items-center gap-2">
                         <Zap className="h-4 w-4" />Photo traitée
+                        {(testConfig.grayscale || testConfig.contrast !== 0 || testConfig.brightness !== 0) && (
+                          <Badge variant="outline" className="ml-auto text-xs">
+                            {[
+                              testConfig.grayscale && 'N&B',
+                              testConfig.contrast !== 0 && `C:${testConfig.contrast > 0 ? '+' : ''}${testConfig.contrast}%`,
+                              testConfig.brightness !== 0 && `L:${testConfig.brightness > 0 ? '+' : ''}${testConfig.brightness}%`
+                            ].filter(Boolean).join(' ')}
+                          </Badge>
+                        )}
                       </h3>
                       {testPhotoUrl ? (
                         <img 
+                          key={`${testConfig.grayscale}-${testConfig.contrast}-${testConfig.brightness}`}
                           src={testPhotoUrl} 
                           alt="Traitée" 
                           className="w-full rounded-lg border"
@@ -1625,25 +1636,25 @@ export default function LabsMetersPage() {
                             <Button 
                               className="bg-green-600 hover:bg-green-700" 
                               onClick={handleValidateSingleTest}
-                              disabled={savingTest}
+                              disabled={validating || rejecting}
                             >
-                              {savingTest ? (
+                              {validating ? (
                                 <Loader2 className="h-4 w-4 mr-1 animate-spin" />
                               ) : (
                                 <Check className="h-4 w-4 mr-1" />
                               )}
                               {testResult.wasCorrected ? 'Valider correction' : 'Valider'}
                             </Button>
-                            <Button variant="outline" onClick={openTestCorrectionModal} disabled={savingTest}>
+                            <Button variant="outline" onClick={openTestCorrectionModal} disabled={validating || rejecting}>
                               <Pencil className="h-4 w-4 mr-1" />Corriger
                             </Button>
                             <Button 
                               variant="outline" 
                               className="text-red-600" 
                               onClick={handleRejectSingleTest}
-                              disabled={savingTest}
+                              disabled={validating || rejecting}
                             >
-                              {savingTest ? (
+                              {rejecting ? (
                                 <Loader2 className="h-4 w-4 mr-1 animate-spin" />
                               ) : (
                                 <X className="h-4 w-4 mr-1" />
