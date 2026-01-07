@@ -471,6 +471,28 @@ export default function MeterModelDetailPage() {
           </div>
         </Card>
 
+        {/* Prompt de reconnaissance */}
+        <Card className="p-4 md:col-span-2">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-semibold flex items-center gap-2">
+              <Edit3 className="h-4 w-4" />
+              Prompt de reconnaissance
+            </h3>
+            <Badge variant="outline" className="text-xs">Auto-généré</Badge>
+          </div>
+          <div className="bg-gray-50 rounded-lg border p-4">
+            <pre className="text-sm whitespace-pre-wrap font-mono text-gray-700">
+              {generatePromptText()}
+            </pre>
+          </div>
+          <p className="text-xs text-gray-400 mt-2">
+            Ce prompt est envoyé à l'IA pour la reconnaissance. Il est généré automatiquement à partir des informations ci-dessus.
+          </p>
+        </Card>
+      </div>
+
+      {/* Versions du modèle */}
+      <div className="grid md:grid-cols-2 gap-6 mb-6">
         <Card className="p-4">
           <h3 className="font-semibold mb-3">Versions du modèle</h3>
           {versions.length <= 1 ? (
