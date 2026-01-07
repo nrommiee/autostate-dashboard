@@ -11,7 +11,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
-// Classify a single meter photo - try to match with existing models
+// Classify a single meter photo - try to match with existing models AND extract data
 export async function POST(request: NextRequest) {
   try {
     const { photo } = await request.json()
@@ -27,48 +27,51 @@ export async function POST(request: NextRequest) {
       .in('status', ['active', 'draft'])
       .order('name')
 
-    if (!models || models.length === 0) {
-      return NextResponse.json({
-        matchedModel: null,
-        extractedData: null,
-        confidence: 0,
-        message: 'Aucun modèle disponible'
-      })
-    }
-
-    // Build model list for Claude
-    const modelsList = models.map((m, i) => 
+    // Build model list for Claude (if any models exist)
+    const modelsList = (models || []).map((m, i) => 
       `${i + 1}. ${m.name} (${m.manufacturer || 'Fabricant inconnu'}) - Type: ${m.meter_type}`
     ).join('\n')
 
-    // Ask Claude to identify and extract data
-    const prompt = `Tu es un expert en compteurs d'énergie. Analyse cette photo de compteur.
+    const hasModels = models && models.length > 0
 
-MODÈLES DISPONIBLES:
+    // Ask Claude to identify and extract data
+    const prompt = `Tu es un expert en compteurs d'énergie (gaz, électricité, eau). Analyse cette photo de compteur.
+
+${hasModels ? `MODÈLES CONNUS:
 ${modelsList}
 
-TÂCHES:
-1. Identifie quel modèle correspond le mieux (numéro 1-${models.length}, ou 0 si aucun ne correspond)
-2. Extrais les données visibles (numéro de série, index, etc.)
-3. Évalue ta confiance (0.0 à 1.0)
+Si tu reconnais un de ces modèles, indique son numéro (1-${models!.length}). Sinon, indique 0.` : 'Aucun modèle connu dans la base.'}
 
-RÉPONDS EN JSON STRICT:
+TÂCHES:
+1. ${hasModels ? `Identifie si la photo correspond à un modèle connu (numéro 1-${models!.length}, ou 0 si aucun)` : 'Identifie le type de compteur'}
+2. Extrais TOUTES les données visibles :
+   - Numéro de série / matricule
+   - Index de consommation (avec décimales si présentes)
+   - Code EAN si visible
+   - Tout autre chiffre pertinent
+3. Évalue ta confiance pour chaque donnée extraite (0.0 à 1.0)
+
+RÉPONDS EN JSON STRICT (sans markdown):
 {
-  "matched_model_index": 0-${models.length},
+  "matched_model_index": ${hasModels ? '0-' + models!.length : '0'},
   "confidence": 0.0-1.0,
-  "extracted_data": {
-    "serial": {"value": "...", "confidence": 0.0-1.0},
-    "reading": {"value": "...", "confidence": 0.0-1.0}
-  },
   "meter_type_detected": "gas|electricity|water|other",
-  "notes": "observations"
+  "extracted_data": {
+    "serial": {"value": "numéro de série ou null", "confidence": 0.0-1.0},
+    "reading": {"value": "index principal ou null", "confidence": 0.0-1.0},
+    "reading_day": {"value": "index jour si bi-horaire ou null", "confidence": 0.0-1.0},
+    "reading_night": {"value": "index nuit si bi-horaire ou null", "confidence": 0.0-1.0},
+    "ean": {"value": "code EAN ou null", "confidence": 0.0-1.0}
+  },
+  "meter_description": "description courte du compteur identifié",
+  "notes": "observations éventuelles"
 }`
 
     const startTime = Date.now()
     
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
-      max_tokens: 800,
+      max_tokens: 1000,
       messages: [{
         role: 'user',
         content: [
@@ -99,6 +102,7 @@ RÉPONDS EN JSON STRICT:
         matchedModel: null,
         extractedData: null,
         confidence: 0,
+        error: 'Impossible d\'analyser la réponse',
         tokens: { input: response.usage.input_tokens, output: response.usage.output_tokens },
         processingTime
       })
@@ -106,9 +110,22 @@ RÉPONDS EN JSON STRICT:
 
     // Get matched model
     const matchedModelIndex = result.matched_model_index
-    const matchedModel = matchedModelIndex > 0 && matchedModelIndex <= models.length 
-      ? models[matchedModelIndex - 1] 
+    const matchedModel = hasModels && matchedModelIndex > 0 && matchedModelIndex <= models!.length 
+      ? models![matchedModelIndex - 1] 
       : null
+
+    // Clean extracted data - remove null values
+    const cleanExtractedData: Record<string, { value: string; confidence: number }> = {}
+    if (result.extracted_data) {
+      Object.entries(result.extracted_data).forEach(([key, val]: [string, any]) => {
+        if (val && val.value && val.value !== 'null' && val.value !== null) {
+          cleanExtractedData[key] = {
+            value: String(val.value),
+            confidence: val.confidence || 0.5
+          }
+        }
+      })
+    }
 
     return NextResponse.json({
       matchedModel: matchedModel ? {
@@ -117,9 +134,10 @@ RÉPONDS EN JSON STRICT:
         manufacturer: matchedModel.manufacturer,
         meter_type: matchedModel.meter_type
       } : null,
-      extractedData: result.extracted_data || null,
+      extractedData: Object.keys(cleanExtractedData).length > 0 ? cleanExtractedData : null,
       confidence: result.confidence || 0,
       meterTypeDetected: result.meter_type_detected,
+      meterDescription: result.meter_description,
       notes: result.notes,
       tokens: { 
         input: response.usage.input_tokens, 
