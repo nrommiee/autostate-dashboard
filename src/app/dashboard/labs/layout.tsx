@@ -39,6 +39,13 @@ export default function LabsLayout({
 }) {
   const pathname = usePathname()
 
+  // Vision Compteurs a son propre header, on n'affiche pas le header Labs
+  const hideLabsHeader = pathname === '/dashboard/labs/meters'
+
+  if (hideLabsHeader) {
+    return <>{children}</>
+  }
+
   return (
     <div className="min-h-screen">
       {/* Header */}
