@@ -13,19 +13,37 @@ const supabase = createClient(
 
 // Classify a single meter photo - try to match with existing models AND extract data
 export async function POST(request: NextRequest) {
+  console.log('classify-meter: Starting...')
+  
   try {
-    const { photo } = await request.json()
+    const body = await request.json()
+    const { photo } = body
+    
+    console.log('classify-meter: Photo received, length:', photo?.length || 0)
 
     if (!photo) {
+      console.log('classify-meter: No photo provided')
       return NextResponse.json({ error: 'Photo requise' }, { status: 400 })
     }
 
+    // Vérifier que le base64 est valide
+    if (photo.length < 100) {
+      console.log('classify-meter: Photo too small, probably invalid')
+      return NextResponse.json({ error: 'Photo invalide (trop petite)' }, { status: 400 })
+    }
+
     // Get all active models for matching
-    const { data: models } = await supabase
+    const { data: models, error: modelsError } = await supabase
       .from('meter_models')
       .select('id, name, manufacturer, meter_type, ai_description, reading_zones')
       .in('status', ['active', 'draft'])
       .order('name')
+
+    if (modelsError) {
+      console.error('classify-meter: Error fetching models:', modelsError)
+    }
+    
+    console.log('classify-meter: Found', models?.length || 0, 'models')
 
     // Build model list for Claude (if any models exist)
     const modelsList = (models || []).map((m, i) => 
@@ -67,6 +85,7 @@ RÉPONDS EN JSON STRICT (sans markdown):
   "notes": "observations éventuelles"
 }`
 
+    console.log('classify-meter: Calling Claude API...')
     const startTime = Date.now()
     
     const response = await anthropic.messages.create({
@@ -82,22 +101,29 @@ RÉPONDS EN JSON STRICT (sans markdown):
     })
 
     const processingTime = Date.now() - startTime
+    console.log('classify-meter: Claude responded in', processingTime, 'ms')
+    
     const textContent = response.content.find(c => c.type === 'text')
     
     if (!textContent || textContent.type !== 'text') {
+      console.error('classify-meter: No text response from Claude')
       throw new Error('No response from Claude')
     }
+
+    console.log('classify-meter: Raw response:', textContent.text.substring(0, 200))
 
     // Parse JSON response
     let result
     try {
       const jsonMatch = textContent.text.match(/\{[\s\S]*\}/)
       result = jsonMatch ? JSON.parse(jsonMatch[0]) : null
-    } catch {
+    } catch (parseError) {
+      console.error('classify-meter: JSON parse error:', parseError)
       result = null
     }
 
     if (!result) {
+      console.log('classify-meter: Could not parse result')
       return NextResponse.json({
         matchedModel: null,
         extractedData: null,
@@ -113,6 +139,8 @@ RÉPONDS EN JSON STRICT (sans markdown):
     const matchedModel = hasModels && matchedModelIndex > 0 && matchedModelIndex <= models!.length 
       ? models![matchedModelIndex - 1] 
       : null
+    
+    console.log('classify-meter: Matched model:', matchedModel?.name || 'None')
 
     // Clean extracted data - remove null values
     const cleanExtractedData: Record<string, { value: string; confidence: number }> = {}
@@ -127,6 +155,8 @@ RÉPONDS EN JSON STRICT (sans markdown):
       })
     }
 
+    console.log('classify-meter: Success!')
+    
     return NextResponse.json({
       matchedModel: matchedModel ? {
         id: matchedModel.id,
@@ -147,7 +177,7 @@ RÉPONDS EN JSON STRICT (sans markdown):
     })
 
   } catch (error: any) {
-    console.error('Classify meter error:', error)
+    console.error('classify-meter: Error:', error.message || error)
     return NextResponse.json(
       { error: error.message || 'Erreur lors de la classification' },
       { status: 500 }
