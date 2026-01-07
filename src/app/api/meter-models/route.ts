@@ -6,7 +6,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
-// GET - List all meter models
+// GET - List all meter models with test counts
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
@@ -26,11 +26,37 @@ export async function GET(request: NextRequest) {
       query = query.eq('is_active', true)
     }
 
-    const { data, error } = await query
+    const { data: models, error } = await query
 
     if (error) throw error
 
-    return NextResponse.json(data)
+    // Get test counts from lab_experiments for each model
+    if (models && models.length > 0) {
+      const modelIds = models.map(m => m.id)
+      
+      const { data: testCounts } = await supabase
+        .from('lab_experiments')
+        .select('meter_model_id')
+        .in('meter_model_id', modelIds)
+      
+      // Count tests per model
+      const countMap: Record<string, number> = {}
+      if (testCounts) {
+        testCounts.forEach(t => {
+          countMap[t.meter_model_id] = (countMap[t.meter_model_id] || 0) + 1
+        })
+      }
+      
+      // Add test_count to each model
+      const modelsWithTests = models.map(m => ({
+        ...m,
+        test_count: countMap[m.id] || 0
+      }))
+      
+      return NextResponse.json(modelsWithTests)
+    }
+
+    return NextResponse.json(models || [])
   } catch (error) {
     console.error('Get meter models error:', error)
     return NextResponse.json(
