@@ -281,7 +281,7 @@ export default function LabsMetersPage() {
         setImportedPhotos([...newPhotos])
 
         const base64 = await fileToBase64(photo.file)
-        const response = await fetch('/api/analyze-meter', {
+        const response = await fetch('/api/labs/classify-meter', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ photo: base64 })
@@ -333,25 +333,80 @@ export default function LabsMetersPage() {
     }
   }
 
-  // Validate/Correct/Reject in review
+  // Validate/Correct/Reject in review - SAVE TO DB
   async function reviewValidate() {
     if (!reviewSession) return
     const photo = reviewSession.photos[reviewSession.currentIndex]
     
-    // TODO: Save to lab_experiments with status 'validated'
-    console.log('Validate:', photo.id)
+    try {
+      // Convert file to base64 for storage
+      const base64 = await fileToBase64(photo.file)
+      
+      await fetch('/api/labs/experiments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          meter_model_id: photo.matchedModelId,
+          photo_base64: base64,
+          extracted_data: photo.extractedData,
+          corrected_data: null,
+          confidence: photo.confidence,
+          status: 'validated',
+          image_config_used: testConfig,
+          tokens_input: 0,
+          tokens_output: 0,
+          processing_time_ms: 0
+        })
+      })
+      
+      // Mark photo as processed
+      photo.status = 'done'
+      setImportedPhotos([...importedPhotos])
+      
+    } catch (err) {
+      console.error('Error saving validation:', err)
+    }
     
-    reviewNext()
+    // Check if last photo
+    if (reviewSession.currentIndex >= reviewSession.photos.length - 1) {
+      setReviewSession(null)
+      // Refresh data
+      loadData()
+    } else {
+      reviewNext()
+    }
   }
 
   async function reviewReject() {
     if (!reviewSession) return
     const photo = reviewSession.photos[reviewSession.currentIndex]
     
-    // TODO: Save to lab_experiments with status 'rejected'
-    console.log('Reject:', photo.id)
+    try {
+      const base64 = await fileToBase64(photo.file)
+      
+      await fetch('/api/labs/experiments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          meter_model_id: photo.matchedModelId,
+          photo_base64: base64,
+          extracted_data: photo.extractedData,
+          corrected_data: null,
+          confidence: photo.confidence,
+          status: 'rejected',
+          image_config_used: testConfig
+        })
+      })
+    } catch (err) {
+      console.error('Error saving rejection:', err)
+    }
     
-    reviewNext()
+    if (reviewSession.currentIndex >= reviewSession.photos.length - 1) {
+      setReviewSession(null)
+      loadData()
+    } else {
+      reviewNext()
+    }
   }
 
   function reviewOpenCorrection() {
@@ -374,12 +429,38 @@ export default function LabsMetersPage() {
   async function submitCorrection() {
     if (!correctionPhotoId || !reviewSession) return
     
-    // TODO: Save to lab_experiments with status 'corrected' and corrected_data
-    console.log('Correct:', correctionPhotoId, correctionData)
+    const photo = reviewSession.photos.find(p => p.id === correctionPhotoId)
+    if (!photo) return
+    
+    try {
+      const base64 = await fileToBase64(photo.file)
+      
+      await fetch('/api/labs/experiments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          meter_model_id: photo.matchedModelId,
+          photo_base64: base64,
+          extracted_data: photo.extractedData,
+          corrected_data: correctionData,
+          confidence: photo.confidence,
+          status: 'corrected',
+          image_config_used: testConfig
+        })
+      })
+    } catch (err) {
+      console.error('Error saving correction:', err)
+    }
     
     setShowCorrectionModal(false)
     setCorrectionPhotoId(null)
-    reviewNext()
+    
+    if (reviewSession.currentIndex >= reviewSession.photos.length - 1) {
+      setReviewSession(null)
+      loadData()
+    } else {
+      reviewNext()
+    }
   }
 
   // Keyboard shortcuts for review
