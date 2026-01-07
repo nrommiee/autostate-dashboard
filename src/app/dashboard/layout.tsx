@@ -26,7 +26,12 @@ import {
   CreditCard,
   Bell,
   Book,
-  Scale
+  Scale,
+  FlaskConical,
+  ScanLine,
+  Hammer,
+  Eye,
+  GitBranch
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -89,6 +94,17 @@ const navItems: NavItem[] = [
     icon: <Scale className="h-4 w-4" />,
   },
   {
+    title: 'Labs',
+    href: '/dashboard/labs',
+    icon: <FlaskConical className="h-4 w-4" />,
+    children: [
+      { title: 'Vision Compteurs', href: '/dashboard/labs/meters', icon: <ScanLine className="h-4 w-4" /> },
+      { title: 'Vision Objets', href: '/dashboard/labs/objects', icon: <Eye className="h-4 w-4" /> },
+      { title: 'Valorisation Dégâts', href: '/dashboard/labs/damages', icon: <Hammer className="h-4 w-4" /> },
+      { title: 'Versions', href: '/dashboard/labs/versions', icon: <GitBranch className="h-4 w-4" /> },
+    ]
+  },
+  {
     title: 'Analytics',
     href: '/dashboard/analytics',
     icon: <BarChart3 className="h-4 w-4" />,
@@ -118,6 +134,9 @@ export default function DashboardLayout({
     }
     if (pathname?.startsWith('/dashboard/meters') || pathname?.startsWith('/dashboard/unrecognized')) {
       setExpandedItems(prev => prev.includes('/dashboard/meters') ? prev : [...prev, '/dashboard/meters'])
+    }
+    if (pathname?.startsWith('/dashboard/labs')) {
+      setExpandedItems(prev => prev.includes('/dashboard/labs') ? prev : [...prev, '/dashboard/labs'])
     }
   }, [pathname])
 
