@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useRef } from 'react'
+import { useSearchParams, useRouter } from 'next/navigation'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -22,7 +23,8 @@ import {
   Upload, Play, Check, X, RotateCcw, Loader2, CheckCircle, XCircle, Edit3, Zap, 
   ImageIcon, TrendingUp, FlaskConical, BarChart3, Target, Star, Lightbulb, 
   Image as ImageIconLucide, Rocket, DollarSign, AlertTriangle, Camera,
-  Sun, Aperture, Clock, Smartphone, MapPin, Activity, History
+  Sun, Aperture, Clock, Smartphone, MapPin, Activity, History, FileText,
+  CheckCircle2, AlertCircle, Pencil
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { 
@@ -35,6 +37,7 @@ interface MeterModel {
   id: string; name: string; manufacturer: string | null; meter_type: string
   unit: string; recognition_version_id: string | null
   image_config_overrides: ImageConfig; reference_photos: string[]
+  status: 'draft' | 'active' | 'archived'; ai_description: string | null
 }
 
 interface RecognitionVersion {
@@ -110,6 +113,9 @@ function configsEqual(a: ImageConfig, b: ImageConfig): boolean {
 }
 
 export default function LabsMetersPage() {
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  
   // State
   const [models, setModels] = useState<MeterModel[]>([])
   const [versions, setVersions] = useState<RecognitionVersion[]>([])
@@ -121,6 +127,15 @@ export default function LabsMetersPage() {
   const [selectedModel, setSelectedModel] = useState<MeterModel | null>(null)
   const [activeVersion, setActiveVersion] = useState<RecognitionVersion | null>(null)
   const [activeTab, setActiveTab] = useState<'test' | 'analyze' | 'production'>('test')
+  
+  // Prompt editing
+  const [showPromptModal, setShowPromptModal] = useState(false)
+  const [editedPrompt, setEditedPrompt] = useState('')
+  const [savingPrompt, setSavingPrompt] = useState(false)
+  
+  // Model activation
+  const [showActivateModelModal, setShowActivateModelModal] = useState(false)
+  const [activatingModel, setActivatingModel] = useState(false)
   
   // Test tab
   const [photoFile, setPhotoFile] = useState<File | null>(null)
@@ -152,6 +167,17 @@ export default function LabsMetersPage() {
   // Effects
   useEffect(() => { loadData() }, [])
 
+  // Auto-select model from URL parameter
+  useEffect(() => {
+    const modelId = searchParams.get('model')
+    if (modelId && models.length > 0 && !selectedModelId) {
+      const modelExists = models.find(m => m.id === modelId)
+      if (modelExists) {
+        setSelectedModelId(modelId)
+      }
+    }
+  }, [searchParams, models, selectedModelId])
+
   useEffect(() => {
     if (selectedModelId) {
       const model = models.find(m => m.id === selectedModelId)
@@ -182,7 +208,7 @@ export default function LabsMetersPage() {
     setLoading(true)
     try {
       const [modelsRes, versionsRes, pricingRes] = await Promise.all([
-        supabase.from('meter_models').select('*').eq('is_active', true).order('name'),
+        supabase.from('meter_models').select('*').order('name'),
         supabase.from('recognition_versions').select('*').order('created_at', { ascending: false }),
         supabase.from('ai_pricing').select('*').eq('provider', 'anthropic').is('effective_until', null).limit(1)
       ])
@@ -345,6 +371,30 @@ export default function LabsMetersPage() {
     setActivating(false)
   }
 
+  async function savePrompt() {
+    if (!selectedModel) return
+    setSavingPrompt(true)
+    try {
+      await supabase.from('meter_models').update({ ai_description: editedPrompt }).eq('id', selectedModel.id)
+      setModels(prev => prev.map(m => m.id === selectedModel.id ? { ...m, ai_description: editedPrompt } : m))
+      setSelectedModel({ ...selectedModel, ai_description: editedPrompt })
+      setShowPromptModal(false)
+    } catch (err) { console.error('Error:', err) }
+    setSavingPrompt(false)
+  }
+
+  async function activateModel() {
+    if (!selectedModel) return
+    setActivatingModel(true)
+    try {
+      await supabase.from('meter_models').update({ status: 'active' }).eq('id', selectedModel.id)
+      setModels(prev => prev.map(m => m.id === selectedModel.id ? { ...m, status: 'active' as const } : m))
+      setSelectedModel({ ...selectedModel, status: 'active' })
+      setShowActivateModelModal(false)
+    } catch (err) { console.error('Error:', err) }
+    setActivatingModel(false)
+  }
+
   // Stats
   function getConfigStats(): ConfigStats[] {
     const map = new Map<string, LabExperiment[]>()
@@ -407,12 +457,24 @@ export default function LabsMetersPage() {
                       <span>{METER_TYPE_ICONS[m.meter_type] || '📊'}</span>
                       <span>{m.name}</span>
                       {m.manufacturer && <span className="text-gray-400">({m.manufacturer})</span>}
+                      {m.status === 'draft' && <Badge variant="outline" className="ml-2 text-xs bg-yellow-50 text-yellow-700">Brouillon</Badge>}
                     </span>
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
+          {selectedModel && (
+            <div className="flex items-center gap-2">
+              {selectedModel.status === 'draft' ? (
+                <Badge className="bg-yellow-500 text-white"><AlertCircle className="h-3 w-3 mr-1" />Brouillon</Badge>
+              ) : selectedModel.status === 'active' ? (
+                <Badge className="bg-green-600 text-white"><CheckCircle2 className="h-3 w-3 mr-1" />Actif</Badge>
+              ) : (
+                <Badge variant="outline" className="text-gray-500">Archivé</Badge>
+              )}
+            </div>
+          )}
           {activeVersion && (
             <div className="flex items-center gap-2">
               <Badge variant="outline" className="bg-purple-50 text-purple-700">{activeVersion.display_name}</Badge>
@@ -427,6 +489,59 @@ export default function LabsMetersPage() {
             </div>
           )}
         </div>
+
+        {/* Prompt section - only for selected model */}
+        {selectedModel && (
+          <Card className="p-4">
+            <div className="flex items-start justify-between">
+              <div className="flex-1">
+                <h3 className="font-semibold flex items-center gap-2 mb-2">
+                  <FileText className="h-4 w-4" />
+                  Prompt de reconnaissance
+                  {selectedModel.status === 'draft' && (
+                    <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700">Modifiable</Badge>
+                  )}
+                </h3>
+                <div className="p-3 bg-gray-50 rounded-lg text-sm font-mono whitespace-pre-wrap max-h-32 overflow-y-auto">
+                  {selectedModel.ai_description || 'Aucun prompt défini'}
+                </div>
+              </div>
+              {selectedModel.status === 'draft' && (
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="ml-4"
+                  onClick={() => { setEditedPrompt(selectedModel.ai_description || ''); setShowPromptModal(true) }}
+                >
+                  <Pencil className="h-4 w-4 mr-1" />Modifier
+                </Button>
+              )}
+            </div>
+            
+            {/* Activate model button for drafts */}
+            {selectedModel.status === 'draft' && modelStats.total >= 1 && (
+              <div className="mt-4 pt-4 border-t">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-gray-600">Ce modèle est en brouillon et n'est pas utilisable dans l'app.</p>
+                    <p className="text-xs text-gray-500 mt-1">Activez-le pour le rendre disponible au scan.</p>
+                  </div>
+                  <Button onClick={() => setShowActivateModelModal(true)} className="bg-green-600 hover:bg-green-700">
+                    <CheckCircle2 className="h-4 w-4 mr-2" />Activer ce modèle
+                  </Button>
+                </div>
+              </div>
+            )}
+            {selectedModel.status === 'draft' && modelStats.total === 0 && (
+              <div className="mt-4 pt-4 border-t">
+                <div className="flex items-center gap-2 text-yellow-700 bg-yellow-50 p-3 rounded-lg text-sm">
+                  <AlertTriangle className="h-4 w-4" />
+                  <span>Effectuez au moins un test avant d'activer ce modèle.</span>
+                </div>
+              </div>
+            )}
+          </Card>
+        )}
 
         {selectedModel ? (
           <>
@@ -718,6 +833,68 @@ export default function LabsMetersPage() {
             <DialogFooter>
               <Button variant="outline" onClick={() => setShowActivateModal(false)}>Annuler</Button>
               <Button onClick={activateConfig} disabled={activating} className="bg-purple-600">{activating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Check className="h-4 w-4 mr-2" />}Activer</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Prompt Edit Modal */}
+        <Dialog open={showPromptModal} onOpenChange={setShowPromptModal}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2"><FileText className="h-5 w-5" />Modifier le prompt</DialogTitle>
+              <DialogDescription>Ce prompt sera utilisé par l'IA pour reconnaître ce type de compteur.</DialogDescription>
+            </DialogHeader>
+            <div className="py-4">
+              <Textarea 
+                value={editedPrompt} 
+                onChange={(e) => setEditedPrompt(e.target.value)} 
+                rows={12}
+                className="font-mono text-sm"
+                placeholder="Instructions pour Claude..."
+              />
+              <p className="text-xs text-gray-500 mt-2">
+                Décrivez les règles de lecture : nombre de décimales, couleur des chiffres, format attendu, etc.
+              </p>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setShowPromptModal(false)}>Annuler</Button>
+              <Button onClick={savePrompt} disabled={savingPrompt} className="bg-purple-600">
+                {savingPrompt ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Check className="h-4 w-4 mr-2" />}
+                Enregistrer
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Activate Model Modal */}
+        <Dialog open={showActivateModelModal} onOpenChange={setShowActivateModelModal}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2"><CheckCircle2 className="h-5 w-5 text-green-600" />Activer ce modèle ?</DialogTitle>
+              <DialogDescription>Une fois activé, ce modèle sera disponible pour le scan dans l'application iOS.</DialogDescription>
+            </DialogHeader>
+            <div className="py-4 space-y-4">
+              <div className="p-4 bg-gray-50 rounded-lg">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-xl">{selectedModel && METER_TYPE_ICONS[selectedModel.meter_type]}</span>
+                  <span className="font-semibold">{selectedModel?.name}</span>
+                </div>
+                <div className="text-sm text-gray-600 space-y-1">
+                  <p><strong>{modelStats.total}</strong> tests effectués</p>
+                  {successRate && <p><strong>{successRate}%</strong> de succès</p>}
+                </div>
+              </div>
+              <div className="flex items-center gap-2 text-sm text-blue-700 bg-blue-50 p-3 rounded-lg">
+                <AlertCircle className="h-4 w-4" />
+                <span>Cette action est réversible. Vous pourrez archiver ce modèle si nécessaire.</span>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setShowActivateModelModal(false)}>Annuler</Button>
+              <Button onClick={activateModel} disabled={activatingModel} className="bg-green-600 hover:bg-green-700">
+                {activatingModel ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
+                Activer le modèle
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
