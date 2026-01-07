@@ -541,6 +541,9 @@ export default function LabsMetersPage() {
       const base64 = await fileToBase64(testPhotoFile)
       const model = models.find(m => m.id === testModelId)
       
+      // Générer la photo traitée via canvas
+      await generateProcessedPhoto(testPhotoFile)
+      
       const response = await fetch('/api/test-meter', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -558,6 +561,113 @@ export default function LabsMetersPage() {
       console.error('Test error:', err)
     }
     setTesting(false)
+  }
+
+  // Générer photo traitée avec les paramètres de config
+  async function generateProcessedPhoto(file: File) {
+    const img = new Image()
+    const url = URL.createObjectURL(file)
+    
+    await new Promise<void>((resolve) => {
+      img.onload = () => resolve()
+      img.src = url
+    })
+
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    canvas.width = img.width
+    canvas.height = img.height
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    // Appliquer les filtres
+    let filters = ''
+    if (testConfig.grayscale) filters += 'grayscale(100%) '
+    if (testConfig.contrast !== 0) filters += `contrast(${100 + testConfig.contrast}%) `
+    if (testConfig.brightness !== 0) filters += `brightness(${100 + testConfig.brightness}%) `
+    
+    ctx.filter = filters || 'none'
+    ctx.drawImage(img, 0, 0)
+
+    // Convertir en URL
+    const processedUrl = canvas.toDataURL('image/jpeg', 0.9)
+    setTestProcessedUrl(processedUrl)
+    
+    URL.revokeObjectURL(url)
+  }
+
+  // Valider test unitaire
+  async function handleValidateSingleTest() {
+    if (!testPhotoFile || !testModelId || !testResult) return
+    
+    try {
+      const base64 = await fileToBase64(testPhotoFile)
+      
+      await fetch('/api/labs/experiments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          meter_model_id: testModelId,
+          photo_base64: base64,
+          extracted_data: {
+            serial: { value: testResult.extractedSerial, confidence: testResult.confidence },
+            reading: { value: testResult.extractedReading, confidence: testResult.confidence }
+          },
+          corrected_data: null,
+          confidence: testResult.confidence,
+          status: 'validated',
+          image_config_used: testConfig
+        })
+      })
+      
+      // Reset
+      setTestPhotoUrl(null)
+      setTestPhotoFile(null)
+      setTestProcessedUrl(null)
+      setTestResult(null)
+      
+      // Refresh
+      loadData()
+    } catch (err) {
+      console.error('Error validating test:', err)
+    }
+  }
+
+  // Rejeter test unitaire
+  async function handleRejectSingleTest() {
+    if (!testPhotoFile || !testModelId) return
+    
+    try {
+      const base64 = await fileToBase64(testPhotoFile)
+      
+      await fetch('/api/labs/experiments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          meter_model_id: testModelId,
+          photo_base64: base64,
+          extracted_data: testResult ? {
+            serial: { value: testResult.extractedSerial, confidence: testResult.confidence },
+            reading: { value: testResult.extractedReading, confidence: testResult.confidence }
+          } : {},
+          corrected_data: null,
+          confidence: testResult?.confidence || 0,
+          status: 'rejected',
+          image_config_used: testConfig
+        })
+      })
+      
+      // Reset
+      setTestPhotoUrl(null)
+      setTestPhotoFile(null)
+      setTestProcessedUrl(null)
+      setTestResult(null)
+      
+      loadData()
+    } catch (err) {
+      console.error('Error rejecting test:', err)
+    }
   }
 
   // Utility
@@ -635,25 +745,56 @@ export default function LabsMetersPage() {
               Résultat IA
             </h3>
 
-            {currentPhoto.extractedData ? (
+            {currentPhoto.extractedData && Object.keys(currentPhoto.extractedData).length > 0 ? (
               <div className="space-y-4 flex-1">
-                {zones.map(zone => {
-                  const data = currentPhoto.extractedData?.[zone.id]
-                  return (
-                    <div key={zone.id} className="p-3 bg-gray-50 rounded-lg">
-                      <p className="text-xs text-gray-500 mb-1">{zone.label}</p>
-                      <p className="text-xl font-mono font-semibold">
-                        {data?.value || '-'}
-                      </p>
-                      {data?.confidence && (
-                        <p className="text-xs text-gray-400 mt-1">
-                          Confiance: {(data.confidence * 100).toFixed(0)}%
-                        </p>
-                      )}
-                    </div>
-                  )
-                })}
+                {/* Toujours afficher N° série et Index en premier */}
+                {currentPhoto.extractedData.serial && (
+                  <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
+                    <p className="text-xs text-blue-600 font-medium mb-1">N° SÉRIE</p>
+                    <p className="text-2xl font-mono font-bold text-blue-900">
+                      {currentPhoto.extractedData.serial.value}
+                    </p>
+                    <p className="text-xs text-blue-500 mt-1">
+                      Confiance: {(currentPhoto.extractedData.serial.confidence * 100).toFixed(0)}%
+                    </p>
+                  </div>
+                )}
 
+                {currentPhoto.extractedData.reading && (
+                  <div className="p-4 bg-green-50 rounded-lg border border-green-200">
+                    <p className="text-xs text-green-600 font-medium mb-1">INDEX</p>
+                    <p className="text-2xl font-mono font-bold text-green-900">
+                      {currentPhoto.extractedData.reading.value}
+                    </p>
+                    <p className="text-xs text-green-500 mt-1">
+                      Confiance: {(currentPhoto.extractedData.reading.confidence * 100).toFixed(0)}%
+                    </p>
+                  </div>
+                )}
+
+                {/* Index jour/nuit si présents */}
+                {currentPhoto.extractedData.reading_day && (
+                  <div className="p-3 bg-yellow-50 rounded-lg border border-yellow-200">
+                    <p className="text-xs text-yellow-600 font-medium mb-1">INDEX JOUR</p>
+                    <p className="text-xl font-mono font-bold">{currentPhoto.extractedData.reading_day.value}</p>
+                  </div>
+                )}
+                {currentPhoto.extractedData.reading_night && (
+                  <div className="p-3 bg-indigo-50 rounded-lg border border-indigo-200">
+                    <p className="text-xs text-indigo-600 font-medium mb-1">INDEX NUIT</p>
+                    <p className="text-xl font-mono font-bold">{currentPhoto.extractedData.reading_night.value}</p>
+                  </div>
+                )}
+
+                {/* EAN si présent */}
+                {currentPhoto.extractedData.ean && (
+                  <div className="p-3 bg-gray-50 rounded-lg">
+                    <p className="text-xs text-gray-500 mb-1">Code EAN</p>
+                    <p className="text-sm font-mono">{currentPhoto.extractedData.ean.value}</p>
+                  </div>
+                )}
+
+                {/* Confiance globale */}
                 <div className="p-3 bg-purple-50 rounded-lg">
                   <p className="text-xs text-gray-500 mb-1">Confiance globale</p>
                   <div className="flex items-center gap-2">
@@ -663,10 +804,12 @@ export default function LabsMetersPage() {
                 </div>
               </div>
             ) : (
-              <div className="flex-1 flex items-center justify-center text-gray-400">
-                Aucune donnée extraite
+              <div className="flex-1 flex flex-col items-center justify-center text-gray-400">
+                <AlertTriangle className="h-12 w-12 mb-3 text-orange-400" />
+                <p className="font-medium text-gray-600">Aucune donnée extraite</p>
+                <p className="text-sm text-center mt-2">L'IA n'a pas pu lire les informations de ce compteur</p>
               </div>
-            )}
+            )}}
 
             {/* Actions */}
             <div className="space-y-3 pt-4 border-t">
@@ -1161,126 +1304,167 @@ export default function LabsMetersPage() {
               </div>
 
               {testModelId && (
-                <div className="grid lg:grid-cols-3 gap-6">
-                  {/* Photo */}
-                  <Card className="p-4">
-                    <h3 className="font-semibold mb-3 flex items-center gap-2">
-                      <ImageIcon className="h-4 w-4" />Photo de test
-                    </h3>
-                    {testPhotoUrl ? (
-                      <div className="space-y-3">
+                <div className="space-y-4">
+                  {/* Photos côte à côte : Originale + Traitée */}
+                  <div className="grid md:grid-cols-2 gap-4">
+                    {/* Photo originale */}
+                    <Card className="p-4">
+                      <h3 className="font-semibold mb-3 flex items-center gap-2">
+                        <ImageIcon className="h-4 w-4" />Photo originale
+                      </h3>
+                      {testPhotoUrl ? (
                         <div className="relative">
-                          <img src={testPhotoUrl} alt="Test" className="w-full rounded-lg border" />
+                          <img src={testPhotoUrl} alt="Original" className="w-full rounded-lg border" />
                           <Button
                             variant="outline"
                             size="icon"
                             className="absolute top-2 right-2 bg-white/80"
-                            onClick={() => { setTestPhotoUrl(null); setTestPhotoFile(null); setTestResult(null) }}
+                            onClick={() => { 
+                              setTestPhotoUrl(null)
+                              setTestPhotoFile(null)
+                              setTestResult(null)
+                              setTestProcessedUrl(null)
+                            }}
                           >
                             <RotateCcw className="h-4 w-4" />
                           </Button>
                         </div>
-                      </div>
-                    ) : (
-                      <label className="block">
-                        <div className="h-48 flex flex-col items-center justify-center bg-gray-50 rounded-lg border-2 border-dashed hover:border-purple-400 cursor-pointer">
-                          <Upload className="h-8 w-8 text-gray-400 mb-2" />
-                          <p className="text-sm text-gray-500">Cliquez pour uploader</p>
-                        </div>
-                        <input type="file" accept="image/*" className="hidden" onChange={handleSingleTestPhoto} />
-                      </label>
-                    )}
-                  </Card>
-
-                  {/* Config */}
-                  <Card className="p-4">
-                    <h3 className="font-semibold mb-3 flex items-center gap-2">
-                      <Zap className="h-4 w-4" />Traitement
-                    </h3>
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <Label>Noir & Blanc</Label>
-                        <Switch
-                          checked={testConfig.grayscale}
-                          onCheckedChange={(v) => setTestConfig({ ...testConfig, grayscale: v })}
-                        />
-                      </div>
-                      <div>
-                        <div className="flex justify-between mb-1">
-                          <Label className="text-sm">Contraste</Label>
-                          <span className="text-xs text-gray-500">{testConfig.contrast > 0 ? '+' : ''}{testConfig.contrast}%</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="-50"
-                          max="100"
-                          value={testConfig.contrast}
-                          onChange={(e) => setTestConfig({ ...testConfig, contrast: +e.target.value })}
-                          className="w-full accent-purple-600"
-                        />
-                      </div>
-                      <div>
-                        <div className="flex justify-between mb-1">
-                          <Label className="text-sm">Netteté</Label>
-                          <span className="text-xs text-gray-500">{testConfig.sharpness}%</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="0"
-                          max="100"
-                          value={testConfig.sharpness}
-                          onChange={(e) => setTestConfig({ ...testConfig, sharpness: +e.target.value })}
-                          className="w-full accent-purple-600"
-                        />
-                      </div>
-                    </div>
-                  </Card>
-
-                  {/* Results */}
-                  <Card className="p-4">
-                    <h3 className="font-semibold mb-3 flex items-center gap-2">
-                      <Zap className="h-4 w-4" />Résultats
-                    </h3>
-                    {testPhotoUrl && !testResult && (
-                      <Button onClick={runSingleTest} disabled={testing} className="w-full mb-4 bg-purple-600">
-                        {testing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Play className="h-4 w-4 mr-2" />}
-                        Lancer l'analyse
-                      </Button>
-                    )}
-                    {testResult && (
-                      <div className="space-y-4">
-                        <div className={`p-4 rounded-lg ${testResult.success ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
-                          <div className="flex items-center gap-2 mb-2">
-                            {testResult.success ? (
-                              <CheckCircle className="h-5 w-5 text-green-600" />
-                            ) : (
-                              <XCircle className="h-5 w-5 text-red-600" />
-                            )}
-                            <span className="font-medium">{testResult.success ? 'Reconnu' : 'Échec'}</span>
-                            <Badge variant="outline" className="ml-auto">{(testResult.confidence * 100).toFixed(0)}%</Badge>
+                      ) : (
+                        <label className="block">
+                          <div className="h-48 flex flex-col items-center justify-center bg-gray-50 rounded-lg border-2 border-dashed hover:border-purple-400 cursor-pointer">
+                            <Upload className="h-8 w-8 text-gray-400 mb-2" />
+                            <p className="text-sm text-gray-500">Cliquez pour uploader</p>
                           </div>
-                          {testResult.serialNumber && <p className="text-sm"><strong>N° série:</strong> {testResult.serialNumber}</p>}
-                          {testResult.reading && <p className="text-sm"><strong>Index:</strong> {testResult.reading}</p>}
+                          <input type="file" accept="image/*" className="hidden" onChange={handleSingleTestPhoto} />
+                        </label>
+                      )}
+                    </Card>
+
+                    {/* Photo traitée */}
+                    <Card className="p-4">
+                      <h3 className="font-semibold mb-3 flex items-center gap-2">
+                        <Zap className="h-4 w-4" />Photo traitée
+                      </h3>
+                      {testProcessedUrl ? (
+                        <img src={testProcessedUrl} alt="Traitée" className="w-full rounded-lg border" />
+                      ) : testPhotoUrl ? (
+                        <div className="h-48 flex flex-col items-center justify-center bg-gray-100 rounded-lg border text-gray-400">
+                          <Zap className="h-8 w-8 mb-2" />
+                          <p className="text-sm">Ajustez les paramètres</p>
+                          <p className="text-xs">puis lancez l'analyse</p>
                         </div>
-                        <div className="flex gap-2">
-                          <Button className="flex-1 bg-green-600">
-                            <Check className="h-4 w-4 mr-1" />Valider
-                          </Button>
-                          <Button variant="outline" className="flex-1">
-                            <Pencil className="h-4 w-4 mr-1" />Corriger
-                          </Button>
-                          <Button variant="outline" className="flex-1 text-red-600">
-                            <X className="h-4 w-4 mr-1" />Rejeter
-                          </Button>
+                      ) : (
+                        <div className="h-48 flex items-center justify-center bg-gray-50 rounded-lg border text-gray-400 text-sm">
+                          Uploadez d'abord une photo
                         </div>
+                      )}
+                    </Card>
+                  </div>
+
+                  {/* Config + Résultats */}
+                  <div className="grid md:grid-cols-2 gap-4">
+                    {/* Config */}
+                    <Card className="p-4">
+                      <h3 className="font-semibold mb-3 flex items-center gap-2">
+                        <Zap className="h-4 w-4" />Traitement image
+                      </h3>
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <Label>Noir & Blanc</Label>
+                          <Switch
+                            checked={testConfig.grayscale}
+                            onCheckedChange={(v) => setTestConfig({ ...testConfig, grayscale: v })}
+                          />
+                        </div>
+                        <div>
+                          <div className="flex justify-between mb-1">
+                            <Label className="text-sm">Contraste</Label>
+                            <span className="text-xs text-gray-500">{testConfig.contrast > 0 ? '+' : ''}{testConfig.contrast}%</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="-50"
+                            max="100"
+                            value={testConfig.contrast}
+                            onChange={(e) => setTestConfig({ ...testConfig, contrast: +e.target.value })}
+                            className="w-full accent-purple-600"
+                          />
+                        </div>
+                        <div>
+                          <div className="flex justify-between mb-1">
+                            <Label className="text-sm">Netteté</Label>
+                            <span className="text-xs text-gray-500">{testConfig.sharpness}%</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            value={testConfig.sharpness}
+                            onChange={(e) => setTestConfig({ ...testConfig, sharpness: +e.target.value })}
+                            className="w-full accent-purple-600"
+                          />
+                        </div>
+                        {testPhotoUrl && (
+                          <Button onClick={runSingleTest} disabled={testing} className="w-full mt-2 bg-purple-600">
+                            {testing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Play className="h-4 w-4 mr-2" />}
+                            Lancer l'analyse
+                          </Button>
+                        )}
                       </div>
-                    )}
-                    {!testPhotoUrl && (
-                      <div className="h-32 flex items-center justify-center text-gray-400 text-sm">
-                        Uploadez une photo
-                      </div>
-                    )}
-                  </Card>
+                    </Card>
+
+                    {/* Résultats */}
+                    <Card className="p-4">
+                      <h3 className="font-semibold mb-3 flex items-center gap-2">
+                        <Target className="h-4 w-4" />Résultats IA
+                      </h3>
+                      {testResult ? (
+                        <div className="space-y-4">
+                          <div className={`p-4 rounded-lg ${testResult.success ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
+                            <div className="flex items-center gap-2 mb-3">
+                              {testResult.success ? (
+                                <CheckCircle className="h-5 w-5 text-green-600" />
+                              ) : (
+                                <XCircle className="h-5 w-5 text-red-600" />
+                              )}
+                              <span className="font-medium">{testResult.success ? 'Reconnu' : 'Échec'}</span>
+                              <Badge variant="outline" className="ml-auto">{(testResult.confidence * 100).toFixed(0)}%</Badge>
+                            </div>
+                            <div className="space-y-2">
+                              <div className="p-2 bg-white rounded border">
+                                <p className="text-xs text-gray-500">N° série</p>
+                                <p className="font-mono font-semibold">{testResult.extractedSerial || '-'}</p>
+                              </div>
+                              <div className="p-2 bg-white rounded border">
+                                <p className="text-xs text-gray-500">Index</p>
+                                <p className="font-mono font-semibold">{testResult.extractedReading || '-'}</p>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-3 gap-2">
+                            <Button className="bg-green-600 hover:bg-green-700" onClick={handleValidateSingleTest}>
+                              <Check className="h-4 w-4 mr-1" />Valider
+                            </Button>
+                            <Button variant="outline" onClick={() => setShowCorrectionModal(true)}>
+                              <Pencil className="h-4 w-4 mr-1" />Corriger
+                            </Button>
+                            <Button variant="outline" className="text-red-600" onClick={handleRejectSingleTest}>
+                              <X className="h-4 w-4 mr-1" />Rejeter
+                            </Button>
+                          </div>
+                        </div>
+                      ) : testPhotoUrl ? (
+                        <div className="h-32 flex flex-col items-center justify-center text-gray-400 text-sm">
+                          <Target className="h-8 w-8 mb-2" />
+                          Lancez l'analyse pour voir les résultats
+                        </div>
+                      ) : (
+                        <div className="h-32 flex items-center justify-center text-gray-400 text-sm">
+                          Uploadez une photo
+                        </div>
+                      )}
+                    </Card>
+                  </div>
                 </div>
               )}
             </div>
