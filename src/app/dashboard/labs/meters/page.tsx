@@ -295,6 +295,59 @@ export default function LabsMetersPage() {
   // HANDLERS
   // ============================================================================
 
+  // Redimensionner une image pour qu'elle ne dépasse pas maxSize (en pixels)
+  async function resizeImage(file: File, maxSize: number = 1600): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const img = new Image()
+      const objectUrl = URL.createObjectURL(file)
+      
+      img.onload = () => {
+        let { width, height } = img
+        
+        // Calculer les nouvelles dimensions
+        if (width > maxSize || height > maxSize) {
+          if (width > height) {
+            height = Math.round((height * maxSize) / width)
+            width = maxSize
+          } else {
+            width = Math.round((width * maxSize) / height)
+            height = maxSize
+          }
+        }
+        
+        // Créer un canvas et dessiner l'image redimensionnée
+        const canvas = document.createElement('canvas')
+        canvas.width = width
+        canvas.height = height
+        
+        const ctx = canvas.getContext('2d')
+        if (!ctx) {
+          URL.revokeObjectURL(objectUrl)
+          reject(new Error('Could not get canvas context'))
+          return
+        }
+        
+        ctx.drawImage(img, 0, 0, width, height)
+        
+        // Convertir en base64 avec compression JPEG
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.85)
+        const base64 = dataUrl.split(',')[1]
+        
+        console.log(`Resized image: ${img.width}x${img.height} -> ${width}x${height}, base64 length: ${base64.length}`)
+        
+        URL.revokeObjectURL(objectUrl)
+        resolve(base64)
+      }
+      
+      img.onerror = () => {
+        URL.revokeObjectURL(objectUrl)
+        reject(new Error('Failed to load image'))
+      }
+      
+      img.src = objectUrl
+    })
+  }
+
   // Bulk import - traiter les fichiers
   async function processBulkFiles(files: File[]) {
     console.log('processBulkFiles called, files:', files.length)
@@ -326,9 +379,16 @@ export default function LabsMetersPage() {
         photo.status = 'analyzing'
         setImportedPhotos([...newPhotos])
 
-        // Convertir en base64
-        const base64 = await fileToBase64(photo.file)
+        // Redimensionner et convertir en base64 (max 1600px pour rester sous 4MB)
+        const base64 = await resizeImage(photo.file, 1600)
         console.log(`Photo ${i + 1} base64 length:`, base64.length)
+        
+        // Vérifier que la taille est OK
+        if (base64.length > 4000000) {
+          console.warn(`Photo ${i + 1} still too large, trying smaller size`)
+          const smallerBase64 = await resizeImage(photo.file, 1200)
+          console.log(`Photo ${i + 1} smaller base64 length:`, smallerBase64.length)
+        }
         
         // Appeler l'API de classification
         const response = await fetch('/api/labs/classify-meter', {
@@ -352,7 +412,7 @@ export default function LabsMetersPage() {
           const errorText = await response.text()
           console.error(`Photo ${i + 1} API error:`, response.status, errorText)
           photo.status = 'error'
-          photo.error = `Erreur API: ${response.status}`
+          photo.error = response.status === 413 ? 'Photo trop grande' : `Erreur API: ${response.status}`
         }
       } catch (err: any) {
         console.error(`Photo ${i + 1} exception:`, err)
@@ -611,16 +671,29 @@ export default function LabsMetersPage() {
     setTestResult(null)
   }
 
-  // Générer une image avec les filtres appliqués
-  async function applyFiltersToImage(file: File): Promise<string> {
+  // Générer une image avec les filtres appliqués ET redimensionnée
+  async function applyFiltersToImage(file: File, maxSize: number = 1600): Promise<string> {
     return new Promise((resolve, reject) => {
       const img = new Image()
       const objectUrl = URL.createObjectURL(file)
       
       img.onload = () => {
+        let { width, height } = img
+        
+        // Redimensionner si nécessaire
+        if (width > maxSize || height > maxSize) {
+          if (width > height) {
+            height = Math.round((height * maxSize) / width)
+            width = maxSize
+          } else {
+            width = Math.round((width * maxSize) / height)
+            height = maxSize
+          }
+        }
+        
         const canvas = document.createElement('canvas')
-        canvas.width = img.width
-        canvas.height = img.height
+        canvas.width = width
+        canvas.height = height
         
         const ctx = canvas.getContext('2d')
         if (!ctx) {
@@ -636,11 +709,13 @@ export default function LabsMetersPage() {
         if (testConfig.brightness !== 0) filters.push(`brightness(${100 + testConfig.brightness}%)`)
         
         ctx.filter = filters.length > 0 ? filters.join(' ') : 'none'
-        ctx.drawImage(img, 0, 0)
+        ctx.drawImage(img, 0, 0, width, height)
         
-        // Extraire le base64 sans le préfixe data:image/...
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.9)
+        // Extraire le base64 avec compression JPEG
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.85)
         const base64 = dataUrl.split(',')[1]
+        
+        console.log(`applyFiltersToImage: ${img.width}x${img.height} -> ${width}x${height}, filters: ${filters.join(' ') || 'none'}, base64: ${base64.length}`)
         
         URL.revokeObjectURL(objectUrl)
         resolve(base64)
