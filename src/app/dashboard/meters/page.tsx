@@ -297,7 +297,7 @@ export default function MeterModelsPage() {
         ) : (
           <>
             {/* Table Header */}
-            <div className="grid grid-cols-[auto_1fr_120px_100px_120px_80px_80px_80px_50px] gap-4 px-4 py-3 border-b bg-muted/50 text-sm font-medium text-muted-foreground">
+            <div className="grid grid-cols-[auto_1fr_120px_100px_120px_80px_80px_80px_80px_50px] gap-4 px-4 py-3 border-b bg-muted/50 text-sm font-medium text-muted-foreground">
               <div className="w-12"></div>
               <div>Nom du compteur</div>
               <div>Type</div>
@@ -306,6 +306,7 @@ export default function MeterModelsPage() {
               <div className="text-center">Scans</div>
               <div className="text-center">Réussis</div>
               <div className="text-center">Ratés</div>
+              <div className="text-center">Tests</div>
               <div></div>
             </div>
 
@@ -320,7 +321,7 @@ export default function MeterModelsPage() {
                 return (
                   <div 
                     key={model.id}
-                    className="grid grid-cols-[auto_1fr_120px_100px_120px_80px_80px_80px_50px] gap-4 px-4 py-3 items-center hover:bg-muted/30 transition-colors"
+                    className="grid grid-cols-[auto_1fr_120px_100px_120px_80px_80px_80px_80px_50px] gap-4 px-4 py-3 items-center hover:bg-muted/30 transition-colors"
                   >
                     {/* Photo */}
                     <div className="w-12 h-12 rounded-lg overflow-hidden bg-muted flex items-center justify-center">
@@ -395,6 +396,11 @@ export default function MeterModelsPage() {
                     {/* Failed */}
                     <div className="text-center font-medium text-red-600">
                       {failed}
+                    </div>
+
+                    {/* Tests (Labs) */}
+                    <div className="text-center font-medium text-purple-600">
+                      {model.test_count || 0}
                     </div>
 
                     {/* Actions */}
