@@ -56,6 +56,7 @@ interface MeterModel {
   unit: string
   reference_photos: string[]
   is_active: boolean
+  status: 'draft' | 'active' | 'archived'
 }
 
 interface ReadingRule {
