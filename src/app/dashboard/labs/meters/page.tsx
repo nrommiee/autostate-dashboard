@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useRef, useCallback } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -162,7 +162,6 @@ export default function LabsMetersPage() {
   // Single test state
   const [testPhotoFile, setTestPhotoFile] = useState<File | null>(null)
   const [testPhotoUrl, setTestPhotoUrl] = useState<string | null>(null)
-  const [testProcessedUrl, setTestProcessedUrl] = useState<string | null>(null)
   const [testConfig, setTestConfig] = useState<ImageConfig>(DEFAULT_CONFIG)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<any>(null)
@@ -176,8 +175,6 @@ export default function LabsMetersPage() {
   const [showTestCorrectionModal, setShowTestCorrectionModal] = useState(false)
   const [testCorrectionSerial, setTestCorrectionSerial] = useState('')
   const [testCorrectionReading, setTestCorrectionReading] = useState('')
-  
-  const canvasRef = useRef<HTMLCanvasElement>(null)
 
   // ============================================================================
   // DATA LOADING
@@ -588,64 +585,6 @@ export default function LabsMetersPage() {
     }
   }, [testModelId, models])
 
-  // Mettre à jour la photo traitée en temps réel quand on change les sliders
-  useEffect(() => {
-    if (!testPhotoFile) {
-      setTestProcessedUrl(null)
-      return
-    }
-    
-    // Créer une nouvelle image
-    const img = new Image()
-    const objectUrl = URL.createObjectURL(testPhotoFile)
-    
-    img.onload = () => {
-      // Créer un canvas temporaire si le ref n'est pas disponible
-      const canvas = canvasRef.current || document.createElement('canvas')
-      canvas.width = img.width
-      canvas.height = img.height
-      
-      const ctx = canvas.getContext('2d')
-      if (!ctx) {
-        URL.revokeObjectURL(objectUrl)
-        return
-      }
-
-      // Construire la chaîne de filtres CSS
-      const filterParts: string[] = []
-      if (testConfig.grayscale) {
-        filterParts.push('grayscale(100%)')
-      }
-      if (testConfig.contrast !== 0) {
-        filterParts.push(`contrast(${100 + testConfig.contrast}%)`)
-      }
-      if (testConfig.brightness !== 0) {
-        filterParts.push(`brightness(${100 + testConfig.brightness}%)`)
-      }
-      
-      // Appliquer les filtres
-      ctx.filter = filterParts.length > 0 ? filterParts.join(' ') : 'none'
-      ctx.drawImage(img, 0, 0)
-
-      // Convertir en data URL
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.9)
-      setTestProcessedUrl(dataUrl)
-      
-      URL.revokeObjectURL(objectUrl)
-    }
-    
-    img.onerror = () => {
-      URL.revokeObjectURL(objectUrl)
-    }
-    
-    img.src = objectUrl
-    
-    // Cleanup
-    return () => {
-      URL.revokeObjectURL(objectUrl)
-    }
-  }, [testConfig.grayscale, testConfig.contrast, testConfig.brightness, testPhotoFile])
-
   // Single test
   async function handleSingleTestPhoto(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -655,7 +594,50 @@ export default function LabsMetersPage() {
     setTestPhotoFile(file)
     setTestPhotoUrl(URL.createObjectURL(file))
     setTestResult(null)
-    setTestProcessedUrl(null)
+  }
+
+  // Générer une image avec les filtres appliqués
+  async function applyFiltersToImage(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const img = new Image()
+      const objectUrl = URL.createObjectURL(file)
+      
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        canvas.width = img.width
+        canvas.height = img.height
+        
+        const ctx = canvas.getContext('2d')
+        if (!ctx) {
+          URL.revokeObjectURL(objectUrl)
+          reject(new Error('Could not get canvas context'))
+          return
+        }
+        
+        // Construire les filtres CSS
+        const filters: string[] = []
+        if (testConfig.grayscale) filters.push('grayscale(100%)')
+        if (testConfig.contrast !== 0) filters.push(`contrast(${100 + testConfig.contrast}%)`)
+        if (testConfig.brightness !== 0) filters.push(`brightness(${100 + testConfig.brightness}%)`)
+        
+        ctx.filter = filters.length > 0 ? filters.join(' ') : 'none'
+        ctx.drawImage(img, 0, 0)
+        
+        // Extraire le base64 sans le préfixe data:image/...
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.9)
+        const base64 = dataUrl.split(',')[1]
+        
+        URL.revokeObjectURL(objectUrl)
+        resolve(base64)
+      }
+      
+      img.onerror = () => {
+        URL.revokeObjectURL(objectUrl)
+        reject(new Error('Failed to load image'))
+      }
+      
+      img.src = objectUrl
+    })
   }
 
   async function runSingleTest() {
@@ -663,14 +645,8 @@ export default function LabsMetersPage() {
     
     setTesting(true)
     try {
-      // Utiliser la photo traitée si disponible
-      let photoToAnalyze: string
-      if (testProcessedUrl) {
-        // Extraire le base64 du data URL
-        photoToAnalyze = testProcessedUrl.split(',')[1]
-      } else {
-        photoToAnalyze = await fileToBase64(testPhotoFile)
-      }
+      // Générer l'image avec les filtres appliqués
+      const photoToAnalyze = await applyFiltersToImage(testPhotoFile)
       
       const model = models.find(m => m.id === testModelId)
       
@@ -691,40 +667,6 @@ export default function LabsMetersPage() {
       console.error('Test error:', err)
     }
     setTesting(false)
-  }
-
-  // Générer photo traitée avec les paramètres de config
-  async function generateProcessedPhoto(file: File) {
-    const img = new Image()
-    const url = URL.createObjectURL(file)
-    
-    await new Promise<void>((resolve) => {
-      img.onload = () => resolve()
-      img.src = url
-    })
-
-    const canvas = canvasRef.current
-    if (!canvas) return
-
-    canvas.width = img.width
-    canvas.height = img.height
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-
-    // Appliquer les filtres
-    let filters = ''
-    if (testConfig.grayscale) filters += 'grayscale(100%) '
-    if (testConfig.contrast !== 0) filters += `contrast(${100 + testConfig.contrast}%) `
-    if (testConfig.brightness !== 0) filters += `brightness(${100 + testConfig.brightness}%) `
-    
-    ctx.filter = filters || 'none'
-    ctx.drawImage(img, 0, 0)
-
-    // Convertir en URL
-    const processedUrl = canvas.toDataURL('image/jpeg', 0.9)
-    setTestProcessedUrl(processedUrl)
-    
-    URL.revokeObjectURL(url)
   }
 
   // Valider test unitaire (prend en compte si corrigé ou non)
@@ -1072,8 +1014,6 @@ export default function LabsMetersPage() {
 
   return (
     <div className="p-6 space-y-6">
-      <canvas ref={canvasRef} className="hidden" />
-
       {/* Header avec fond mauve */}
       <div className="bg-gradient-to-r from-purple-600 to-purple-700 -mx-6 -mt-6 p-6 pb-4">
         <div className="flex items-center gap-4">
@@ -1536,19 +1476,24 @@ export default function LabsMetersPage() {
                       )}
                     </Card>
 
-                    {/* Photo traitée */}
+                    {/* Photo traitée - utilise CSS filters directement */}
                     <Card className="p-4">
                       <h3 className="font-semibold mb-3 flex items-center gap-2">
                         <Zap className="h-4 w-4" />Photo traitée
                       </h3>
-                      {testProcessedUrl ? (
-                        <img src={testProcessedUrl} alt="Traitée" className="w-full rounded-lg border" />
-                      ) : testPhotoUrl ? (
-                        <div className="h-48 flex flex-col items-center justify-center bg-gray-100 rounded-lg border text-gray-400">
-                          <Zap className="h-8 w-8 mb-2" />
-                          <p className="text-sm">Ajustez les paramètres</p>
-                          <p className="text-xs">puis lancez l'analyse</p>
-                        </div>
+                      {testPhotoUrl ? (
+                        <img 
+                          src={testPhotoUrl} 
+                          alt="Traitée" 
+                          className="w-full rounded-lg border"
+                          style={{
+                            filter: [
+                              testConfig.grayscale ? 'grayscale(100%)' : '',
+                              testConfig.contrast !== 0 ? `contrast(${100 + testConfig.contrast}%)` : '',
+                              testConfig.brightness !== 0 ? `brightness(${100 + testConfig.brightness}%)` : '',
+                            ].filter(Boolean).join(' ') || 'none'
+                          }}
+                        />
                       ) : (
                         <div className="h-48 flex items-center justify-center bg-gray-50 rounded-lg border text-gray-400 text-sm">
                           Uploadez d'abord une photo
