@@ -104,6 +104,7 @@ RETOURNE UNIQUEMENT: {"brand": "...", "type": "gas|electricity|water_general|oth
           .from('meter_models')
           .select(`*, meter_reading_rules (*)`)
           .eq('is_active', true)
+          .eq('status', 'active')
 
         if (detected.type) {
           query = query.eq('meter_type', detected.type)
