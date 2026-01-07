@@ -309,6 +309,7 @@ export interface MeterModel {
   fail_count: number;
   total_scans: number;
   avg_confidence: number;
+  test_count?: number; // Labs tests count
   created_by: string | null;
   created_at: string;
   updated_at: string;
