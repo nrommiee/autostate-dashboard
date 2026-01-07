@@ -24,7 +24,7 @@ import {
   ImageIcon, TrendingUp, FlaskConical, BarChart3, Target, Star, Lightbulb, 
   Image as ImageIconLucide, Rocket, DollarSign, AlertTriangle, Camera,
   Sun, Aperture, Clock, Smartphone, MapPin, Activity, History, FileText,
-  CheckCircle2, AlertCircle, Pencil
+  CheckCircle2, AlertCircle, Pencil, FolderInput, Trash2, ArrowRight, Plus
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { 
@@ -126,7 +126,16 @@ export default function LabsMetersPage() {
   const [selectedModelId, setSelectedModelId] = useState<string>('')
   const [selectedModel, setSelectedModel] = useState<MeterModel | null>(null)
   const [activeVersion, setActiveVersion] = useState<RecognitionVersion | null>(null)
-  const [activeTab, setActiveTab] = useState<'test' | 'analyze' | 'production'>('test')
+  const [activeTab, setActiveTab] = useState<'import' | 'test' | 'analyze' | 'production'>('import')
+  
+  // Import & Tri
+  const [importedPhotos, setImportedPhotos] = useState<File[]>([])
+  const [classifiedPhotos, setClassifiedPhotos] = useState<{
+    modelId: string | null
+    modelName: string | null
+    photos: { file: File; url: string }[]
+  }[]>([])
+  const [classifying, setClassifying] = useState(false)
   
   // Prompt editing
   const [showPromptModal, setShowPromptModal] = useState(false)
@@ -395,6 +404,84 @@ export default function LabsMetersPage() {
     setActivatingModel(false)
   }
 
+  // Bulk photo import and classification
+  async function handleBulkPhotoUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files || [])
+    if (files.length === 0) return
+    
+    setImportedPhotos(files)
+    setClassifying(true)
+    setClassifiedPhotos([])
+    
+    try {
+      // Group photos by detected model
+      const groups = new Map<string | null, { file: File; url: string }[]>()
+      
+      for (const file of files) {
+        const url = URL.createObjectURL(file)
+        const base64 = await fileToBase64(file)
+        
+        // Call API to detect meter type
+        const response = await fetch('/api/analyze-meter', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ photo: base64 })
+        })
+        
+        let matchedModelId: string | null = null
+        let matchedModelName: string | null = null
+        
+        if (response.ok) {
+          const result = await response.json()
+          if (result.matchedModel) {
+            matchedModelId = result.matchedModel.id
+            matchedModelName = result.matchedModel.name
+          }
+        }
+        
+        const key = matchedModelId || 'unrecognized'
+        if (!groups.has(key)) {
+          groups.set(key, [])
+        }
+        groups.get(key)!.push({ file, url })
+        
+        // Update state incrementally
+        const currentGroups: typeof classifiedPhotos = []
+        groups.forEach((photos, modelId) => {
+          const model = models.find(m => m.id === modelId)
+          currentGroups.push({
+            modelId: modelId === 'unrecognized' ? null : modelId,
+            modelName: model?.name || null,
+            photos
+          })
+        })
+        setClassifiedPhotos(currentGroups)
+      }
+    } catch (err) {
+      console.error('Classification error:', err)
+    }
+    
+    setClassifying(false)
+  }
+
+  function removeClassifiedGroup(index: number) {
+    setClassifiedPhotos(prev => {
+      const newGroups = [...prev]
+      // Revoke URLs
+      newGroups[index].photos.forEach(p => URL.revokeObjectURL(p.url))
+      newGroups.splice(index, 1)
+      return newGroups
+    })
+  }
+
+  async function fileToBase64(file: File): Promise<string> {
+    return new Promise((resolve) => {
+      const reader = new FileReader()
+      reader.onloadend = () => resolve((reader.result as string).split(',')[1])
+      reader.readAsDataURL(file)
+    })
+  }
+
   // Stats
   function getConfigStats(): ConfigStats[] {
     const map = new Map<string, LabExperiment[]>()
@@ -547,16 +634,137 @@ export default function LabsMetersPage() {
           <>
             {/* Tabs */}
             <div className="flex border-b">
+              <button onClick={() => setActiveTab('import')} className={`px-4 py-2 text-sm font-medium border-b-2 flex items-center gap-2 ${activeTab === 'import' ? 'border-purple-600 text-purple-600' : 'border-transparent text-gray-500'}`}>
+                <FolderInput className="h-4 w-4" />Import & Tri
+              </button>
               <button onClick={() => setActiveTab('test')} className={`px-4 py-2 text-sm font-medium border-b-2 flex items-center gap-2 ${activeTab === 'test' ? 'border-purple-600 text-purple-600' : 'border-transparent text-gray-500'}`}>
                 <FlaskConical className="h-4 w-4" />Tester
               </button>
               <button onClick={() => setActiveTab('analyze')} className={`px-4 py-2 text-sm font-medium border-b-2 flex items-center gap-2 ${activeTab === 'analyze' ? 'border-purple-600 text-purple-600' : 'border-transparent text-gray-500'}`}>
                 <BarChart3 className="h-4 w-4" />Analyser
               </button>
-              <button onClick={() => setActiveTab('production')} className={`px-4 py-2 text-sm font-medium border-b-2 flex items-center gap-2 ${activeTab === 'production' ? 'border-purple-600 text-purple-600' : 'border-transparent text-gray-500'}`}>
-                <Rocket className="h-4 w-4" />Production
-              </button>
+              {selectedModel.status === 'active' && (
+                <button onClick={() => setActiveTab('production')} className={`px-4 py-2 text-sm font-medium border-b-2 flex items-center gap-2 ${activeTab === 'production' ? 'border-purple-600 text-purple-600' : 'border-transparent text-gray-500'}`}>
+                  <Rocket className="h-4 w-4" />Production
+                </button>
+              )}
             </div>
+
+            {/* IMPORT TAB */}
+            {activeTab === 'import' && (
+              <div className="space-y-6">
+                {/* Drop zone */}
+                <Card className="p-6">
+                  <h3 className="font-semibold mb-4 flex items-center gap-2">
+                    <FolderInput className="h-5 w-5" />
+                    Import & Tri automatique
+                  </h3>
+                  <label className="block">
+                    <div className="h-48 flex flex-col items-center justify-center bg-gray-50 rounded-lg border-2 border-dashed hover:border-purple-400 hover:bg-purple-50 cursor-pointer transition-colors">
+                      <Upload className="h-12 w-12 text-gray-400 mb-3" />
+                      <p className="text-gray-600 font-medium">Glissez-déposez vos photos de compteurs</p>
+                      <p className="text-sm text-gray-400 mt-1">ou cliquez pour sélectionner</p>
+                    </div>
+                    <input 
+                      type="file" 
+                      accept="image/*" 
+                      multiple 
+                      className="hidden" 
+                      onChange={handleBulkPhotoUpload}
+                    />
+                  </label>
+                </Card>
+
+                {/* Classification results */}
+                {classifying && (
+                  <Card className="p-6">
+                    <div className="flex items-center justify-center gap-3 text-purple-600">
+                      <Loader2 className="h-6 w-6 animate-spin" />
+                      <span className="font-medium">Classification en cours...</span>
+                    </div>
+                  </Card>
+                )}
+
+                {classifiedPhotos.length > 0 && !classifying && (
+                  <div className="space-y-4">
+                    <h3 className="font-semibold flex items-center gap-2">
+                      <CheckCircle className="h-5 w-5 text-green-600" />
+                      Résultats du tri ({classifiedPhotos.reduce((acc, g) => acc + g.photos.length, 0)} photos)
+                    </h3>
+                    
+                    {classifiedPhotos.map((group, idx) => (
+                      <Card key={idx} className={`p-4 ${group.modelId ? 'border-green-200 bg-green-50/30' : 'border-orange-200 bg-orange-50/30'}`}>
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-2">
+                            {group.modelId ? (
+                              <>
+                                <CheckCircle className="h-5 w-5 text-green-600" />
+                                <span className="font-medium">{group.modelName}</span>
+                                <Badge variant="outline" className="bg-green-100 text-green-700">{group.photos.length} photos</Badge>
+                              </>
+                            ) : (
+                              <>
+                                <AlertTriangle className="h-5 w-5 text-orange-600" />
+                                <span className="font-medium text-orange-700">Non reconnus</span>
+                                <Badge variant="outline" className="bg-orange-100 text-orange-700">{group.photos.length} photos</Badge>
+                              </>
+                            )}
+                          </div>
+                          <div className="flex gap-2">
+                            {group.modelId ? (
+                              <Button 
+                                size="sm" 
+                                onClick={() => {
+                                  setSelectedModelId(group.modelId!)
+                                  setActiveTab('test')
+                                }}
+                              >
+                                Tester <ArrowRight className="h-4 w-4 ml-1" />
+                              </Button>
+                            ) : (
+                              <>
+                                <Button size="sm" variant="outline" onClick={() => router.push('/dashboard/meters/create')}>
+                                  <Plus className="h-4 w-4 mr-1" />Créer modèle
+                                </Button>
+                                <Button size="sm" variant="ghost" onClick={() => removeClassifiedGroup(idx)}>
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex gap-2 overflow-x-auto pb-2">
+                          {group.photos.map((photo, photoIdx) => (
+                            <img 
+                              key={photoIdx}
+                              src={photo.url}
+                              alt={`Photo ${photoIdx + 1}`}
+                              className="h-20 w-20 object-cover rounded-lg border flex-shrink-0"
+                            />
+                          ))}
+                        </div>
+                      </Card>
+                    ))}
+
+                    <Button 
+                      variant="outline" 
+                      onClick={() => { setClassifiedPhotos([]); setImportedPhotos([]) }}
+                      className="w-full"
+                    >
+                      <Trash2 className="h-4 w-4 mr-2" />Effacer tout
+                    </Button>
+                  </div>
+                )}
+
+                {classifiedPhotos.length === 0 && !classifying && (
+                  <Card className="p-8 text-center text-gray-500">
+                    <FolderInput className="h-12 w-12 mx-auto mb-3 text-gray-300" />
+                    <p>Importez des photos pour les classer automatiquement</p>
+                    <p className="text-sm mt-1">L'IA identifiera les compteurs et les associera aux modèles existants</p>
+                  </Card>
+                )}
+              </div>
+            )}
 
             {/* TEST TAB */}
             {activeTab === 'test' && (
@@ -698,7 +906,7 @@ export default function LabsMetersPage() {
 
                 {/* Config table */}
                 <Card className="p-4">
-                  <h3 className="font-semibold mb-4">Configurations testées</h3>
+                  <h3 className="font-semibold mb-4">Performance par configuration</h3>
                   {configStats.length > 0 ? (
                     <table className="w-full text-sm">
                       <thead><tr className="border-b"><th className="text-left py-2">Config</th><th className="text-center py-2">Tests</th><th className="text-center py-2">Succès</th><th className="text-center py-2">Confiance</th><th className="text-center py-2">Coût</th><th className="text-right py-2">Action</th></tr></thead>
@@ -720,7 +928,7 @@ export default function LabsMetersPage() {
 
                 {/* History */}
                 <Card className="p-4">
-                  <h3 className="font-semibold mb-4">Historique récent</h3>
+                  <h3 className="font-semibold mb-4">Derniers tests</h3>
                   {experiments.length > 0 ? (
                     <table className="w-full text-sm">
                       <thead><tr className="border-b"><th className="text-left py-2">Date</th><th className="text-left py-2">Index</th><th className="text-center py-2">Confiance</th><th className="text-center py-2">Tokens</th><th className="text-left py-2">Config</th><th className="text-center py-2">Status</th></tr></thead>
@@ -802,7 +1010,134 @@ export default function LabsMetersPage() {
             )}
           </>
         ) : (
-          <Card className="p-8 text-center"><p className="text-gray-500">Sélectionnez un modèle de compteur</p></Card>
+          <>
+            {/* Tabs without model */}
+            <div className="flex border-b">
+              <button onClick={() => setActiveTab('import')} className={`px-4 py-2 text-sm font-medium border-b-2 flex items-center gap-2 ${activeTab === 'import' ? 'border-purple-600 text-purple-600' : 'border-transparent text-gray-500'}`}>
+                <FolderInput className="h-4 w-4" />Import & Tri
+              </button>
+            </div>
+
+            {/* IMPORT TAB without model */}
+            {activeTab === 'import' && (
+              <div className="space-y-6">
+                {/* Drop zone */}
+                <Card className="p-6">
+                  <h3 className="font-semibold mb-4 flex items-center gap-2">
+                    <FolderInput className="h-5 w-5" />
+                    Import & Tri automatique
+                  </h3>
+                  <label className="block">
+                    <div className="h-48 flex flex-col items-center justify-center bg-gray-50 rounded-lg border-2 border-dashed hover:border-purple-400 hover:bg-purple-50 cursor-pointer transition-colors">
+                      <Upload className="h-12 w-12 text-gray-400 mb-3" />
+                      <p className="text-gray-600 font-medium">Glissez-déposez vos photos de compteurs</p>
+                      <p className="text-sm text-gray-400 mt-1">ou cliquez pour sélectionner</p>
+                    </div>
+                    <input 
+                      type="file" 
+                      accept="image/*" 
+                      multiple 
+                      className="hidden" 
+                      onChange={handleBulkPhotoUpload}
+                    />
+                  </label>
+                </Card>
+
+                {/* Classification results */}
+                {classifying && (
+                  <Card className="p-6">
+                    <div className="flex items-center justify-center gap-3 text-purple-600">
+                      <Loader2 className="h-6 w-6 animate-spin" />
+                      <span className="font-medium">Classification en cours...</span>
+                    </div>
+                  </Card>
+                )}
+
+                {classifiedPhotos.length > 0 && !classifying && (
+                  <div className="space-y-4">
+                    <h3 className="font-semibold flex items-center gap-2">
+                      <CheckCircle className="h-5 w-5 text-green-600" />
+                      Résultats du tri ({classifiedPhotos.reduce((acc, g) => acc + g.photos.length, 0)} photos)
+                    </h3>
+                    
+                    {classifiedPhotos.map((group, idx) => (
+                      <Card key={idx} className={`p-4 ${group.modelId ? 'border-green-200 bg-green-50/30' : 'border-orange-200 bg-orange-50/30'}`}>
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-2">
+                            {group.modelId ? (
+                              <>
+                                <CheckCircle className="h-5 w-5 text-green-600" />
+                                <span className="font-medium">{group.modelName}</span>
+                                <Badge variant="outline" className="bg-green-100 text-green-700">{group.photos.length} photos</Badge>
+                              </>
+                            ) : (
+                              <>
+                                <AlertTriangle className="h-5 w-5 text-orange-600" />
+                                <span className="font-medium text-orange-700">Non reconnus</span>
+                                <Badge variant="outline" className="bg-orange-100 text-orange-700">{group.photos.length} photos</Badge>
+                              </>
+                            )}
+                          </div>
+                          <div className="flex gap-2">
+                            {group.modelId ? (
+                              <Button 
+                                size="sm" 
+                                onClick={() => {
+                                  setSelectedModelId(group.modelId!)
+                                  setActiveTab('test')
+                                }}
+                              >
+                                Tester <ArrowRight className="h-4 w-4 ml-1" />
+                              </Button>
+                            ) : (
+                              <>
+                                <Button size="sm" variant="outline" onClick={() => router.push('/dashboard/meters/create')}>
+                                  <Plus className="h-4 w-4 mr-1" />Créer modèle
+                                </Button>
+                                <Button size="sm" variant="ghost" onClick={() => removeClassifiedGroup(idx)}>
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex gap-2 overflow-x-auto pb-2">
+                          {group.photos.map((photo, photoIdx) => (
+                            <img 
+                              key={photoIdx}
+                              src={photo.url}
+                              alt={`Photo ${photoIdx + 1}`}
+                              className="h-20 w-20 object-cover rounded-lg border flex-shrink-0"
+                            />
+                          ))}
+                        </div>
+                      </Card>
+                    ))}
+
+                    <Button 
+                      variant="outline" 
+                      onClick={() => { setClassifiedPhotos([]); setImportedPhotos([]) }}
+                      className="w-full"
+                    >
+                      <Trash2 className="h-4 w-4 mr-2" />Effacer tout
+                    </Button>
+                  </div>
+                )}
+
+                {classifiedPhotos.length === 0 && !classifying && (
+                  <Card className="p-8 text-center text-gray-500">
+                    <FolderInput className="h-12 w-12 mx-auto mb-3 text-gray-300" />
+                    <p>Importez des photos pour les classer automatiquement</p>
+                    <p className="text-sm mt-1">L'IA identifiera les compteurs et les associera aux modèles existants</p>
+                  </Card>
+                )}
+              </div>
+            )}
+
+            {activeTab !== 'import' && (
+              <Card className="p-8 text-center"><p className="text-gray-500">Sélectionnez un modèle de compteur</p></Card>
+            )}
+          </>
         )}
 
         {/* Correction Modal */}
