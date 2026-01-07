@@ -727,12 +727,15 @@ export default function LabsMetersPage() {
     URL.revokeObjectURL(url)
   }
 
-  // Valider test unitaire
+  // Valider test unitaire (prend en compte si corrigé ou non)
   async function handleValidateSingleTest() {
     if (!testPhotoFile || !testModelId || !testResult) return
     
     try {
       const base64 = await fileToBase64(testPhotoFile)
+      
+      // Déterminer si c'est une correction ou une validation simple
+      const wasCorrected = testResult.wasCorrected === true
       
       await fetch('/api/labs/experiments', {
         method: 'POST',
@@ -741,12 +744,15 @@ export default function LabsMetersPage() {
           meter_model_id: testModelId,
           photo_base64: base64,
           extracted_data: {
-            serial: { value: testResult.extractedSerial, confidence: testResult.confidence },
-            reading: { value: testResult.extractedReading, confidence: testResult.confidence }
+            serial: { value: testResult.originalSerial || testResult.extractedSerial, confidence: testResult.confidence },
+            reading: { value: testResult.originalReading || testResult.extractedReading, confidence: testResult.confidence }
           },
-          corrected_data: null,
+          corrected_data: wasCorrected ? {
+            serial: testResult.extractedSerial,
+            reading: testResult.extractedReading
+          } : null,
           confidence: testResult.confidence,
-          status: 'validated',
+          status: wasCorrected ? 'corrected' : 'validated',
           image_config_used: testConfig
         })
       })
@@ -757,8 +763,8 @@ export default function LabsMetersPage() {
       setTestProcessedUrl(null)
       setTestResult(null)
       
-      // Refresh
-      loadData()
+      // Refresh experiments pour ce modèle
+      await loadModelExperiments(testModelId)
     } catch (err) {
       console.error('Error validating test:', err)
     }
@@ -794,7 +800,8 @@ export default function LabsMetersPage() {
       setTestProcessedUrl(null)
       setTestResult(null)
       
-      loadData()
+      // Refresh experiments
+      await loadModelExperiments(testModelId)
     } catch (err) {
       console.error('Error rejecting test:', err)
     }
@@ -807,48 +814,17 @@ export default function LabsMetersPage() {
     setShowTestCorrectionModal(true)
   }
 
-  // Soumettre la correction du test unitaire
-  async function handleSubmitTestCorrection() {
-    if (!testPhotoFile || !testModelId) return
-    
-    try {
-      const base64 = await fileToBase64(testPhotoFile)
-      
-      await fetch('/api/labs/experiments', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          meter_model_id: testModelId,
-          photo_base64: base64,
-          extracted_data: testResult ? {
-            serial: { value: testResult.extractedSerial, confidence: testResult.confidence },
-            reading: { value: testResult.extractedReading, confidence: testResult.confidence }
-          } : {},
-          corrected_data: {
-            serial: testCorrectionSerial,
-            reading: testCorrectionReading
-          },
-          confidence: testResult?.confidence || 0,
-          status: 'corrected',
-          image_config_used: testConfig
-        })
-      })
-      
-      // Reset
-      setShowTestCorrectionModal(false)
-      setTestPhotoUrl(null)
-      setTestPhotoFile(null)
-      setTestProcessedUrl(null)
-      setTestResult(null)
-      setTestCorrectionSerial('')
-      setTestCorrectionReading('')
-      
-      // Refresh
-      loadModelExperiments(testModelId)
-      loadData()
-    } catch (err) {
-      console.error('Error correcting test:', err)
-    }
+  // Appliquer la correction (met à jour les valeurs affichées sans sauvegarder)
+  function applyTestCorrection() {
+    setTestResult({
+      ...testResult,
+      extractedSerial: testCorrectionSerial,
+      extractedReading: testCorrectionReading,
+      wasCorrected: true,
+      originalSerial: testResult?.originalSerial || testResult?.extractedSerial,
+      originalReading: testResult?.originalReading || testResult?.extractedReading
+    })
+    setShowTestCorrectionModal(false)
   }
 
   // Utility
@@ -1490,25 +1466,37 @@ export default function LabsMetersPage() {
           {testMode === 'single' && (
             <div className="space-y-4">
               {/* Model selector - ONLY ACTIVE MODELS */}
-              <div>
-                <Label>Modèle de compteur (actifs uniquement)</Label>
-                <Select value={testModelId} onValueChange={setTestModelId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Sélectionnez un modèle actif..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {models.filter(m => m.status === 'active').map(m => (
-                      <SelectItem key={m.id} value={m.id}>
-                        {METER_TYPE_ICONS[m.meter_type]} {m.name}
-                      </SelectItem>
-                    ))}
-                    {models.filter(m => m.status === 'active').length === 0 && (
-                      <div className="p-4 text-center text-gray-500 text-sm">
-                        Aucun modèle actif. Activez un modèle pour le tester.
-                      </div>
-                    )}
-                  </SelectContent>
-                </Select>
+              <div className="flex gap-4 items-end">
+                <div className="flex-1">
+                  <Label>Modèle de compteur (actifs uniquement)</Label>
+                  <Select value={testModelId} onValueChange={setTestModelId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Sélectionnez un modèle actif..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {models.filter(m => m.status === 'active').map(m => (
+                        <SelectItem key={m.id} value={m.id}>
+                          {METER_TYPE_ICONS[m.meter_type]} {m.name}
+                        </SelectItem>
+                      ))}
+                      {models.filter(m => m.status === 'active').length === 0 && (
+                        <div className="p-4 text-center text-gray-500 text-sm">
+                          Aucun modèle actif. Activez un modèle pour le tester.
+                        </div>
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {testModelId && (
+                  <Button 
+                    variant="outline" 
+                    onClick={() => router.push(`/dashboard/meters/${testModelId}`)}
+                    className="shrink-0"
+                  >
+                    <Eye className="h-4 w-4 mr-2" />
+                    Voir le modèle
+                  </Button>
+                )}
               </div>
 
               {testModelId && (
@@ -1628,30 +1616,44 @@ export default function LabsMetersPage() {
                       </h3>
                       {testResult ? (
                         <div className="space-y-4">
-                          <div className={`p-4 rounded-lg ${testResult.success ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
+                          <div className={`p-4 rounded-lg ${
+                            testResult.wasCorrected ? 'bg-yellow-50 border border-yellow-200' :
+                            testResult.success ? 'bg-green-50 border border-green-200' : 
+                            'bg-red-50 border border-red-200'
+                          }`}>
                             <div className="flex items-center gap-2 mb-3">
-                              {testResult.success ? (
+                              {testResult.wasCorrected ? (
+                                <Pencil className="h-5 w-5 text-yellow-600" />
+                              ) : testResult.success ? (
                                 <CheckCircle className="h-5 w-5 text-green-600" />
                               ) : (
                                 <XCircle className="h-5 w-5 text-red-600" />
                               )}
-                              <span className="font-medium">{testResult.success ? 'Reconnu' : 'Échec'}</span>
+                              <span className="font-medium">
+                                {testResult.wasCorrected ? 'Corrigé' : testResult.success ? 'Reconnu' : 'Échec'}
+                              </span>
                               <Badge variant="outline" className="ml-auto">{(testResult.confidence * 100).toFixed(0)}%</Badge>
                             </div>
                             <div className="space-y-2">
                               <div className="p-2 bg-white rounded border">
-                                <p className="text-xs text-gray-500">N° série</p>
+                                <p className="text-xs text-gray-500">N° série {testResult.wasCorrected && '(corrigé)'}</p>
                                 <p className="font-mono font-semibold">{testResult.extractedSerial || '-'}</p>
+                                {testResult.wasCorrected && testResult.originalSerial && (
+                                  <p className="text-xs text-gray-400 line-through">{testResult.originalSerial}</p>
+                                )}
                               </div>
                               <div className="p-2 bg-white rounded border">
-                                <p className="text-xs text-gray-500">Index</p>
+                                <p className="text-xs text-gray-500">Index {testResult.wasCorrected && '(corrigé)'}</p>
                                 <p className="font-mono font-semibold">{testResult.extractedReading || '-'}</p>
+                                {testResult.wasCorrected && testResult.originalReading && (
+                                  <p className="text-xs text-gray-400 line-through">{testResult.originalReading}</p>
+                                )}
                               </div>
                             </div>
                           </div>
                           <div className="grid grid-cols-3 gap-2">
                             <Button className="bg-green-600 hover:bg-green-700" onClick={handleValidateSingleTest}>
-                              <Check className="h-4 w-4 mr-1" />Valider
+                              <Check className="h-4 w-4 mr-1" />{testResult.wasCorrected ? 'Valider correction' : 'Valider'}
                             </Button>
                             <Button variant="outline" onClick={openTestCorrectionModal}>
                               <Pencil className="h-4 w-4 mr-1" />Corriger
@@ -1924,7 +1926,7 @@ export default function LabsMetersPage() {
           <DialogHeader>
             <DialogTitle>Corriger les valeurs extraites</DialogTitle>
             <DialogDescription>
-              Modifiez les valeurs pour améliorer la reconnaissance future
+              Modifiez les valeurs puis cliquez sur Appliquer. Validez ensuite avec le bouton Valider.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -1936,9 +1938,9 @@ export default function LabsMetersPage() {
                 className="font-mono"
                 placeholder="Ex: 22004338530"
               />
-              {testResult?.extractedSerial && (
+              {testResult?.originalSerial && (
                 <p className="text-xs text-gray-400 mt-1">
-                  Valeur IA: {testResult.extractedSerial}
+                  Valeur IA originale: {testResult.originalSerial}
                 </p>
               )}
             </div>
@@ -1950,18 +1952,18 @@ export default function LabsMetersPage() {
                 className="font-mono"
                 placeholder="Ex: 00374.805"
               />
-              {testResult?.extractedReading && (
+              {testResult?.originalReading && (
                 <p className="text-xs text-gray-400 mt-1">
-                  Valeur IA: {testResult.extractedReading}
+                  Valeur IA originale: {testResult.originalReading}
                 </p>
               )}
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowTestCorrectionModal(false)}>Annuler</Button>
-            <Button onClick={handleSubmitTestCorrection} className="bg-purple-600 hover:bg-purple-700">
+            <Button onClick={applyTestCorrection} className="bg-purple-600 hover:bg-purple-700">
               <Check className="h-4 w-4 mr-2" />
-              Enregistrer la correction
+              Appliquer la correction
             </Button>
           </DialogFooter>
         </DialogContent>
