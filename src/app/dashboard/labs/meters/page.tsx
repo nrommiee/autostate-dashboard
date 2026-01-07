@@ -211,7 +211,7 @@ export default function LabsMetersPage() {
         supabase.from('recognition_versions').select('*').order('created_at', { ascending: false }),
         // Charger tous les experiments du mois pour les stats de coût
         supabase.from('lab_experiments')
-          .select('id, tokens_input, tokens_output, status, created_at')
+          .select('*')
           .gte('created_at', new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString())
       ])
       
