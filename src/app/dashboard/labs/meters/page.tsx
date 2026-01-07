@@ -809,7 +809,7 @@ export default function LabsMetersPage() {
                 <p className="font-medium text-gray-600">Aucune donnée extraite</p>
                 <p className="text-sm text-center mt-2">L'IA n'a pas pu lire les informations de ce compteur</p>
               </div>
-            )}}
+            )}
 
             {/* Actions */}
             <div className="space-y-3 pt-4 border-t">
