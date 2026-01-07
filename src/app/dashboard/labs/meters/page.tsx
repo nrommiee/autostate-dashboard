@@ -182,6 +182,27 @@ export default function LabsMetersPage() {
     loadData()
   }, [])
 
+  // Récupérer les paramètres URL (tab et model)
+  useEffect(() => {
+    const tab = searchParams.get('tab')
+    const modelId = searchParams.get('model')
+    
+    if (tab === 'tests') {
+      setActiveTab('tests')
+    }
+    if (modelId) {
+      setTestModelId(modelId)
+      setTestMode('single')
+    }
+  }, [searchParams])
+
+  // Charger les experiments quand on sélectionne un modèle pour les tests
+  useEffect(() => {
+    if (testModelId) {
+      loadModelExperiments(testModelId)
+    }
+  }, [testModelId])
+
   async function loadData() {
     setLoading(true)
     try {
@@ -199,14 +220,21 @@ export default function LabsMetersPage() {
   }
 
   async function loadModelExperiments(modelId: string) {
-    const { data } = await supabase
+    console.log('Loading experiments for model:', modelId)
+    const { data, error } = await supabase
       .from('lab_experiments')
       .select('*')
       .eq('meter_model_id', modelId)
       .order('created_at', { ascending: false })
       .limit(50)
     
-    if (data) setExperiments(data)
+    if (error) {
+      console.error('Error loading experiments:', error)
+    }
+    if (data) {
+      console.log('Loaded experiments:', data.length)
+      setExperiments(data)
+    }
   }
 
   // ============================================================================
@@ -258,6 +286,7 @@ export default function LabsMetersPage() {
   // Bulk import
   async function handleBulkImport(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files || [])
+    console.log('handleBulkImport called, files:', files.length)
     if (!files.length) return
 
     const newPhotos: ImportedPhoto[] = files.map(file => ({
@@ -271,40 +300,52 @@ export default function LabsMetersPage() {
       confidence: 0
     }))
 
+    console.log('Setting imported photos:', newPhotos.length)
     setImportedPhotos(newPhotos)
     setClassifying(true)
 
     // Analyze each photo
-    for (const photo of newPhotos) {
+    for (let i = 0; i < newPhotos.length; i++) {
+      const photo = newPhotos[i]
+      console.log(`Analyzing photo ${i + 1}/${newPhotos.length}`)
       try {
         photo.status = 'analyzing'
         setImportedPhotos([...newPhotos])
 
         const base64 = await fileToBase64(photo.file)
+        console.log(`Photo ${i + 1} base64 length:`, base64.length)
+        
         const response = await fetch('/api/labs/classify-meter', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ photo: base64 })
         })
 
+        console.log(`Photo ${i + 1} response status:`, response.status)
+        
         if (response.ok) {
           const result = await response.json()
+          console.log(`Photo ${i + 1} result:`, result)
           photo.matchedModelId = result.matchedModel?.id || null
           photo.matchedModelName = result.matchedModel?.name || null
           photo.extractedData = result.extractedData || null
           photo.confidence = result.confidence || 0
           photo.status = 'done'
         } else {
+          const errorText = await response.text()
+          console.error(`Photo ${i + 1} error:`, errorText)
           photo.status = 'error'
           photo.error = 'Échec de l\'analyse'
         }
       } catch (err) {
+        console.error(`Photo ${i + 1} exception:`, err)
         photo.status = 'error'
         photo.error = 'Erreur réseau'
       }
       setImportedPhotos([...newPhotos])
     }
 
+    console.log('Classification complete')
     setClassifying(false)
   }
 
@@ -536,20 +577,27 @@ export default function LabsMetersPage() {
 
   // Mettre à jour la photo traitée en temps réel quand on change les sliders
   useEffect(() => {
-    if (!testPhotoFile || !canvasRef.current) return
+    if (!testPhotoFile) return
     
-    const generateProcessed = async () => {
+    const generateProcessed = () => {
       const img = new Image()
       const url = URL.createObjectURL(testPhotoFile)
       
       img.onload = () => {
         const canvas = canvasRef.current
-        if (!canvas) return
+        if (!canvas) {
+          console.log('Canvas not ready yet')
+          URL.revokeObjectURL(url)
+          return
+        }
 
         canvas.width = img.width
         canvas.height = img.height
         const ctx = canvas.getContext('2d')
-        if (!ctx) return
+        if (!ctx) {
+          URL.revokeObjectURL(url)
+          return
+        }
 
         // Appliquer les filtres CSS
         let filters = ''
@@ -557,6 +605,7 @@ export default function LabsMetersPage() {
         if (testConfig.contrast !== 0) filters += `contrast(${100 + testConfig.contrast}%) `
         if (testConfig.brightness !== 0) filters += `brightness(${100 + testConfig.brightness}%) `
         
+        console.log('Applying filters:', filters || 'none')
         ctx.filter = filters || 'none'
         ctx.drawImage(img, 0, 0)
 
@@ -570,7 +619,9 @@ export default function LabsMetersPage() {
       img.src = url
     }
     
-    generateProcessed()
+    // Petit délai pour s'assurer que le canvas est monté
+    const timeoutId = setTimeout(generateProcessed, 50)
+    return () => clearTimeout(timeoutId)
   }, [testConfig.grayscale, testConfig.contrast, testConfig.brightness, testConfig.sharpness, testPhotoFile])
 
   // Single test
@@ -1543,6 +1594,80 @@ export default function LabsMetersPage() {
                       )}
                     </Card>
                   </div>
+
+                  {/* Liste des tests existants pour ce modèle */}
+                  <Card className="p-4">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="font-semibold flex items-center gap-2">
+                        <History className="h-4 w-4" />
+                        Historique des tests ({experiments.length})
+                      </h3>
+                      {experiments.length > 0 && (
+                        <Badge variant="outline">
+                          {experiments.filter(e => e.status === 'validated').length} validés / 
+                          {experiments.filter(e => e.status === 'rejected').length} rejetés
+                        </Badge>
+                      )}
+                    </div>
+                    
+                    {experiments.length === 0 ? (
+                      <div className="text-center py-8 text-gray-400">
+                        <TestTube className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                        <p>Aucun test pour ce modèle</p>
+                        <p className="text-sm mt-1">Uploadez une photo ci-dessus pour commencer</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2 max-h-64 overflow-y-auto">
+                        {experiments.map(exp => (
+                          <div 
+                            key={exp.id} 
+                            className={`flex items-center gap-3 p-3 rounded-lg border ${
+                              exp.status === 'validated' ? 'bg-green-50 border-green-200' :
+                              exp.status === 'corrected' ? 'bg-yellow-50 border-yellow-200' :
+                              exp.status === 'rejected' ? 'bg-red-50 border-red-200' :
+                              'bg-gray-50 border-gray-200'
+                            }`}
+                          >
+                            {/* Thumbnail */}
+                            {exp.photo_url ? (
+                              <img src={exp.photo_url} className="w-12 h-12 object-cover rounded" />
+                            ) : (
+                              <div className="w-12 h-12 bg-gray-200 rounded flex items-center justify-center">
+                                <ImageIcon className="h-5 w-5 text-gray-400" />
+                              </div>
+                            )}
+                            
+                            {/* Données extraites */}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                {exp.status === 'validated' && <CheckCircle className="h-4 w-4 text-green-600" />}
+                                {exp.status === 'corrected' && <Pencil className="h-4 w-4 text-yellow-600" />}
+                                {exp.status === 'rejected' && <XCircle className="h-4 w-4 text-red-600" />}
+                                <span className="font-mono text-sm">
+                                  {exp.extracted_data?.serial?.value || '-'} / {exp.extracted_data?.reading?.value || '-'}
+                                </span>
+                              </div>
+                              {exp.corrected_data && (
+                                <p className="text-xs text-yellow-600 mt-1">
+                                  Corrigé: {exp.corrected_data.serial || '-'} / {exp.corrected_data.reading || '-'}
+                                </p>
+                              )}
+                            </div>
+                            
+                            {/* Confiance + Date */}
+                            <div className="text-right text-sm">
+                              <Badge variant="outline" className="mb-1">
+                                {(exp.confidence * 100).toFixed(0)}%
+                              </Badge>
+                              <p className="text-xs text-gray-400">
+                                {new Date(exp.created_at).toLocaleDateString('fr-FR')}
+                              </p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </Card>
                 </div>
               )}
             </div>
