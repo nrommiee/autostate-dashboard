@@ -338,6 +338,12 @@ export default function LabsMetersPage() {
     if (!reviewSession) return
     const photo = reviewSession.photos[reviewSession.currentIndex]
     
+    // Ne peut valider que si un modèle est associé
+    if (!photo.matchedModelId) {
+      alert('Veuillez d\'abord assigner cette photo à un modèle ou créer un nouveau modèle.')
+      return
+    }
+    
     try {
       // Convert file to base64 for storage
       const base64 = await fileToBase64(photo.file)
@@ -381,6 +387,24 @@ export default function LabsMetersPage() {
     if (!reviewSession) return
     const photo = reviewSession.photos[reviewSession.currentIndex]
     
+    // Pour les non reconnus, on ne sauvegarde pas - on ignore juste
+    if (!photo.matchedModelId) {
+      // Supprimer la photo de la liste
+      const updatedPhotos = reviewSession.photos.filter(p => p.id !== photo.id)
+      
+      if (updatedPhotos.length === 0) {
+        setReviewSession(null)
+      } else {
+        setReviewSession({
+          ...reviewSession,
+          photos: updatedPhotos,
+          currentIndex: Math.min(reviewSession.currentIndex, updatedPhotos.length - 1)
+        })
+      }
+      return
+    }
+    
+    // Pour les reconnus, on sauvegarde comme rejeté
     try {
       const base64 = await fileToBase64(photo.file)
       
@@ -646,24 +670,72 @@ export default function LabsMetersPage() {
 
             {/* Actions */}
             <div className="space-y-3 pt-4 border-t">
-              <div className="grid grid-cols-3 gap-2">
-                <Button variant="outline" className="text-red-600" onClick={reviewReject}>
-                  <X className="h-4 w-4 mr-1" />Rejeter
-                </Button>
-                <Button variant="outline" onClick={reviewOpenCorrection}>
-                  <Pencil className="h-4 w-4 mr-1" />Corriger
-                </Button>
-                <Button className="bg-green-600 hover:bg-green-700" onClick={reviewValidate}>
-                  <Check className="h-4 w-4 mr-1" />Valider
-                </Button>
-              </div>
-              
-              <div className="flex items-center justify-center gap-4 text-xs text-gray-500">
-                <span><Keyboard className="h-3 w-3 inline mr-1" />←→ Navigation</span>
-                <span>V Valider</span>
-                <span>C Corriger</span>
-                <span>R Rejeter</span>
-              </div>
+              {currentPhoto.matchedModelId ? (
+                /* Photo reconnue - actions standard */
+                <>
+                  <div className="grid grid-cols-3 gap-2">
+                    <Button variant="outline" className="text-red-600" onClick={reviewReject}>
+                      <X className="h-4 w-4 mr-1" />Rejeter
+                    </Button>
+                    <Button variant="outline" onClick={reviewOpenCorrection}>
+                      <Pencil className="h-4 w-4 mr-1" />Corriger
+                    </Button>
+                    <Button className="bg-green-600 hover:bg-green-700" onClick={reviewValidate}>
+                      <Check className="h-4 w-4 mr-1" />Valider
+                    </Button>
+                  </div>
+                  <div className="flex items-center justify-center gap-4 text-xs text-gray-500">
+                    <span><Keyboard className="h-3 w-3 inline mr-1" />←→ Navigation</span>
+                    <span>V Valider</span>
+                    <span>C Corriger</span>
+                    <span>R Rejeter</span>
+                  </div>
+                </>
+              ) : (
+                /* Photo non reconnue - proposer création ou assignation */
+                <>
+                  <div className="p-3 bg-orange-50 rounded-lg text-sm text-orange-700 mb-3">
+                    <AlertTriangle className="h-4 w-4 inline mr-2" />
+                    Ce compteur n'a pas été reconnu. Vous pouvez créer un nouveau modèle ou l'assigner à un modèle existant.
+                  </div>
+                  <div className="space-y-2">
+                    <Button 
+                      className="w-full bg-purple-600 hover:bg-purple-700"
+                      onClick={() => {
+                        // Stocker la photo pour le wizard
+                        sessionStorage.setItem('newModelPhoto', currentPhoto.url)
+                        sessionStorage.setItem('newModelExtractedData', JSON.stringify(currentPhoto.extractedData))
+                        router.push('/dashboard/meters/create')
+                      }}
+                    >
+                      <Plus className="h-4 w-4 mr-2" />Créer un nouveau modèle
+                    </Button>
+                    <Select onValueChange={(modelId) => {
+                      // Assigner à un modèle existant
+                      const selectedModel = models.find(m => m.id === modelId)
+                      if (selectedModel) {
+                        currentPhoto.matchedModelId = modelId
+                        currentPhoto.matchedModelName = selectedModel.name
+                        setImportedPhotos([...importedPhotos])
+                      }
+                    }}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Ou assigner à un modèle existant..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {models.filter(m => m.status === 'active').map(m => (
+                          <SelectItem key={m.id} value={m.id}>
+                            {METER_TYPE_ICONS[m.meter_type]} {m.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button variant="outline" className="w-full text-red-600" onClick={reviewReject}>
+                      <X className="h-4 w-4 mr-2" />Ignorer cette photo
+                    </Button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -771,8 +843,8 @@ export default function LabsMetersPage() {
               <p className="text-2xl font-bold text-green-600">{stats.active}</p>
             </Card>
             <Card className="p-4">
-              <p className="text-xs text-gray-500 mb-1">Taux de succès</p>
-              <p className="text-2xl font-bold text-purple-600">{stats.successRate.toFixed(0)}%</p>
+              <p className="text-xs text-gray-500 mb-1">Archivés</p>
+              <p className="text-2xl font-bold text-gray-400">{stats.archived}</p>
             </Card>
           </div>
 
@@ -1002,13 +1074,19 @@ export default function LabsMetersPage() {
                   </div>
 
                   <DialogFooter>
-                    <Button variant="outline" onClick={() => {
-                      setSelectedModelId(null)
-                      setTestModelId(selectedModel.id)
-                      setActiveTab('tests')
-                    }}>
-                      <TestTube className="h-4 w-4 mr-2" />Tester
-                    </Button>
+                    {selectedModel.status === 'active' ? (
+                      <Button variant="outline" onClick={() => {
+                        setSelectedModelId(null)
+                        setTestModelId(selectedModel.id)
+                        setActiveTab('tests')
+                      }}>
+                        <TestTube className="h-4 w-4 mr-2" />Tester dans Labs
+                      </Button>
+                    ) : (
+                      <p className="text-sm text-gray-500 mr-auto">
+                        Activez ce modèle pour le tester
+                      </p>
+                    )}
                     <Button onClick={() => router.push(`/dashboard/meters/${selectedModel.id}`)}>
                       <Pencil className="h-4 w-4 mr-2" />Modifier
                     </Button>
@@ -1060,19 +1138,24 @@ export default function LabsMetersPage() {
           {/* Single test mode */}
           {testMode === 'single' && (
             <div className="space-y-4">
-              {/* Model selector */}
+              {/* Model selector - ONLY ACTIVE MODELS */}
               <div>
-                <Label>Modèle de compteur</Label>
+                <Label>Modèle de compteur (actifs uniquement)</Label>
                 <Select value={testModelId} onValueChange={setTestModelId}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Sélectionnez un modèle..." />
+                    <SelectValue placeholder="Sélectionnez un modèle actif..." />
                   </SelectTrigger>
                   <SelectContent>
-                    {models.filter(m => m.status !== 'archived').map(m => (
+                    {models.filter(m => m.status === 'active').map(m => (
                       <SelectItem key={m.id} value={m.id}>
                         {METER_TYPE_ICONS[m.meter_type]} {m.name}
                       </SelectItem>
                     ))}
+                    {models.filter(m => m.status === 'active').length === 0 && (
+                      <div className="p-4 text-center text-gray-500 text-sm">
+                        Aucun modèle actif. Activez un modèle pour le tester.
+                      </div>
+                    )}
                   </SelectContent>
                 </Select>
               </div>
