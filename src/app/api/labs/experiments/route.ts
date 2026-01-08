@@ -6,6 +6,81 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
+// Trouver ou créer une version pour ce modèle avec cette config
+async function findOrCreateVersion(
+  modelId: string, 
+  imageConfig: any,
+  promptText?: string
+): Promise<string | null> {
+  // Normaliser la config
+  const normalizedConfig = {
+    grayscale: imageConfig?.grayscale || false,
+    contrast: imageConfig?.contrast || 0,
+    brightness: imageConfig?.brightness || 0
+  }
+
+  // Chercher une version existante avec cette config exacte
+  const { data: existingVersions } = await supabase
+    .from('model_versions')
+    .select('id, image_config, prompt_text')
+    .eq('model_id', modelId)
+    .order('version_number', { ascending: false })
+
+  if (existingVersions && existingVersions.length > 0) {
+    // Chercher une version avec la même config image
+    const matchingVersion = existingVersions.find(v => {
+      const vc = v.image_config || {}
+      return vc.grayscale === normalizedConfig.grayscale &&
+             vc.contrast === normalizedConfig.contrast &&
+             vc.brightness === normalizedConfig.brightness
+    })
+
+    if (matchingVersion) {
+      return matchingVersion.id
+    }
+  }
+
+  // Aucune version correspondante, en créer une nouvelle
+  // D'abord récupérer le prompt du modèle si pas fourni
+  let finalPrompt = promptText
+  if (!finalPrompt) {
+    const { data: model } = await supabase
+      .from('meter_models')
+      .select('ai_description, name, meter_type')
+      .eq('id', modelId)
+      .single()
+
+    finalPrompt = model?.ai_description || `MODÈLE: ${model?.name || 'Inconnu'}\nTYPE: ${model?.meter_type || 'Inconnu'}`
+  }
+
+  // Trouver le prochain numéro de version
+  const nextVersion = existingVersions && existingVersions.length > 0
+    ? Math.max(...existingVersions.map((v: any) => v.version_number || 0)) + 1
+    : 1
+
+  // Créer la nouvelle version
+  const { data: newVersion, error } = await supabase
+    .from('model_versions')
+    .insert({
+      model_id: modelId,
+      version_number: nextVersion,
+      prompt_text: finalPrompt,
+      image_config: normalizedConfig,
+      is_active: nextVersion === 1, // Activer automatiquement si c'est la première
+      notes: `Auto-créée lors d'un test avec config: ${normalizedConfig.grayscale ? 'N&B' : 'Couleur'}${normalizedConfig.contrast !== 0 ? ` C:${normalizedConfig.contrast}%` : ''}${normalizedConfig.brightness !== 0 ? ` L:${normalizedConfig.brightness}%` : ''}`
+    })
+    .select('id')
+    .single()
+
+  if (error) {
+    console.error('Error creating version:', error)
+    return null
+  }
+
+  console.log(`Created new version v${nextVersion} for model ${modelId}`)
+  return newVersion.id
+}
+
 // Save experiment result to database
 export async function POST(request: NextRequest) {
   try {
@@ -30,6 +105,9 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       )
     }
+
+    // Trouver ou créer la version correspondante
+    const versionId = await findOrCreateVersion(meter_model_id, image_config_used)
 
     let photo_url = null
     let photo_processed_url = null
@@ -85,6 +163,7 @@ export async function POST(request: NextRequest) {
       .from('lab_experiments')
       .insert({
         meter_model_id,
+        version_id: versionId, // Lier à la version
         photo_url,
         photo_processed_url,
         extracted_data: extracted_data || {},
@@ -114,6 +193,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       experiment_id: experiment.id,
+      version_id: versionId,
       photo_url,
       expires_at: expires_at.toISOString()
     })
