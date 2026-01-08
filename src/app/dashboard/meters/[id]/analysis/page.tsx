@@ -142,7 +142,7 @@ export default function AnalysisPage() {
 
       // Load tests
       const { data: testsData } = await supabase
-        .from('labs_experiments')
+        .from('lab_experiments')
         .select('*')
         .eq('meter_model_id', modelId)
         .order('created_at', { ascending: false })
