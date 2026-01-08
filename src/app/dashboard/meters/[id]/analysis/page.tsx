@@ -294,7 +294,18 @@ export default function MeterModelAnalysisPage() {
   }
 
   function getTestsByVersion(configLabel: string): TestRecord[] {
-    return tests.filter(t => (t.image_config_label || 'Sans traitement') === configLabel)
+    return tests.filter(t => {
+      const config = t.image_config_used
+      let testLabel = 'Sans traitement'
+      if (config) {
+        const parts = []
+        if (config.grayscale) parts.push('N&B')
+        else parts.push('Couleur')
+        if (config.contrast) parts.push(`C:${config.contrast > 0 ? '+' : ''}${config.contrast}%`)
+        testLabel = parts.join(' ')
+      }
+      return testLabel === configLabel
+    })
   }
 
   // ============================================
@@ -361,21 +372,24 @@ export default function MeterModelAnalysisPage() {
             <div>
               <h2 className="font-semibold flex items-center gap-2 text-lg">
                 <Star className="h-5 w-5 text-yellow-500" />
-                Version active : {activeTest ? `v${activeTest.version_number || '?'}` : 'Aucune'}
+                Version active : {activeTest ? 'Configurée' : 'Aucune'}
               </h2>
               <div className="grid grid-cols-2 gap-4 mt-3">
                 <div className="p-3 bg-white rounded-lg border">
                   <p className="text-xs text-gray-500 mb-1">Traitement image</p>
                   <p className="font-medium">
-                    {activeTest?.image_config_label || 'Non défini'}
+                    {activeTest?.image_config_used 
+                      ? (activeTest.image_config_used.grayscale ? 'N&B' : 'Couleur') +
+                        (activeTest.image_config_used.contrast ? ` C:${activeTest.image_config_used.contrast}%` : '')
+                      : 'Non défini'}
                   </p>
                 </div>
                 <div className="p-3 bg-white rounded-lg border">
                   <p className="text-xs text-gray-500 mb-1">Performance</p>
                   <p className="font-medium">
                     {tests.length} tests • 
-                    <span className={tests.filter(t => t.success).length / tests.length >= 0.8 ? 'text-green-600' : 'text-orange-600'}>
-                      {' '}{Math.round((tests.filter(t => t.success).length / Math.max(tests.length, 1)) * 100)}% réussite
+                    <span className={tests.filter(t => t.status === 'validated' || t.status === 'corrected').length / tests.length >= 0.8 ? 'text-green-600' : 'text-orange-600'}>
+                      {' '}{Math.round((tests.filter(t => t.status === 'validated' || t.status === 'corrected').length / Math.max(tests.length, 1)) * 100)}% réussite
                     </span>
                   </p>
                 </div>
@@ -422,14 +436,36 @@ export default function MeterModelAnalysisPage() {
                           Score : {suggestion.recommendationScore}/100
                         </p>
                       </div>
-                      {suggestion.recommendedVersion !== activeTest?.image_config_label && (
+                      {(() => {
+                        // Get active test config label
+                        let activeConfigLabel = ''
+                        if (activeTest?.image_config_used) {
+                          const config = activeTest.image_config_used
+                          const parts = []
+                          if (config.grayscale) parts.push('N&B')
+                          else parts.push('Couleur')
+                          if (config.contrast) parts.push(`C:${config.contrast > 0 ? '+' : ''}${config.contrast}%`)
+                          activeConfigLabel = parts.join(' ')
+                        }
+                        return suggestion.recommendedVersion !== activeConfigLabel
+                      })() && (
                         <Button 
                           size="sm"
                           className="bg-green-600 hover:bg-green-700"
                           onClick={() => {
-                            const testToActivate = tests.find(t => 
-                              t.image_config_label === suggestion.recommendedVersion && t.success
-                            )
+                            const testToActivate = tests.find(t => {
+                              const config = t.image_config_used
+                              let testLabel = 'Sans traitement'
+                              if (config) {
+                                const parts = []
+                                if (config.grayscale) parts.push('N&B')
+                                else parts.push('Couleur')
+                                if (config.contrast) parts.push(`C:${config.contrast > 0 ? '+' : ''}${config.contrast}%`)
+                                testLabel = parts.join(' ')
+                              }
+                              return testLabel === suggestion.recommendedVersion && 
+                                (t.status === 'validated' || t.status === 'corrected')
+                            })
                             if (testToActivate) activateTest(testToActivate)
                           }}
                         >
@@ -562,12 +598,12 @@ export default function MeterModelAnalysisPage() {
                       fill="none"
                       stroke="#10B981"
                       strokeWidth="3"
-                      strokeDasharray={`${(tests.filter(t => t.success).length / tests.length) * 100}, 100`}
+                      strokeDasharray={`${(tests.filter(t => t.status === 'validated' || t.status === 'corrected').length / tests.length) * 100}, 100`}
                     />
                   </svg>
                   <div className="absolute inset-0 flex flex-col items-center justify-center">
                     <span className="text-2xl font-bold text-green-600">
-                      {tests.filter(t => t.success).length}
+                      {tests.filter(t => t.status === 'validated' || t.status === 'corrected').length}
                     </span>
                     <span className="text-xs text-gray-500">Validés</span>
                   </div>
