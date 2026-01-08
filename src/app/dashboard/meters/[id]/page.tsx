@@ -38,7 +38,8 @@ import {
 } from '@/components/ui/alert-dialog'
 import { 
   ArrowLeft, Save, Loader2, Check, Trash2, CheckCircle, XCircle, AlertCircle,
-  Target, RotateCcw, Eye, EyeOff, Upload, Edit3, X, Move, ZoomIn, Camera, Plus
+  Target, RotateCcw, Eye, EyeOff, Upload, Edit3, X, Move, ZoomIn, Camera, Plus,
+  Square, Circle, RectangleHorizontal
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 
@@ -111,6 +112,12 @@ const ZONE_TYPES = [
   { value: 'ean', label: 'Code EAN', color: '#8B5CF6', isParent: false },
 ]
 
+const ZONE_SHAPES = [
+  { value: 'rectangle', label: 'Rectangle', icon: RectangleHorizontal },
+  { value: 'square', label: 'Carré', icon: Square },
+  { value: 'circle', label: 'Rond', icon: Circle },
+]
+
 export default function MeterModelDetailPage() {
   const params = useParams()
   const router = useRouter()
@@ -144,6 +151,7 @@ export default function MeterModelDetailPage() {
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null)
   const [calibrationPhotoFile, setCalibrationPhotoFile] = useState<File | null>(null)
   const [calibrationPhotoUrl, setCalibrationPhotoUrl] = useState<string | null>(null)
+  const [selectedShape, setSelectedShape] = useState<'rectangle' | 'square' | 'circle'>('rectangle')
   
   // Lightbox
   const [showImageLightbox, setShowImageLightbox] = useState(false)
@@ -552,6 +560,41 @@ export default function MeterModelDetailPage() {
                   </Button>
                 )}
               </div>
+
+              {/* Shape selector when repositioning */}
+              {repositioningZoneId && (
+                <div className="mt-3 p-3 bg-teal-50 rounded-lg border border-teal-200">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-medium text-teal-700">Forme :</span>
+                      {ZONE_SHAPES.map(shape => (
+                        <Button
+                          key={shape.value}
+                          variant={selectedShape === shape.value ? 'default' : 'outline'}
+                          size="sm"
+                          className={`h-8 gap-1 ${selectedShape === shape.value ? 'bg-teal-600' : ''}`}
+                          onClick={() => setSelectedShape(shape.value as any)}
+                        >
+                          <shape.icon className="h-3 w-3" />
+                          <span className="text-xs">{shape.label}</span>
+                        </Button>
+                      ))}
+                    </div>
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      className="h-7 text-xs text-gray-500"
+                      onClick={() => {
+                        setRepositioningZoneId(null)
+                        setDragStart(null)
+                      }}
+                    >
+                      Annuler
+                    </Button>
+                  </div>
+                  <p className="text-xs text-teal-600">Cliquez et glissez sur la photo pour dessiner la zone</p>
+                </div>
+              )}
             </div>
           ) : (
             <label className="flex flex-col items-center justify-center h-48 border-2 border-dashed rounded-lg cursor-pointer hover:border-teal-500 hover:bg-teal-50 transition-colors">
