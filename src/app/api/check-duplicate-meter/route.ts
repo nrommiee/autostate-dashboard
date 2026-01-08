@@ -74,7 +74,7 @@ export async function POST(request: NextRequest) {
       m.reference_photos && 
       Array.isArray(m.reference_photos) && 
       m.reference_photos.length > 0 &&
-      m.reference_photos[0] // Has at least one non-null photo
+      m.reference_photos[0]
     )
 
     console.log('Models with photos:', modelsWithPhotos.length)
@@ -89,13 +89,16 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // 4. Prepare images for comparison (limit to 5 to save tokens)
-    const modelsToCompare = modelsWithPhotos.slice(0, 5)
+    // 4. Prepare images - LIMIT TO 3 models to stay under token/size limits
+    const modelsToCompare = modelsWithPhotos.slice(0, 3)
     const modelImages: { model: typeof modelsToCompare[0], base64: string }[] = []
+    
+    // Max size for each image: ~1MB in base64 (to stay well under 5MB total)
+    const MAX_BASE64_LENGTH = 1_000_000
     
     for (const model of modelsToCompare) {
       const photoUrl = model.reference_photos[0]
-      console.log(`Processing model ${model.name}, photo URL type:`, typeof photoUrl, photoUrl?.substring(0, 50))
+      console.log(`Processing model ${model.name}`)
       
       if (!photoUrl) continue
       
@@ -103,10 +106,8 @@ export async function POST(request: NextRequest) {
         let base64: string | null = null
         
         if (photoUrl.startsWith('data:')) {
-          // Already base64
           base64 = photoUrl.split(',')[1]
         } else if (photoUrl.startsWith('http')) {
-          // Fetch from URL
           const imgResponse = await fetch(photoUrl)
           if (imgResponse.ok) {
             const arrayBuffer = await imgResponse.arrayBuffer()
@@ -115,8 +116,14 @@ export async function POST(request: NextRequest) {
         }
         
         if (base64) {
+          // Skip images that are too large
+          if (base64.length > MAX_BASE64_LENGTH) {
+            console.log(`Skipping ${model.name} - image too large: ${base64.length} bytes`)
+            continue
+          }
+          
           modelImages.push({ model, base64 })
-          console.log(`Added model ${model.name} for comparison`)
+          console.log(`Added model ${model.name} (${base64.length} bytes)`)
         }
       } catch (imgErr) {
         console.error(`Error loading image for ${model.name}:`, imgErr)
@@ -134,6 +141,19 @@ export async function POST(request: NextRequest) {
       })
     }
 
+    // Also check if input photo is too large
+    let inputPhoto = photo_base64
+    if (inputPhoto.length > MAX_BASE64_LENGTH) {
+      console.log(`Input photo too large: ${inputPhoto.length}, truncating not possible - skip comparison`)
+      // Can't compare, just return not duplicate
+      return NextResponse.json({ 
+        isDuplicate: false, 
+        matchedModel: null,
+        confidence: 0,
+        reason: 'Photo trop grande pour comparaison'
+      })
+    }
+
     // 5. Call Claude Vision
     const anthropic = new Anthropic({ apiKey: anthropicKey })
 
@@ -146,7 +166,7 @@ NOUVELLE PHOTO - Nom détecté: "${detected_name || 'N/A'}", Fabricant: "${detec
       },
       {
         type: 'image',
-        source: { type: 'base64', media_type: 'image/jpeg', data: photo_base64 }
+        source: { type: 'base64', media_type: 'image/jpeg', data: inputPhoto }
       }
     ]
 
@@ -175,7 +195,7 @@ Si c'est le même modèle exact (même marque, même design), isDuplicate=true.
 JSON:`
     })
 
-    console.log('Calling Claude...')
+    console.log('Calling Claude with', modelImages.length, 'comparison images...')
     
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
@@ -236,8 +256,7 @@ JSON:`
 
   } catch (error: any) {
     console.error('=== CHECK DUPLICATE ERROR ===')
-    console.error('Error:', error)
-    console.error('Stack:', error.stack)
+    console.error('Error:', error.message)
     
     return NextResponse.json({ 
       error: error.message || 'Unknown error',
