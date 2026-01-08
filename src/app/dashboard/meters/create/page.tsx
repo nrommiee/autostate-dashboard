@@ -159,6 +159,7 @@ export default function CreateMeterModelPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
+  const [showSuccessModal, setShowSuccessModal] = useState(false)
   const [justAnalyzed, setJustAnalyzed] = useState(false)
 
   // Store pending analysis
@@ -569,12 +570,33 @@ RÈGLES DE LECTURE:
       if (!response.ok) throw new Error(result.error || 'Erreur lors de la création')
 
       setSaved(true)
-      setTimeout(() => router.push('/dashboard/meters'), 1500)
+      setShowSuccessModal(true)
     } catch (err: any) { 
       setError(err.message || 'Erreur lors de la sauvegarde') 
     } finally { 
       setSaving(false) 
     }
+  }
+
+  // Reset form for new model
+  const resetForm = () => {
+    if (photoUrl?.startsWith('blob:')) URL.revokeObjectURL(photoUrl)
+    setPhotoFile(null)
+    setPhotoUrl(null)
+    setName('')
+    setManufacturer('')
+    setMeterType('')
+    setUnit('')
+    setDisplayType('')
+    setKeywords([])
+    setZones([])
+    setNeedsAnalysis(false)
+    setCurrentStep(1)
+    setSaved(false)
+    setShowSuccessModal(false)
+    setIntegerDigits(5)
+    setDecimalDigits(0)
+    setDecimalIndicator('none')
   }
 
   // Navigation
@@ -694,33 +716,25 @@ RÈGLES DE LECTURE:
             <span className="text-yellow-700 text-sm">{validationError}</span>
           </Card>
         )}
-        {saved && (
-          <Card className="p-4 mb-4 bg-green-50 border-green-200 text-center">
-            <CheckCircle className="h-8 w-8 text-green-600 mx-auto mb-1" />
-            <p className="text-green-700 font-medium">Modèle créé avec succès !</p>
-          </Card>
-        )}
 
-        {!saved && (
-          <>
-            {/* STEP 1 - PHOTO & INFORMATIONS */}
-            {currentStep === 1 && (
-              <div className="grid md:grid-cols-2 gap-6">
-                {/* Photo */}
-                <Card className="p-4">
-                  <h3 className="font-semibold text-sm mb-2">Photo de référence</h3>
-                  <p className="text-gray-500 text-xs mb-3">L'IA analyse la photo pour pré-remplir les informations.</p>
-                  
-                  {photoUrl ? (
-                    <div className="space-y-3">
-                      <div className="relative flex justify-center">
-                        <div className="relative w-[85%]">
-                          <img 
-                            src={photoUrl} 
-                            alt="Compteur" 
-                            className="w-full rounded-lg border cursor-pointer hover:opacity-90 transition-opacity" 
-                            onClick={() => openLightbox(photoUrl)}
-                          />
+        {/* STEP 1 - PHOTO & INFORMATIONS */}
+        {currentStep === 1 && (
+          <div className="grid md:grid-cols-2 gap-6">
+            {/* Photo */}
+            <Card className="p-4">
+              <h3 className="font-semibold text-sm mb-2">Photo de référence</h3>
+              <p className="text-gray-500 text-xs mb-3">L'IA analyse la photo pour pré-remplir les informations.</p>
+              
+              {photoUrl ? (
+                <div className="space-y-3">
+                  <div className="relative flex justify-center">
+                    <div className="relative w-[85%]">
+                      <img 
+                        src={photoUrl} 
+                        alt="Compteur" 
+                        className="w-full rounded-lg border cursor-pointer hover:opacity-90 transition-opacity" 
+                        onClick={() => openLightbox(photoUrl)}
+                      />
                           <button onClick={removePhoto} className="absolute top-2 right-2 p-1.5 bg-red-500 text-white rounded-full hover:bg-red-600">
                             <X className="h-4 w-4" />
                           </button>
@@ -1087,8 +1101,6 @@ RÈGLES DE LECTURE:
                 </Button>
               )}
             </div>
-          </>
-        )}
 
         {/* Lightbox */}
         <Dialog open={showImageLightbox} onOpenChange={setShowImageLightbox}>
@@ -1149,6 +1161,29 @@ RÈGLES DE LECTURE:
               </Button>
               <Button variant="outline" onClick={handleCancelAfterDuplicate}>Annuler</Button>
               <Button onClick={handleContinueAfterDuplicate} className="bg-orange-600 hover:bg-orange-700">Continuer</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Success Modal */}
+        <Dialog open={showSuccessModal} onOpenChange={setShowSuccessModal}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center justify-center gap-2 text-green-600">
+                <CheckCircle className="h-6 w-6" />
+                Modèle créé avec succès !
+              </DialogTitle>
+            </DialogHeader>
+            <div className="py-4 text-center">
+              <p className="text-gray-600">Le modèle <strong>{name}</strong> a été créé.</p>
+            </div>
+            <DialogFooter className="gap-2 sm:gap-2">
+              <Button variant="outline" onClick={() => router.push('/dashboard/meters')} className="flex-1">
+                Retour à la liste
+              </Button>
+              <Button onClick={resetForm} className="flex-1 bg-teal-600 hover:bg-teal-700">
+                Créer un autre modèle
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
