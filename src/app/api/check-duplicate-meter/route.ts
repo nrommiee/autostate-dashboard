@@ -2,11 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createClient } from '@supabase/supabase-js'
 
-const anthropic = new Anthropic()
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY!
+})
 
 // Helper to fetch image and convert to base64
 async function urlToBase64(url: string): Promise<string | null> {
@@ -30,18 +28,34 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Photo requise' }, { status: 400 })
     }
 
+    // Create Supabase client inside the function
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY
+    
+    if (!supabaseUrl || !supabaseKey) {
+      console.error('Missing Supabase env vars:', { url: !!supabaseUrl, key: !!supabaseKey })
+      return NextResponse.json({ error: 'Configuration error' }, { status: 500 })
+    }
+    
+    const supabase = createClient(supabaseUrl, supabaseKey)
+
     // Récupérer tous les modèles existants avec leurs photos
     const { data: models, error } = await supabase
       .from('meter_models')
       .select('id, name, manufacturer, meter_type, reference_photos')
       .not('reference_photos', 'is', null)
 
-    if (error) throw error
+    if (error) {
+      console.error('Supabase error:', error)
+      throw error
+    }
 
     // Filtrer les modèles qui ont au moins une photo
     const modelsWithPhotos = (models || []).filter(m => 
       m.reference_photos && m.reference_photos.length > 0
     )
+
+    console.log(`Found ${modelsWithPhotos.length} models with photos`)
 
     if (modelsWithPhotos.length === 0) {
       return NextResponse.json({ 
@@ -51,8 +65,8 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // Limiter à 5 modèles pour éviter trop de tokens
-    const modelsToCompare = modelsWithPhotos.slice(0, 5)
+    // Limiter à 10 modèles pour éviter trop de tokens (mais plus que 5)
+    const modelsToCompare = modelsWithPhotos.slice(0, 10)
     
     // Préparer les images existantes en base64
     const modelImages: { model: typeof modelsToCompare[0], base64: string }[] = []
@@ -60,12 +74,19 @@ export async function POST(request: NextRequest) {
     for (const model of modelsToCompare) {
       const photoUrl = model.reference_photos[0]
       if (photoUrl) {
-        const base64 = await urlToBase64(photoUrl)
-        if (base64) {
-          modelImages.push({ model, base64 })
+        // Si c'est déjà en base64, l'utiliser directement
+        if (photoUrl.startsWith('data:')) {
+          modelImages.push({ model, base64: photoUrl.split(',')[1] })
+        } else {
+          const base64 = await urlToBase64(photoUrl)
+          if (base64) {
+            modelImages.push({ model, base64 })
+          }
         }
       }
     }
+
+    console.log(`Loaded ${modelImages.length} model images for comparison`)
 
     if (modelImages.length === 0) {
       return NextResponse.json({ 
@@ -133,9 +154,9 @@ Réponds UNIQUEMENT en JSON valide:
 }
 
 RÈGLES:
-- isDuplicate = true UNIQUEMENT si c'est le MÊME modèle exact (même marque, même référence)
-- Pas juste un compteur similaire ou de la même famille
-- Sois strict: isDuplicate=true seulement si confiance > 80%
+- isDuplicate = true si c'est le MÊME modèle exact ou très similaire (même marque, même design)
+- Deux photos du même compteur physique = DOUBLON
+- isDuplicate=true si confiance > 70%
 
 JSON:`
     })
@@ -150,6 +171,8 @@ JSON:`
     if (!textContent || textContent.type !== 'text') {
       return NextResponse.json({ isDuplicate: false, matchedModel: null, confidence: 0 })
     }
+
+    console.log('Claude response:', textContent.text)
 
     // Parser la réponse JSON
     let result
@@ -168,6 +191,7 @@ JSON:`
     // Si doublon détecté, retourner les infos du modèle correspondant
     if (result.isDuplicate && result.matchedModelIndex && result.matchedModelIndex >= 1 && result.matchedModelIndex <= modelImages.length) {
       const matchedModel = modelImages[result.matchedModelIndex - 1].model
+      console.log(`Duplicate found: ${matchedModel.name} with ${result.confidence}% confidence`)
       return NextResponse.json({
         isDuplicate: true,
         matchedModel: {
@@ -192,7 +216,7 @@ JSON:`
   } catch (error) {
     console.error('Check duplicate error:', error)
     return NextResponse.json(
-      { error: 'Erreur lors de la vérification' },
+      { error: 'Erreur lors de la vérification', details: String(error) },
       { status: 500 }
     )
   }
