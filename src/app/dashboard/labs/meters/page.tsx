@@ -365,19 +365,69 @@ export default function LabsMetersPage() {
         canvas.width = width; canvas.height = height
         const ctx = canvas.getContext('2d')
         if (!ctx) { URL.revokeObjectURL(objectUrl); reject(new Error('No context')); return }
+        
+        // Build CSS filters with proper defaults
         const filters: string[] = []
-        if (testConfig.grayscale) filters.push('grayscale(100%)')
-        if (testConfig.contrast !== 0) filters.push(`contrast(${100 + testConfig.contrast}%)`)
-        if (testConfig.brightness !== 0) filters.push(`brightness(${100 + testConfig.brightness}%)`)
-        if (!testConfig.grayscale && testConfig.saturation !== 100) filters.push(`saturate(${testConfig.saturation}%)`)
+        const grayscale = testConfig.grayscale ?? false
+        const contrast = testConfig.contrast ?? 30
+        const brightness = testConfig.brightness ?? 0
+        const saturation = testConfig.saturation ?? 100
+        
+        if (grayscale) filters.push('grayscale(100%)')
+        if (contrast !== 0) filters.push(`contrast(${100 + contrast}%)`)
+        if (brightness !== 0) filters.push(`brightness(${100 + brightness}%)`)
+        if (!grayscale && saturation !== 100) filters.push(`saturate(${saturation}%)`)
+        
         ctx.filter = filters.length > 0 ? filters.join(' ') : 'none'
         ctx.drawImage(img, 0, 0, width, height)
+        
+        // Apply sharpness using unsharp mask technique
+        const sharpness = testConfig.sharpness ?? 20
+        if (sharpness > 0) {
+          const imageData = ctx.getImageData(0, 0, width, height)
+          const sharpened = applySharpen(imageData, sharpness / 100)
+          ctx.putImageData(sharpened, 0, 0)
+        }
+        
         URL.revokeObjectURL(objectUrl)
         resolve(canvas.toDataURL('image/jpeg', 0.85).split(',')[1])
       }
       img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error('Failed')) }
       img.src = objectUrl
     })
+  }
+
+  // Simple sharpening filter using convolution
+  function applySharpen(imageData: ImageData, amount: number): ImageData {
+    const data = imageData.data
+    const width = imageData.width
+    const height = imageData.height
+    const output = new Uint8ClampedArray(data)
+    
+    // Sharpening kernel
+    const factor = amount * 2
+    const kernel = [
+      0, -factor, 0,
+      -factor, 1 + 4 * factor, -factor,
+      0, -factor, 0
+    ]
+    
+    for (let y = 1; y < height - 1; y++) {
+      for (let x = 1; x < width - 1; x++) {
+        for (let c = 0; c < 3; c++) { // RGB channels only
+          let sum = 0
+          for (let ky = -1; ky <= 1; ky++) {
+            for (let kx = -1; kx <= 1; kx++) {
+              const idx = ((y + ky) * width + (x + kx)) * 4 + c
+              sum += data[idx] * kernel[(ky + 1) * 3 + (kx + 1)]
+            }
+          }
+          output[(y * width + x) * 4 + c] = Math.min(255, Math.max(0, sum))
+        }
+      }
+    }
+    
+    return new ImageData(output, width, height)
   }
 
   const stats = {
@@ -945,11 +995,11 @@ export default function LabsMetersPage() {
                       ) : (
                         <div className="p-3 bg-white rounded-lg border space-y-3">
                           <div className="flex items-center justify-between"><Label className="text-sm">Noir & Blanc</Label><Switch checked={testConfig.grayscale} onCheckedChange={(v) => setTestConfig({ ...testConfig, grayscale: v })} /></div>
-                          <div><div className="flex justify-between mb-1"><Label className="text-sm">Contraste</Label><span className="text-xs text-gray-500">{testConfig.contrast}%</span></div><input type="range" min="-50" max="100" value={testConfig.contrast} onChange={(e) => setTestConfig({ ...testConfig, contrast: +e.target.value })} className="w-full accent-purple-600" /></div>
-                          <div><div className="flex justify-between mb-1"><Label className="text-sm">Luminosité</Label><span className="text-xs text-gray-500">{testConfig.brightness}%</span></div><input type="range" min="-50" max="50" value={testConfig.brightness} onChange={(e) => setTestConfig({ ...testConfig, brightness: +e.target.value })} className="w-full accent-purple-600" /></div>
-                          <div><div className="flex justify-between mb-1"><Label className="text-sm">Netteté</Label><span className="text-xs text-gray-500">{testConfig.sharpness}%</span></div><input type="range" min="0" max="100" value={testConfig.sharpness} onChange={(e) => setTestConfig({ ...testConfig, sharpness: +e.target.value })} className="w-full accent-purple-600" /></div>
+                          <div><div className="flex justify-between mb-1"><Label className="text-sm">Contraste</Label><span className="text-xs text-gray-500">{testConfig.contrast ?? 30}%</span></div><input type="range" min="-50" max="100" value={testConfig.contrast ?? 30} onChange={(e) => setTestConfig({ ...testConfig, contrast: +e.target.value })} className="w-full accent-purple-600" /></div>
+                          <div><div className="flex justify-between mb-1"><Label className="text-sm">Luminosité</Label><span className="text-xs text-gray-500">{testConfig.brightness ?? 0}%</span></div><input type="range" min="-50" max="50" value={testConfig.brightness ?? 0} onChange={(e) => setTestConfig({ ...testConfig, brightness: +e.target.value })} className="w-full accent-purple-600" /></div>
+                          <div><div className="flex justify-between mb-1"><Label className="text-sm">Netteté</Label><span className="text-xs text-gray-500">{testConfig.sharpness ?? 20}%</span></div><input type="range" min="0" max="100" value={testConfig.sharpness ?? 20} onChange={(e) => setTestConfig({ ...testConfig, sharpness: +e.target.value })} className="w-full accent-purple-600" /></div>
                           {!testConfig.grayscale && (
-                            <div><div className="flex justify-between mb-1"><Label className="text-sm">Saturation</Label><span className="text-xs text-gray-500">{testConfig.saturation}%</span></div><input type="range" min="0" max="200" value={testConfig.saturation} onChange={(e) => setTestConfig({ ...testConfig, saturation: +e.target.value })} className="w-full accent-purple-600" /></div>
+                            <div><div className="flex justify-between mb-1"><Label className="text-sm">Saturation</Label><span className="text-xs text-gray-500">{testConfig.saturation ?? 100}%</span></div><input type="range" min="0" max="200" value={testConfig.saturation ?? 100} onChange={(e) => setTestConfig({ ...testConfig, saturation: +e.target.value })} className="w-full accent-purple-600" /></div>
                           )}
                           <div className="pt-2 border-t flex gap-2">
                             <Input placeholder="Nom config (optionnel)" value={newConfigName} onChange={(e) => setNewConfigName(e.target.value)} className="flex-1" />
@@ -977,8 +1027,13 @@ export default function LabsMetersPage() {
                       {testPhotoUrl && <Button onClick={runSingleTest} disabled={testing || checkingCoherence} className="w-full mt-3 bg-purple-600">{testing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Play className="h-4 w-4 mr-2" />}Analyser</Button>}
                     </Card>
                     <Card className="p-4">
-                      <h3 className="font-semibold mb-3 flex items-center gap-2"><Zap className="h-4 w-4" />Photo traitée<Badge variant="outline" className="ml-auto text-xs">{testConfig.grayscale ? 'N&B' : 'Couleur'} C:{testConfig.contrast}%</Badge></h3>
-                      {testPhotoUrl ? <img src={testPhotoUrl} alt="Traitée" className="w-full rounded-lg border" style={{ filter: [testConfig.grayscale ? 'grayscale(100%)' : '', testConfig.contrast !== 0 ? `contrast(${100 + testConfig.contrast}%)` : ''].filter(Boolean).join(' ') || 'none' }} /> : <div className="h-48 flex items-center justify-center bg-gray-50 rounded-lg border text-gray-400 text-sm">Uploadez d'abord</div>}
+                      <h3 className="font-semibold mb-3 flex items-center gap-2"><Zap className="h-4 w-4" />Photo traitée<Badge variant="outline" className="ml-auto text-xs">{testConfig.grayscale ? 'N&B' : 'Couleur'} C:{testConfig.contrast ?? 30}% L:{testConfig.brightness ?? 0}% N:{testConfig.sharpness ?? 20}%{!testConfig.grayscale && ` S:${testConfig.saturation ?? 100}%`}</Badge></h3>
+                      {testPhotoUrl ? <img src={testPhotoUrl} alt="Traitée" className="w-full rounded-lg border" style={{ filter: [
+                        testConfig.grayscale ? 'grayscale(100%)' : '', 
+                        (testConfig.contrast ?? 30) !== 0 ? `contrast(${100 + (testConfig.contrast ?? 30)}%)` : '',
+                        (testConfig.brightness ?? 0) !== 0 ? `brightness(${100 + (testConfig.brightness ?? 0)}%)` : '',
+                        !testConfig.grayscale && (testConfig.saturation ?? 100) !== 100 ? `saturate(${testConfig.saturation ?? 100}%)` : ''
+                      ].filter(Boolean).join(' ') || 'none' }} /> : <div className="h-48 flex items-center justify-center bg-gray-50 rounded-lg border text-gray-400 text-sm">Uploadez d'abord</div>}
                     </Card>
                   </div>
 
