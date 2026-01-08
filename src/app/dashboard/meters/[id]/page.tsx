@@ -128,7 +128,6 @@ export default function MeterModelDetailPage() {
   const [customDecimalIndicator, setCustomDecimalIndicator] = useState('')
   
   // UI
-  const [showSaveConfirm, setShowSaveConfirm] = useState(false)
   const [showVersionDetail, setShowVersionDetail] = useState<ModelVersion | null>(null)
   
   // Tests
@@ -220,22 +219,37 @@ export default function MeterModelDetailPage() {
   async function handleSave() {
     if (!model || !name.trim()) return
     setSaving(true)
-    setShowSaveConfirm(false)
     
     try {
       const finalMeterType = meterType === 'other' ? customMeterType : meterType
       const finalDecimalIndicator = decimalIndicator === 'other' ? customDecimalIndicator : decimalIndicator
       const promptText = generatePromptText()
 
-      await supabase.from('meter_models').update({ name, manufacturer: manufacturer || null, meter_type: finalMeterType, unit, is_active: isActive }).eq('id', modelId)
+      // Sauvegarder les infos du modèle
+      await supabase.from('meter_models').update({ 
+        name, 
+        manufacturer: manufacturer || null, 
+        meter_type: finalMeterType, 
+        unit, 
+        is_active: isActive 
+      }).eq('id', modelId)
 
-      const rulesData = { model_id: modelId, reading_integer_digits: integerDigits, reading_decimal_digits: decimalDigits, decimal_indicator: finalDecimalIndicator, prompt_rules: promptText }
+      // Sauvegarder les règles de lecture (sans créer de nouvelle version)
+      const rulesData = { 
+        model_id: modelId, 
+        reading_integer_digits: integerDigits, 
+        reading_decimal_digits: decimalDigits, 
+        decimal_indicator: finalDecimalIndicator, 
+        prompt_rules: promptText 
+      }
       if (rules?.id) await supabase.from('meter_reading_rules').update(rulesData).eq('id', rules.id)
       else await supabase.from('meter_reading_rules').insert(rulesData)
 
-      await supabase.from('meter_model_prompts').update({ is_active: false }).eq('model_id', modelId)
-      const newVersion = Math.max(...versions.map(v => v.version), 0) + 1
-      await supabase.from('meter_model_prompts').insert({ model_id: modelId, prompt_text: promptText, version: newVersion, is_active: true })
+      // Mettre à jour le prompt de la version active (sans créer de nouvelle version)
+      const activeVersion = versions.find(v => v.is_active)
+      if (activeVersion) {
+        await supabase.from('meter_model_prompts').update({ prompt_text: promptText }).eq('id', activeVersion.id)
+      }
 
       router.push('/dashboard/meters')
     } catch (error) {
@@ -531,25 +545,12 @@ export default function MeterModelDetailPage() {
       )}
 
       {/* Enregistrer */}
-      <Button onClick={() => setShowSaveConfirm(true)} disabled={saving || !name.trim()} className="w-full h-12 text-base">
+      <Button onClick={handleSave} disabled={saving || !name.trim()} className="w-full h-12 text-base">
         {saving ? <Loader2 className="h-5 w-5 animate-spin mr-2" /> : <Save className="h-5 w-5 mr-2" />}
         Enregistrer
       </Button>
 
       {/* Modals */}
-      <Dialog open={showSaveConfirm} onOpenChange={setShowSaveConfirm}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Confirmer les modifications</DialogTitle>
-            <DialogDescription>Une nouvelle version (v{Math.max(...versions.map(v => v.version), 0) + 1}) sera créée. Les versions précédentes restent disponibles.</DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowSaveConfirm(false)}>Annuler</Button>
-            <Button onClick={handleSave} disabled={saving}>{saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Check className="h-4 w-4 mr-2" />}Confirmer</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       <Dialog open={!!showVersionDetail} onOpenChange={() => setShowVersionDetail(null)}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
