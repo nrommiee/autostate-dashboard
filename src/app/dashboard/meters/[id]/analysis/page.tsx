@@ -189,9 +189,9 @@ export default function MeterModelAnalysisPage() {
       const successRate = (successful / groupTests.length) * 100
       
       // Calculate consistency (standard deviation of success rate)
-      const successValues = groupTests.map(t => t.success ? 1 : 0)
-      const mean = successValues.reduce((a, b) => a + b, 0) / successValues.length
-      const variance = successValues.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / successValues.length
+      const successValues: number[] = groupTests.map(t => t.success ? 1 : 0)
+      const mean = successValues.reduce((a: number, b: number) => a + b, 0) / successValues.length
+      const variance = successValues.reduce((sum: number, val: number) => sum + Math.pow(val - mean, 2), 0) / successValues.length
       const stdDev = Math.sqrt(variance)
       const consistency = groupTests.length >= 3 ? Math.max(0, (1 - stdDev / Math.max(mean, 0.5)) * 100) : null
 
