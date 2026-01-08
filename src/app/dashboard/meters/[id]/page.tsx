@@ -77,14 +77,10 @@ interface ModelVersion {
 
 interface TestRecord {
   id: string
-  extracted_serial: string | null
-  extracted_reading: string | null
-  correct_serial: string | null
-  correct_reading: string | null
+  status: 'pending' | 'validated' | 'corrected' | 'rejected'
+  extracted_data: Record<string, { value: string; confidence: number }> | null
+  corrected_data: Record<string, string> | null
   confidence: number
-  is_validated: boolean
-  is_rejected: boolean
-  rejection_reason: string | null
   created_at: string
 }
 
@@ -145,12 +141,12 @@ export default function MeterModelDetailPage() {
   const [correctionReading, setCorrectionReading] = useState('')
   const [correctionReason, setCorrectionReason] = useState('')
 
-  // Stats
+  // Stats - FIXED: use status field from labs_experiments
   const testStats = {
     total: tests.length,
-    validated: tests.filter(t => t.is_validated).length,
-    rejected: tests.filter(t => t.is_rejected).length,
-    successRate: tests.length > 0 ? (tests.filter(t => t.is_validated).length / tests.length) * 100 : null
+    validated: tests.filter(t => t.status === 'validated' || t.status === 'corrected').length,
+    rejected: tests.filter(t => t.status === 'rejected').length,
+    successRate: tests.length > 0 ? (tests.filter(t => t.status === 'validated' || t.status === 'corrected').length / tests.length) * 100 : null
   }
 
   useEffect(() => { loadModel() }, [modelId])
@@ -183,7 +179,12 @@ export default function MeterModelDetailPage() {
       const { data: versionsData } = await supabase.from('meter_model_prompts').select('*').eq('model_id', modelId).order('version', { ascending: false })
       if (versionsData) setVersions(versionsData)
 
-      const { data: testsData } = await supabase.from('meter_model_tests').select('*').eq('model_id', modelId).order('created_at', { ascending: false })
+      // FIXED: Load from labs_experiments instead of meter_model_tests
+      const { data: testsData } = await supabase
+        .from('labs_experiments')
+        .select('*')
+        .eq('meter_model_id', modelId)
+        .order('created_at', { ascending: false })
       if (testsData) setTests(testsData)
     } catch (error) {
       console.error('Error:', error)
@@ -203,12 +204,14 @@ export default function MeterModelDetailPage() {
     else if (decimalIndicator === 'comma') prompt += `\n- Virgule visible entre entiers et décimales`
     else if (decimalIndicator === 'other' && customDecimalIndicator) prompt += `\n- ${customDecimalIndicator}`
 
-    const corrections = tests.filter(t => t.is_rejected && t.correct_reading)
+    // FIXED: Use corrected_data from labs_experiments
+    const corrections = tests.filter(t => t.status === 'corrected' && t.corrected_data?.reading)
     if (corrections.length > 0) {
       prompt += `\n\nCORRECTIONS (erreurs à éviter):`
       corrections.slice(0, 5).forEach(c => {
-        prompt += `\n- "${c.extracted_reading}" → "${c.correct_reading}"`
-        if (c.rejection_reason) prompt += ` (${c.rejection_reason})`
+        const extracted = c.extracted_data?.reading?.value || ''
+        const corrected = c.corrected_data?.reading || ''
+        if (extracted && corrected) prompt += `\n- "${extracted}" → "${corrected}"`
       })
     }
     return prompt
@@ -291,9 +294,26 @@ export default function MeterModelDetailPage() {
     }
   }
 
+  // FIXED: Save to labs_experiments instead of meter_model_tests
   async function validateTest() { 
-    if (!currentTestResult) return
-    await supabase.from('meter_model_tests').insert({ model_id: modelId, extracted_serial: currentTestResult.extractedSerial, extracted_reading: currentTestResult.extractedReading, confidence: currentTestResult.confidence, is_validated: true, is_rejected: false })
+    if (!currentTestResult || !testPhotoFile) return
+    const base64 = await fileToBase64(testPhotoFile)
+    await fetch('/api/labs/experiments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        meter_model_id: modelId,
+        photo_base64: base64,
+        extracted_data: {
+          serial: { value: currentTestResult.extractedSerial || '', confidence: currentTestResult.confidence },
+          reading: { value: currentTestResult.extractedReading || '', confidence: currentTestResult.confidence }
+        },
+        corrected_data: null,
+        confidence: currentTestResult.confidence,
+        status: 'validated',
+        image_config_used: {}
+      })
+    })
     resetTest()
     loadModel()
   }
@@ -306,18 +326,28 @@ export default function MeterModelDetailPage() {
     setShowCorrectionModal(true)
   }
 
+  // FIXED: Save to labs_experiments instead of meter_model_tests
   async function submitCorrection() {
-    if (!currentTestResult) return
-    await supabase.from('meter_model_tests').insert({
-      model_id: modelId,
-      extracted_serial: currentTestResult.extractedSerial,
-      extracted_reading: currentTestResult.extractedReading,
-      correct_serial: correctionSerial !== currentTestResult.extractedSerial ? correctionSerial : null,
-      correct_reading: correctionReading !== currentTestResult.extractedReading ? correctionReading : null,
-      confidence: currentTestResult.confidence,
-      is_validated: false,
-      is_rejected: true,
-      rejection_reason: correctionReason || null
+    if (!currentTestResult || !testPhotoFile) return
+    const base64 = await fileToBase64(testPhotoFile)
+    await fetch('/api/labs/experiments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        meter_model_id: modelId,
+        photo_base64: base64,
+        extracted_data: {
+          serial: { value: currentTestResult.extractedSerial || '', confidence: currentTestResult.confidence },
+          reading: { value: currentTestResult.extractedReading || '', confidence: currentTestResult.confidence }
+        },
+        corrected_data: {
+          serial: correctionSerial,
+          reading: correctionReading
+        },
+        confidence: currentTestResult.confidence,
+        status: 'corrected',
+        image_config_used: {}
+      })
     })
     setShowCorrectionModal(false)
     resetTest()
@@ -528,17 +558,17 @@ export default function MeterModelDetailPage() {
           </div>
         </div>
 
-        {/* Historique tests */}
+        {/* Historique tests - FIXED: use labs_experiments format */}
         {tests.length > 0 && (
           <div className="mt-4 pt-4 border-t">
             <h4 className="font-medium text-sm mb-2">Historique ({tests.length})</h4>
             <div className="space-y-1 max-h-32 overflow-y-auto">
-              {tests.slice(0, 5).map((t, i) => (
-                <div key={t.id} className={`flex items-center justify-between p-2 rounded text-xs ${t.is_validated ? 'bg-green-50' : 'bg-red-50'}`}>
+              {tests.slice(0, 5).map((t) => (
+                <div key={t.id} className={`flex items-center justify-between p-2 rounded text-xs ${t.status === 'validated' || t.status === 'corrected' ? 'bg-green-50' : 'bg-red-50'}`}>
                   <div className="flex items-center gap-2">
-                    {t.is_validated ? <Check className="h-3 w-3 text-green-600" /> : <X className="h-3 w-3 text-red-600" />}
-                    <span className="font-mono">{t.extracted_reading || '-'}</span>
-                    {t.correct_reading && <span className="text-green-600">→ {t.correct_reading}</span>}
+                    {t.status === 'validated' || t.status === 'corrected' ? <Check className="h-3 w-3 text-green-600" /> : <X className="h-3 w-3 text-red-600" />}
+                    <span className="font-mono">{t.extracted_data?.reading?.value || '-'}</span>
+                    {t.corrected_data?.reading && <span className="text-green-600">→ {t.corrected_data.reading}</span>}
                   </div>
                   <span className="text-gray-400">{formatDate(t.created_at)}</span>
                 </div>
