@@ -597,7 +597,6 @@ export default function MeterModelAnalysisPage() {
                   if (config.grayscale) parts.push('N&B')
                   else parts.push('Couleur')
                   if (config.contrast) parts.push(`C:${config.contrast > 0 ? '+' : ''}${config.contrast}%`)
-                  label = parts.join(' ')
                   configLabel = parts.join(' ')
                 }
                 // Extract reading from extracted_data
