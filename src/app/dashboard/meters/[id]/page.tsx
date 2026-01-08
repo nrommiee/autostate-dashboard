@@ -511,72 +511,24 @@ export default function MeterModelDetailPage() {
         </Card>
       </div>
 
-      {/* Tests */}
-      <Card className="p-4 mb-6">
-        <h3 className="font-semibold mb-3">Ajouter un test</h3>
-        <div className="grid md:grid-cols-2 gap-4">
-          <div>
-            {testPhotoUrl ? (
-              <div className="relative">
-                <img src={testPhotoUrl} alt="Test" className="w-full max-h-48 object-contain rounded-lg border" />
-                <button onClick={resetTest} className="absolute top-2 right-2 p-1.5 bg-gray-800 text-white rounded-full"><RotateCcw className="h-4 w-4" /></button>
-              </div>
-            ) : (
-              <label className="flex flex-col items-center justify-center h-40 border-2 border-dashed rounded-lg cursor-pointer hover:border-teal-500 hover:bg-teal-50">
-                <Upload className="h-8 w-8 text-gray-400 mb-2" />
-                <span className="text-sm text-gray-500">Photo de test</span>
-                <input type="file" accept="image/*" onChange={handleTestPhotoUpload} className="hidden" />
-              </label>
-            )}
-            {testPhotoUrl && !currentTestResult && (
-              <Button onClick={runTest} disabled={testing} className="w-full mt-3 gap-2">
-                {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-                Lancer le test
-              </Button>
-            )}
-          </div>
-          <div>
-            {currentTestResult ? (
-              <div className={`p-4 rounded-lg h-full ${currentTestResult.success ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
-                <div className="flex items-center gap-2 mb-2">
-                  {currentTestResult.success ? <CheckCircle className="h-5 w-5 text-green-600" /> : <X className="h-5 w-5 text-red-600" />}
-                  <span className={`font-medium ${currentTestResult.success ? 'text-green-700' : 'text-red-700'}`}>{currentTestResult.success ? 'Reconnu' : 'Erreur'}</span>
-                  <Badge variant="outline">{Math.round(currentTestResult.confidence * 100)}%</Badge>
+      {/* Historique tests */}
+      {tests.length > 0 && (
+        <Card className="p-4 mb-6">
+          <h4 className="font-semibold mb-3">Historique des tests ({tests.length})</h4>
+          <div className="space-y-1 max-h-48 overflow-y-auto">
+            {tests.slice(0, 10).map((t) => (
+              <div key={t.id} className={`flex items-center justify-between p-2 rounded text-xs ${t.status === 'validated' || t.status === 'corrected' ? 'bg-green-50' : 'bg-red-50'}`}>
+                <div className="flex items-center gap-2">
+                  {t.status === 'validated' || t.status === 'corrected' ? <Check className="h-3 w-3 text-green-600" /> : <X className="h-3 w-3 text-red-600" />}
+                  <span className="font-mono">{t.extracted_data?.reading?.value || '-'}</span>
+                  {t.corrected_data?.reading && <span className="text-green-600">→ {t.corrected_data.reading}</span>}
                 </div>
-                {currentTestResult.extractedSerial && <p className="text-sm">N°: <span className="font-mono">{currentTestResult.extractedSerial}</span></p>}
-                {currentTestResult.extractedReading && <p className="text-sm">Index: <span className="font-mono">{currentTestResult.extractedReading}</span></p>}
-                <div className="flex gap-2 mt-3">
-                  <Button onClick={validateTest} className="flex-1 gap-1"><Check className="h-4 w-4" /> Valider</Button>
-                  <Button onClick={openCorrectionModal} variant="outline" className="flex-1 gap-1"><Edit3 className="h-4 w-4" /> Corriger</Button>
-                </div>
+                <span className="text-gray-400">{formatDate(t.created_at)}</span>
               </div>
-            ) : (
-              <div className="h-40 flex items-center justify-center text-gray-400 text-sm text-center p-4">
-                Les corrections enrichissent automatiquement le modèle
-              </div>
-            )}
+            ))}
           </div>
-        </div>
-
-        {/* Historique tests - FIXED: use labs_experiments format */}
-        {tests.length > 0 && (
-          <div className="mt-4 pt-4 border-t">
-            <h4 className="font-medium text-sm mb-2">Historique ({tests.length})</h4>
-            <div className="space-y-1 max-h-32 overflow-y-auto">
-              {tests.slice(0, 5).map((t) => (
-                <div key={t.id} className={`flex items-center justify-between p-2 rounded text-xs ${t.status === 'validated' || t.status === 'corrected' ? 'bg-green-50' : 'bg-red-50'}`}>
-                  <div className="flex items-center gap-2">
-                    {t.status === 'validated' || t.status === 'corrected' ? <Check className="h-3 w-3 text-green-600" /> : <X className="h-3 w-3 text-red-600" />}
-                    <span className="font-mono">{t.extracted_data?.reading?.value || '-'}</span>
-                    {t.corrected_data?.reading && <span className="text-green-600">→ {t.corrected_data.reading}</span>}
-                  </div>
-                  <span className="text-gray-400">{formatDate(t.created_at)}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </Card>
+        </Card>
+      )}
 
       {/* Enregistrer */}
       <Button onClick={() => setShowSaveConfirm(true)} disabled={saving || !name.trim()} className="w-full h-12 text-base">
