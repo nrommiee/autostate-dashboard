@@ -6,7 +6,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
-// GET - List all meter models with test counts from labs_experiments
+// GET - List all meter models with test counts from lab_experiments
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
@@ -30,13 +30,13 @@ export async function GET(request: NextRequest) {
 
     if (error) throw error
 
-    // Get test stats from labs_experiments for each model
+    // Get test stats from lab_experiments for each model
     if (models && models.length > 0) {
       const modelIds = models.map(m => m.id)
       
-      // FIXED: Use labs_experiments (plural) and get status for stats
+      // Use lab_experiments (singular) - matches the write API
       const { data: experiments } = await supabase
-        .from('labs_experiments')
+        .from('lab_experiments')
         .select('meter_model_id, status')
         .in('meter_model_id', modelIds)
       
@@ -95,7 +95,8 @@ export async function POST(request: NextRequest) {
       zones,
       is_verified,
       is_active,
-      from_unrecognized_id
+      from_unrecognized_id,
+      prompt_text // Optional: explicit prompt text for initial version
     } = body
 
     // Validate required fields
@@ -126,6 +127,31 @@ export async function POST(request: NextRequest) {
       .single()
 
     if (error) throw error
+
+    // Create initial version (v1) with default config
+    const initialPrompt = prompt_text || ai_description || `MODÈLE: ${manufacturer ? manufacturer + ' ' : ''}${name}\nTYPE: ${meter_type}`
+    const defaultImageConfig = {
+      grayscale: true,
+      contrast: 30,
+      brightness: 0,
+      sharpness: 20
+    }
+
+    const { error: versionError } = await supabase
+      .from('model_versions')
+      .insert({
+        model_id: data.id,
+        version_number: 1,
+        prompt_text: initialPrompt,
+        image_config: defaultImageConfig,
+        is_active: true,
+        notes: 'Version initiale créée automatiquement'
+      })
+
+    if (versionError) {
+      console.error('Error creating initial version:', versionError)
+      // Don't fail the whole operation, just log
+    }
 
     // If created from unrecognized meter, update its status
     if (from_unrecognized_id) {
