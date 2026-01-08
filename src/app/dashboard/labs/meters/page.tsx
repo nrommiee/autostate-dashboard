@@ -997,7 +997,6 @@ export default function LabsMetersPage() {
                 </>
               )}
             </div>
-          )}
         </div>
       )}
 
