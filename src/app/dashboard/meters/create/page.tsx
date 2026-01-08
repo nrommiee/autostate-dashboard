@@ -152,14 +152,52 @@ export default function CreateMeterModelPage() {
   // État pour l'animation pulse après analyse IA
   const [justAnalyzed, setJustAnalyzed] = useState(false)
 
+  // Pre-check duplicate state
+  const [checkingDuplicate, setCheckingDuplicate] = useState(false)
+  const [duplicateResult, setDuplicateResult] = useState<{
+    isDuplicate: boolean
+    confidence: number
+    reason: string
+    matchedModel?: {
+      id: string
+      name: string
+      manufacturer: string | null
+      meter_type: string
+      referencePhoto: string
+    }
+  } | null>(null)
+  const [showDuplicateModal, setShowDuplicateModal] = useState(false)
+
   // Photo handlers
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
     if (photoUrl?.startsWith('blob:')) URL.revokeObjectURL(photoUrl)
     setPhotoFile(file)
     setPhotoUrl(URL.createObjectURL(file))
     setNeedsAnalysis(true)
+    setDuplicateResult(null)
+
+    // Pre-check for duplicates
+    setCheckingDuplicate(true)
+    try {
+      const base64 = await fileToBase64(file)
+      const response = await fetch('/api/check-meter-duplicate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ photo: base64 })
+      })
+      const result = await response.json()
+      
+      if (result.isDuplicate && result.confidence > 0.7) {
+        setDuplicateResult(result)
+        setShowDuplicateModal(true)
+      }
+    } catch (err) {
+      console.error('Duplicate check error:', err)
+    } finally {
+      setCheckingDuplicate(false)
+    }
   }
 
   const removePhoto = () => {
@@ -444,8 +482,8 @@ RÈGLES DE LECTURE:`
       }
 
       setSaved(true)
-      // Redirection vers la liste des modèles
-      setTimeout(() => router.push('/dashboard/meters'), 1500)
+      // Redirection vers le Labs avec le modèle créé
+      setTimeout(() => router.push(`/dashboard/labs/meters?model=${result.id}`), 1500)
     } catch (err: any) { 
       setError(err.message || 'Erreur lors de la sauvegarde') 
     } finally { 
@@ -1019,6 +1057,82 @@ RÈGLES DE LECTURE:`
                 </Button>
               </div>
             )}
+          </DialogContent>
+        </Dialog>
+
+        {/* Modal Duplicate Detection */}
+        <Dialog open={showDuplicateModal} onOpenChange={setShowDuplicateModal}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-orange-600">
+                <AlertTriangle className="h-5 w-5" />
+                Modèle potentiellement existant
+              </DialogTitle>
+              <DialogDescription>
+                Ce compteur semble correspondre à un modèle déjà enregistré.
+              </DialogDescription>
+            </DialogHeader>
+            
+            {duplicateResult?.matchedModel && (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-xs text-gray-500 mb-2">Votre photo</p>
+                    {photoUrl && (
+                      <img 
+                        src={photoUrl} 
+                        alt="Uploaded" 
+                        className="w-full h-32 object-contain rounded-lg border"
+                      />
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-500 mb-2">Modèle existant</p>
+                    {duplicateResult.matchedModel.referencePhoto && (
+                      <img 
+                        src={duplicateResult.matchedModel.referencePhoto} 
+                        alt="Existing" 
+                        className="w-full h-32 object-contain rounded-lg border"
+                      />
+                    )}
+                  </div>
+                </div>
+                
+                <Card className="p-3 bg-orange-50 border-orange-200">
+                  <p className="font-medium">
+                    {duplicateResult.matchedModel.manufacturer} {duplicateResult.matchedModel.name}
+                  </p>
+                  <p className="text-sm text-gray-600 mt-1">
+                    Type: {duplicateResult.matchedModel.meter_type}
+                  </p>
+                  <p className="text-sm text-gray-500 mt-2">
+                    {duplicateResult.reason}
+                  </p>
+                  <Badge variant="outline" className="mt-2">
+                    Confiance: {Math.round(duplicateResult.confidence * 100)}%
+                  </Badge>
+                </Card>
+              </div>
+            )}
+
+            <DialogFooter className="flex gap-2">
+              <Button 
+                variant="outline" 
+                onClick={() => setShowDuplicateModal(false)}
+              >
+                Créer quand même
+              </Button>
+              <Button 
+                className="bg-teal-600 hover:bg-teal-700"
+                onClick={() => {
+                  if (duplicateResult?.matchedModel?.id) {
+                    router.push(`/dashboard/meters/${duplicateResult.matchedModel.id}`)
+                  }
+                }}
+              >
+                Aller au modèle existant
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
       </div>
