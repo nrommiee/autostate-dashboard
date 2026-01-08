@@ -22,7 +22,7 @@ import {
   Activity, History, FileText, Pencil, 
   FolderInput, ArrowRight, ArrowLeft, Plus, Gauge, Eye, 
   LayoutDashboard, TestTube, GitBranch,
-  Keyboard, Search, Settings2
+  Keyboard, Search, Settings2, Save
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 
@@ -179,6 +179,17 @@ export default function LabsMetersPage() {
   const [showTestCorrectionModal, setShowTestCorrectionModal] = useState(false)
   const [testCorrectionSerial, setTestCorrectionSerial] = useState('')
   const [testCorrectionReading, setTestCorrectionReading] = useState('')
+  
+  // Coherence check states
+  const [checkingCoherence, setCheckingCoherence] = useState(false)
+  const [showCoherenceModal, setShowCoherenceModal] = useState(false)
+  const [coherenceResult, setCoherenceResult] = useState<{
+    isCoherent: boolean
+    confidence: number
+    reason: string
+    suggestedModelId?: string
+    suggestedModelName?: string
+  } | null>(null)
 
   useEffect(() => { loadData() }, [])
 
@@ -287,7 +298,9 @@ export default function LabsMetersPage() {
       }).select().single()
       if (error) throw error
       await loadModelConfigs(testModelId)
-      setSaveAsNewConfig(false); setNewConfigName('')
+      setNewConfigName('')
+      // Auto-select the new config
+      setSelectedConfigId(data.id)
       return data.id
     } catch (err) { console.error('Error saving config:', err); return null }
     finally { setSavingConfig(false) }
@@ -511,9 +524,56 @@ export default function LabsMetersPage() {
 
   async function handleSingleTestPhoto(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
-    if (!file) return
+    if (!file || !testModelId) return
     if (testPhotoUrl) URL.revokeObjectURL(testPhotoUrl)
-    setTestPhotoFile(file); setTestPhotoUrl(URL.createObjectURL(file)); setTestResult(null)
+    
+    const url = URL.createObjectURL(file)
+    setTestPhotoFile(file)
+    setTestPhotoUrl(url)
+    setTestResult(null)
+    
+    // Check coherence with selected model
+    setCheckingCoherence(true)
+    try {
+      const base64 = await resizeImage(file, 1600)
+      const response = await fetch('/api/check-meter-coherence', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ testPhoto: base64, modelId: testModelId })
+      })
+      
+      if (response.ok) {
+        const result = await response.json()
+        if (!result.isCoherent && !result.skipped && result.confidence > 0.6) {
+          // Try to find which model it might be
+          const classifyResponse = await fetch('/api/labs/classify-meter', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ photo: base64 })
+          })
+          
+          let suggestedModel = null
+          if (classifyResponse.ok) {
+            const classifyResult = await classifyResponse.json()
+            if (classifyResult.matchedModel && classifyResult.matchedModel.id !== testModelId) {
+              suggestedModel = classifyResult.matchedModel
+            }
+          }
+          
+          setCoherenceResult({
+            isCoherent: false,
+            confidence: result.confidence,
+            reason: result.reason,
+            suggestedModelId: suggestedModel?.id,
+            suggestedModelName: suggestedModel?.name
+          })
+          setShowCoherenceModal(true)
+        }
+      }
+    } catch (err) {
+      console.error('Coherence check error:', err)
+    }
+    setCheckingCoherence(false)
   }
 
   async function runSingleTest() {
@@ -818,17 +878,7 @@ export default function LabsMetersPage() {
       {/* TESTS */}
       {activeTab === 'tests' && (
         <div className="space-y-6">
-          <div className="flex gap-4">
-            <Card className={`flex-1 p-4 cursor-pointer ${testMode === 'single' ? 'border-purple-500 bg-purple-50' : 'hover:bg-gray-50'}`} onClick={() => setTestMode('single')}>
-              <div className="flex items-center gap-3"><div className={`p-2 rounded-lg ${testMode === 'single' ? 'bg-purple-100' : 'bg-gray-100'}`}><ImageIcon className="h-5 w-5" /></div><div><p className="font-medium">Test unitaire</p><p className="text-sm text-gray-500">Une photo à la fois</p></div></div>
-            </Card>
-            <Card className={`flex-1 p-4 cursor-pointer ${testMode === 'bulk' ? 'border-purple-500 bg-purple-50' : 'hover:bg-gray-50'}`} onClick={() => setTestMode('bulk')}>
-              <div className="flex items-center gap-3"><div className={`p-2 rounded-lg ${testMode === 'bulk' ? 'bg-purple-100' : 'bg-gray-100'}`}><FolderInput className="h-5 w-5" /></div><div><p className="font-medium">Import multiple</p><p className="text-sm text-gray-500">En masse</p></div></div>
-            </Card>
-          </div>
-
-          {testMode === 'single' && (
-            <div className="space-y-4">
+          <div className="space-y-4">
               <div className="flex gap-4 items-end">
                 <div className="flex-1"><Label>Modèle</Label><Select value={testModelId} onValueChange={setTestModelId}><SelectTrigger><SelectValue placeholder="Sélectionnez..." /></SelectTrigger><SelectContent>{models.filter(m => m.status === 'active').map(m => <SelectItem key={m.id} value={m.id}>{METER_TYPE_ICONS[m.meter_type]} {m.name}</SelectItem>)}</SelectContent></Select></div>
                 {testModelId && <Button variant="outline" onClick={() => router.push(`/dashboard/meters/${testModelId}`)}><Eye className="h-4 w-4 mr-2" />Voir</Button>}
@@ -867,9 +917,12 @@ export default function LabsMetersPage() {
                           <div className="flex items-center justify-between"><Label className="text-sm">Noir & Blanc</Label><Switch checked={testConfig.grayscale} onCheckedChange={(v) => setTestConfig({ ...testConfig, grayscale: v })} /></div>
                           <div><div className="flex justify-between mb-1"><Label className="text-sm">Contraste</Label><span className="text-xs text-gray-500">{testConfig.contrast}%</span></div><input type="range" min="-50" max="100" value={testConfig.contrast} onChange={(e) => setTestConfig({ ...testConfig, contrast: +e.target.value })} className="w-full accent-purple-600" /></div>
                           <div><div className="flex justify-between mb-1"><Label className="text-sm">Netteté</Label><span className="text-xs text-gray-500">{testConfig.sharpness}%</span></div><input type="range" min="0" max="100" value={testConfig.sharpness} onChange={(e) => setTestConfig({ ...testConfig, sharpness: +e.target.value })} className="w-full accent-purple-600" /></div>
-                          <div className="pt-2 border-t">
-                            <div className="flex items-center gap-2"><Checkbox id="saveConfig" checked={saveAsNewConfig} onCheckedChange={(v) => setSaveAsNewConfig(v === true)} /><Label htmlFor="saveConfig" className="text-sm cursor-pointer">Sauvegarder cette config</Label></div>
-                            {saveAsNewConfig && <Input placeholder="Nom (optionnel)" value={newConfigName} onChange={(e) => setNewConfigName(e.target.value)} className="mt-2" />}
+                          <div className="pt-2 border-t flex gap-2">
+                            <Input placeholder="Nom config (optionnel)" value={newConfigName} onChange={(e) => setNewConfigName(e.target.value)} className="flex-1" />
+                            <Button onClick={saveNewConfig} disabled={savingConfig} className="bg-purple-600 hover:bg-purple-700">
+                              {savingConfig ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4 mr-1" />}
+                              Enregistrer
+                            </Button>
                           </div>
                         </div>
                       )}
@@ -878,13 +931,16 @@ export default function LabsMetersPage() {
 
                   <div className="grid md:grid-cols-2 gap-4">
                     <Card className="p-4">
-                      <h3 className="font-semibold mb-3 flex items-center gap-2"><ImageIcon className="h-4 w-4" />Photo originale</h3>
+                      <h3 className="font-semibold mb-3 flex items-center gap-2">
+                        <ImageIcon className="h-4 w-4" />Photo originale
+                        {checkingCoherence && <Badge variant="outline" className="ml-auto text-xs text-orange-600"><Loader2 className="h-3 w-3 animate-spin mr-1 inline" />Vérification...</Badge>}
+                      </h3>
                       {testPhotoUrl ? (
                         <div className="relative"><img src={testPhotoUrl} alt="Original" className="w-full rounded-lg border" /><Button variant="outline" size="icon" className="absolute top-2 right-2 bg-white/80" onClick={() => { setTestPhotoUrl(null); setTestPhotoFile(null); setTestResult(null) }}><RotateCcw className="h-4 w-4" /></Button></div>
                       ) : (
                         <label className="block"><div className="h-48 flex flex-col items-center justify-center bg-gray-50 rounded-lg border-2 border-dashed hover:border-purple-400 cursor-pointer"><Upload className="h-8 w-8 text-gray-400 mb-2" /><p className="text-sm text-gray-500">Cliquez pour uploader</p></div><input type="file" accept="image/*" className="hidden" onChange={handleSingleTestPhoto} /></label>
                       )}
-                      {testPhotoUrl && <Button onClick={runSingleTest} disabled={testing} className="w-full mt-3 bg-purple-600">{testing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Play className="h-4 w-4 mr-2" />}Analyser</Button>}
+                      {testPhotoUrl && <Button onClick={runSingleTest} disabled={testing || checkingCoherence} className="w-full mt-3 bg-purple-600">{testing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Play className="h-4 w-4 mr-2" />}Analyser</Button>}
                     </Card>
                     <Card className="p-4">
                       <h3 className="font-semibold mb-3 flex items-center gap-2"><Zap className="h-4 w-4" />Photo traitée<Badge variant="outline" className="ml-auto text-xs">{testConfig.grayscale ? 'N&B' : 'Couleur'} C:{testConfig.contrast}%</Badge></h3>
@@ -942,33 +998,6 @@ export default function LabsMetersPage() {
               )}
             </div>
           )}
-
-          {testMode === 'bulk' && (
-            <Card className="p-6">
-              <h3 className="font-semibold mb-4 flex items-center gap-2"><FolderInput className="h-5 w-5" />Import multiple</h3>
-              <div className="h-48 flex flex-col items-center justify-center bg-gray-50 rounded-lg border-2 border-dashed hover:border-purple-400 cursor-pointer"
-                onClick={() => document.getElementById('bulk-input')?.click()}
-                onDragOver={(e) => { e.preventDefault() }}
-                onDrop={async (e) => { e.preventDefault(); await processBulkFiles(Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'))) }}>
-                <Upload className="h-12 w-12 text-gray-400 mb-3" /><p className="text-gray-600">Glissez vos photos</p>
-              </div>
-              <input id="bulk-input" type="file" accept="image/*" multiple className="hidden" onChange={(e) => processBulkFiles(Array.from(e.target.files || []))} />
-              {classifying && <div className="mt-4 p-4 bg-purple-50 rounded-lg flex items-center justify-center gap-3"><Loader2 className="h-5 w-5 animate-spin text-purple-600" /><span>Classification... {importedPhotos.filter(p => p.status === 'done').length}/{importedPhotos.length}</span></div>}
-              {Object.keys(classifiedGroups).length > 0 && !classifying && (
-                <div className="mt-4 space-y-3">
-                  {Object.values(classifiedGroups).map((g, i) => (
-                    <div key={i} className={`p-4 rounded-lg border ${g.modelId ? 'border-green-200 bg-green-50/30' : 'border-orange-200 bg-orange-50/30'}`}>
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">{g.modelId ? <CheckCircle className="h-5 w-5 text-green-600" /> : <AlertTriangle className="h-5 w-5 text-orange-600" />}<span className="font-medium">{g.modelName}</span><Badge variant="outline">{g.photos.length}</Badge></div>
-                        {g.modelId && <Button onClick={() => startReview(g.modelId, g.modelName, g.photos)}>Reviewer <ArrowRight className="h-4 w-4 ml-1" /></Button>}
-                      </div>
-                      <div className="flex gap-2 overflow-x-auto">{g.photos.slice(0,8).map(p => <img key={p.id} src={p.url} className="h-16 w-16 object-cover rounded-lg border shrink-0" />)}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </Card>
-          )}
         </div>
       )}
 
@@ -1010,6 +1039,72 @@ export default function LabsMetersPage() {
             <div><Label>Index</Label><Input value={testCorrectionReading} onChange={(e) => setTestCorrectionReading(e.target.value)} className="font-mono" /></div>
           </div>
           <DialogFooter><Button variant="outline" onClick={() => setShowTestCorrectionModal(false)}>Annuler</Button><Button onClick={applyTestCorrection} className="bg-purple-600"><Check className="h-4 w-4 mr-2" />Appliquer</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Coherence Check Modal */}
+      <Dialog open={showCoherenceModal} onOpenChange={setShowCoherenceModal}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-orange-600">
+              <AlertTriangle className="h-5 w-5" />
+              Compteur différent détecté
+            </DialogTitle>
+            <DialogDescription>
+              La photo ne semble pas correspondre au modèle sélectionné.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="py-4 space-y-4">
+            <div className="p-3 bg-orange-50 rounded-lg border border-orange-200">
+              <p className="text-sm text-orange-800">{coherenceResult?.reason}</p>
+              <p className="text-xs text-orange-600 mt-1">Confiance: {((coherenceResult?.confidence || 0) * 100).toFixed(0)}%</p>
+            </div>
+            
+            {coherenceResult?.suggestedModelName && (
+              <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
+                <p className="text-sm text-blue-800">
+                  <strong>Modèle suggéré :</strong> {coherenceResult.suggestedModelName}
+                </p>
+              </div>
+            )}
+          </div>
+          
+          <DialogFooter className="flex-col gap-2 sm:flex-col">
+            {coherenceResult?.suggestedModelId && (
+              <Button 
+                className="w-full bg-blue-600 hover:bg-blue-700"
+                onClick={() => {
+                  setTestModelId(coherenceResult.suggestedModelId!)
+                  setShowCoherenceModal(false)
+                  setCoherenceResult(null)
+                }}
+              >
+                <ArrowRight className="h-4 w-4 mr-2" />
+                Tester avec {coherenceResult.suggestedModelName}
+              </Button>
+            )}
+            <Button 
+              variant="outline" 
+              className="w-full"
+              onClick={() => {
+                router.push('/dashboard/meters/create')
+              }}
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Créer un nouveau modèle
+            </Button>
+            <Button 
+              variant="ghost" 
+              className="w-full text-gray-500"
+              onClick={() => {
+                setShowCoherenceModal(false)
+                setCoherenceResult(null)
+              }}
+            >
+              Continuer quand même
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
