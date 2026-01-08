@@ -67,6 +67,7 @@ interface ImageConfig {
   contrast: number
   brightness: number
   sharpness: number
+  saturation: number
   auto_crop?: boolean
   max_dimension?: number
   jpeg_quality?: number
@@ -78,7 +79,9 @@ interface TestConfig {
   name: string | null
   grayscale: boolean
   contrast: number
+  brightness: number
   sharpness: number
+  saturation: number
   is_active: boolean
   created_at: string
   test_count?: number
@@ -120,7 +123,7 @@ interface ReviewSession {
 }
 
 const DEFAULT_CONFIG: ImageConfig = {
-  grayscale: true, contrast: 30, brightness: 0, sharpness: 20,
+  grayscale: true, contrast: 30, brightness: 0, sharpness: 20, saturation: 100,
   auto_crop: true, max_dimension: 1024, jpeg_quality: 85
 }
 
@@ -230,7 +233,7 @@ export default function LabsMetersPage() {
   async function loadModelConfigs(modelId: string) {
     const { data: configs } = await supabase.from('test_configs').select('*').eq('model_id', modelId).order('created_at', { ascending: false })
     if (configs) {
-      const { data: allTests } = await supabase.from('labs_experiments').select('test_config_id, status').eq('meter_model_id', modelId)
+      const { data: allTests } = await supabase.from('lab_experiments').select('test_config_id, status').eq('meter_model_id', modelId)
       const configsWithStats = configs.map(config => {
         const configTests = (allTests || []).filter(t => t.test_config_id === config.id)
         const validated = configTests.filter(t => t.status === 'validated' || t.status === 'corrected').length
@@ -243,7 +246,7 @@ export default function LabsMetersPage() {
   }
 
   async function loadModelStats(modelId: string) {
-    const { data } = await supabase.from('labs_experiments').select('status').eq('meter_model_id', modelId)
+    const { data } = await supabase.from('lab_experiments').select('status').eq('meter_model_id', modelId)
     setSelectedModelStats({ tests: data?.length || 0, success: data?.filter(e => e.status === 'validated' || e.status === 'corrected').length || 0 })
   }
 
@@ -253,7 +256,7 @@ export default function LabsMetersPage() {
       const [modelsRes, versionsRes, allExperimentsRes] = await Promise.all([
         supabase.from('meter_models').select('*').order('name'),
         supabase.from('recognition_versions').select('*').order('created_at', { ascending: false }),
-        supabase.from('labs_experiments').select('*').gte('created_at', new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString())
+        supabase.from('lab_experiments').select('*').gte('created_at', new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString())
       ])
       if (modelsRes.data) setModels(modelsRes.data)
       if (versionsRes.data) setVersions(versionsRes.data)
@@ -263,7 +266,7 @@ export default function LabsMetersPage() {
   }
 
   async function loadModelExperiments(modelId: string) {
-    const { data } = await supabase.from('labs_experiments').select('*').eq('meter_model_id', modelId).order('created_at', { ascending: false }).limit(50)
+    const { data } = await supabase.from('lab_experiments').select('*').eq('meter_model_id', modelId).order('created_at', { ascending: false }).limit(50)
     if (data) setExperiments(data)
   }
 
@@ -271,14 +274,18 @@ export default function LabsMetersPage() {
     if (!config) return 'Par défaut'
     const parts = [config.grayscale ? 'N&B' : 'Couleur']
     if (config.contrast !== 0) parts.push(`C:${config.contrast > 0 ? '+' : ''}${config.contrast}%`)
+    if (config.brightness !== 0) parts.push(`L:${config.brightness > 0 ? '+' : ''}${config.brightness}%`)
     if (config.sharpness !== 0) parts.push(`N:${config.sharpness}%`)
+    if (!config.grayscale && config.saturation !== undefined && config.saturation !== 100) parts.push(`S:${config.saturation}%`)
     return parts.join(' • ')
   }
 
   function formatTestConfig(config: TestConfig): string {
     const parts = [config.grayscale ? 'N&B' : 'Couleur']
     if (config.contrast !== 0) parts.push(`C:${config.contrast > 0 ? '+' : ''}${config.contrast}%`)
+    if (config.brightness !== 0) parts.push(`L:${config.brightness > 0 ? '+' : ''}${config.brightness}%`)
     if (config.sharpness !== 0) parts.push(`N:${config.sharpness}%`)
+    if (!config.grayscale && config.saturation !== undefined && config.saturation !== 100) parts.push(`S:${config.saturation}%`)
     return parts.join(' ')
   }
 
@@ -293,8 +300,14 @@ export default function LabsMetersPage() {
     setSavingConfig(true)
     try {
       const { data, error } = await supabase.from('test_configs').insert({
-        model_id: testModelId, name: newConfigName || null,
-        grayscale: testConfig.grayscale, contrast: testConfig.contrast, sharpness: testConfig.sharpness, is_active: false
+        model_id: testModelId, 
+        name: newConfigName || null,
+        grayscale: testConfig.grayscale, 
+        contrast: testConfig.contrast, 
+        brightness: testConfig.brightness,
+        sharpness: testConfig.sharpness, 
+        saturation: testConfig.saturation,
+        is_active: false
       }).select().single()
       if (error) throw error
       await loadModelConfigs(testModelId)
@@ -356,6 +369,7 @@ export default function LabsMetersPage() {
         if (testConfig.grayscale) filters.push('grayscale(100%)')
         if (testConfig.contrast !== 0) filters.push(`contrast(${100 + testConfig.contrast}%)`)
         if (testConfig.brightness !== 0) filters.push(`brightness(${100 + testConfig.brightness}%)`)
+        if (!testConfig.grayscale && testConfig.saturation !== 100) filters.push(`saturate(${testConfig.saturation}%)`)
         ctx.filter = filters.length > 0 ? filters.join(' ') : 'none'
         ctx.drawImage(img, 0, 0, width, height)
         URL.revokeObjectURL(objectUrl)
@@ -799,32 +813,48 @@ export default function LabsMetersPage() {
             <Card className="p-4"><p className="text-xs text-gray-500 mb-1">Actifs</p><p className="text-2xl font-bold text-green-600">{stats.active}</p></Card>
             <Card className="p-4"><p className="text-xs text-gray-500 mb-1">Archivés</p><p className="text-2xl font-bold text-gray-400">{stats.archived}</p></Card>
           </div>
-          <Card className="p-4">
-            <h3 className="font-semibold mb-4 flex items-center gap-2"><FolderInput className="h-5 w-5" />Import rapide</h3>
-            <label className="block">
-              <div className="h-32 flex flex-col items-center justify-center bg-gray-50 rounded-lg border-2 border-dashed hover:border-purple-400 cursor-pointer">
-                <Upload className="h-8 w-8 text-gray-400 mb-2" /><p className="text-gray-600 text-sm">Glissez vos photos</p>
+          
+          {/* Quick actions */}
+          <div className="grid grid-cols-2 gap-4">
+            <Card className="p-4 hover:border-purple-300 cursor-pointer transition-colors" onClick={() => setActiveTab('tests')}>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
+                  <TestTube className="h-5 w-5 text-purple-600" />
+                </div>
+                <div>
+                  <p className="font-medium">Lancer des tests</p>
+                  <p className="text-sm text-gray-500">Tester et valider vos modèles</p>
+                </div>
               </div>
-              <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => processBulkFiles(Array.from(e.target.files || []))} />
-            </label>
-            {classifying && <div className="mt-4 p-4 bg-purple-50 rounded-lg flex items-center justify-center gap-3 text-purple-600"><Loader2 className="h-5 w-5 animate-spin" /><span>Classification... {importedPhotos.filter(p => p.status === 'done').length}/{importedPhotos.length}</span></div>}
-            {Object.keys(classifiedGroups).length > 0 && !classifying && (
-              <div className="mt-4 space-y-3">
-                {Object.values(classifiedGroups).map((group, idx) => (
-                  <div key={idx} className={`p-3 rounded-lg border ${group.modelId ? 'border-green-200 bg-green-50/50' : 'border-orange-200 bg-orange-50/50'}`}>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        {group.modelId ? <CheckCircle className="h-4 w-4 text-green-600" /> : <AlertTriangle className="h-4 w-4 text-orange-600" />}
-                        <span className="font-medium">{group.modelName}</span>
-                        <Badge variant="outline">{group.photos.length}</Badge>
-                      </div>
-                      <Button size="sm" onClick={() => startReview(group.modelId, group.modelName, group.photos)}>Reviewer <ArrowRight className="h-4 w-4 ml-1" /></Button>
-                    </div>
-                  </div>
-                ))}
+            </Card>
+            <Card className="p-4 hover:border-purple-300 cursor-pointer transition-colors" onClick={() => router.push('/dashboard/meters/create')}>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
+                  <Plus className="h-5 w-5 text-green-600" />
+                </div>
+                <div>
+                  <p className="font-medium">Créer un modèle</p>
+                  <p className="text-sm text-gray-500">Ajouter un nouveau compteur</p>
+                </div>
               </div>
-            )}
-          </Card>
+            </Card>
+          </div>
+
+          {/* Models needing tests */}
+          {stats.draft > 0 && (
+            <Card className="p-4 border-amber-200 bg-amber-50">
+              <h3 className="font-semibold mb-3 flex items-center gap-2 text-amber-800">
+                <AlertTriangle className="h-5 w-5" />
+                Modèles en attente de validation ({stats.draft})
+              </h3>
+              <p className="text-sm text-amber-700 mb-3">
+                Ces modèles sont en brouillon et ne seront pas utilisés pour la reconnaissance. Lancez des tests pour les activer.
+              </p>
+              <Button size="sm" variant="outline" className="border-amber-400 text-amber-700" onClick={() => { setModelFilter('draft'); setActiveTab('models') }}>
+                Voir les brouillons
+              </Button>
+            </Card>
+          )}
         </div>
       )}
 
@@ -910,13 +940,17 @@ export default function LabsMetersPage() {
                       </Select>
                       {selectedConfigId !== 'custom' ? (
                         <div className="p-3 bg-white rounded-lg border text-sm">
-                          {(() => { const c = testConfigs.find(x => x.id === selectedConfigId); return c ? <div className="flex items-center gap-4"><span className={`px-2 py-1 rounded text-xs ${c.grayscale ? 'bg-gray-800 text-white' : 'bg-gray-100'}`}>{c.grayscale ? 'N&B' : 'Couleur'}</span><span>C:{c.contrast}%</span><span>N:{c.sharpness}%</span>{c.is_active && <Badge className="bg-green-100 text-green-700 ml-auto">Active</Badge>}</div> : null })()}
+                          {(() => { const c = testConfigs.find(x => x.id === selectedConfigId); return c ? <div className="flex items-center gap-4 flex-wrap"><span className={`px-2 py-1 rounded text-xs ${c.grayscale ? 'bg-gray-800 text-white' : 'bg-gray-100'}`}>{c.grayscale ? 'N&B' : 'Couleur'}</span><span>C:{c.contrast}%</span><span>L:{c.brightness || 0}%</span><span>N:{c.sharpness}%</span><span>S:{c.saturation || 100}%</span>{c.is_active && <Badge className="bg-green-100 text-green-700 ml-auto">Active</Badge>}</div> : null })()}
                         </div>
                       ) : (
                         <div className="p-3 bg-white rounded-lg border space-y-3">
                           <div className="flex items-center justify-between"><Label className="text-sm">Noir & Blanc</Label><Switch checked={testConfig.grayscale} onCheckedChange={(v) => setTestConfig({ ...testConfig, grayscale: v })} /></div>
                           <div><div className="flex justify-between mb-1"><Label className="text-sm">Contraste</Label><span className="text-xs text-gray-500">{testConfig.contrast}%</span></div><input type="range" min="-50" max="100" value={testConfig.contrast} onChange={(e) => setTestConfig({ ...testConfig, contrast: +e.target.value })} className="w-full accent-purple-600" /></div>
+                          <div><div className="flex justify-between mb-1"><Label className="text-sm">Luminosité</Label><span className="text-xs text-gray-500">{testConfig.brightness}%</span></div><input type="range" min="-50" max="50" value={testConfig.brightness} onChange={(e) => setTestConfig({ ...testConfig, brightness: +e.target.value })} className="w-full accent-purple-600" /></div>
                           <div><div className="flex justify-between mb-1"><Label className="text-sm">Netteté</Label><span className="text-xs text-gray-500">{testConfig.sharpness}%</span></div><input type="range" min="0" max="100" value={testConfig.sharpness} onChange={(e) => setTestConfig({ ...testConfig, sharpness: +e.target.value })} className="w-full accent-purple-600" /></div>
+                          {!testConfig.grayscale && (
+                            <div><div className="flex justify-between mb-1"><Label className="text-sm">Saturation</Label><span className="text-xs text-gray-500">{testConfig.saturation}%</span></div><input type="range" min="0" max="200" value={testConfig.saturation} onChange={(e) => setTestConfig({ ...testConfig, saturation: +e.target.value })} className="w-full accent-purple-600" /></div>
+                          )}
                           <div className="pt-2 border-t flex gap-2">
                             <Input placeholder="Nom config (optionnel)" value={newConfigName} onChange={(e) => setNewConfigName(e.target.value)} className="flex-1" />
                             <Button onClick={saveNewConfig} disabled={savingConfig} className="bg-purple-600 hover:bg-purple-700">
