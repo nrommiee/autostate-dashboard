@@ -8,6 +8,20 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
+// Helper to fetch image and convert to base64
+async function urlToBase64(url: string): Promise<string | null> {
+  try {
+    const response = await fetch(url)
+    if (!response.ok) return null
+    const arrayBuffer = await response.arrayBuffer()
+    const base64 = Buffer.from(arrayBuffer).toString('base64')
+    return base64
+  } catch (error) {
+    console.error('Error fetching image:', error)
+    return null
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const { photo_base64, detected_name, detected_manufacturer, detected_type } = await request.json()
@@ -37,21 +51,42 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // Préparer les images pour Claude (max 5 modèles pour limiter les tokens)
-    const modelsToCompare = modelsWithPhotos.slice(0, 10)
+    // Limiter à 5 modèles pour éviter trop de tokens
+    const modelsToCompare = modelsWithPhotos.slice(0, 5)
     
+    // Préparer les images existantes en base64
+    const modelImages: { model: typeof modelsToCompare[0], base64: string }[] = []
+    
+    for (const model of modelsToCompare) {
+      const photoUrl = model.reference_photos[0]
+      if (photoUrl) {
+        const base64 = await urlToBase64(photoUrl)
+        if (base64) {
+          modelImages.push({ model, base64 })
+        }
+      }
+    }
+
+    if (modelImages.length === 0) {
+      return NextResponse.json({ 
+        isDuplicate: false, 
+        matchedModel: null,
+        confidence: 0 
+      })
+    }
+
     // Construire le contenu pour Claude
     const content: any[] = [
       {
         type: 'text',
-        text: `Tu es un expert en identification de compteurs. 
+        text: `Tu es un expert en identification de compteurs d'énergie.
+
+TÂCHE: Compare la NOUVELLE PHOTO avec les ${modelImages.length} modèles existants pour détecter si c'est un doublon.
 
 NOUVELLE PHOTO À ANALYSER:
 - Nom détecté: ${detected_name || 'Non détecté'}
 - Fabricant détecté: ${detected_manufacturer || 'Non détecté'}
-- Type détecté: ${detected_type || 'Non détecté'}
-
-Voici la photo du nouveau compteur:`
+- Type détecté: ${detected_type || 'Non détecté'}`
       },
       {
         type: 'image',
@@ -60,33 +95,26 @@ Voici la photo du nouveau compteur:`
           media_type: 'image/jpeg',
           data: photo_base64
         }
-      },
-      {
-        type: 'text',
-        text: `\n\nVoici les modèles existants dans la base de données. Compare la nouvelle photo avec chacun:\n`
       }
     ]
 
     // Ajouter chaque modèle existant avec sa photo
-    for (let i = 0; i < modelsToCompare.length; i++) {
-      const model = modelsToCompare[i]
-      const photoUrl = model.reference_photos[0]
+    for (let i = 0; i < modelImages.length; i++) {
+      const { model, base64 } = modelImages[i]
       
       content.push({
         type: 'text',
         text: `\n--- MODÈLE ${i + 1}: "${model.name}" (${model.manufacturer || 'Fabricant inconnu'}) - Type: ${model.meter_type} ---`
       })
 
-      // Si c'est une URL, on l'ajoute comme référence
-      if (photoUrl.startsWith('http')) {
-        content.push({
-          type: 'image',
-          source: {
-            type: 'url',
-            url: photoUrl
-          }
-        })
-      }
+      content.push({
+        type: 'image',
+        source: {
+          type: 'base64',
+          media_type: 'image/jpeg',
+          data: base64
+        }
+      })
     }
 
     content.push({
@@ -94,21 +122,22 @@ Voici la photo du nouveau compteur:`
       text: `
 
 ANALYSE DEMANDÉE:
-Compare la nouvelle photo avec tous les modèles existants ci-dessus.
+Compare la NOUVELLE PHOTO (première image) avec tous les modèles existants ci-dessus.
 
-Réponds UNIQUEMENT en JSON valide avec cette structure:
+Réponds UNIQUEMENT en JSON valide:
 {
-  "isDuplicate": true/false,
-  "matchedModelIndex": numéro du modèle (1-${modelsToCompare.length}) ou null si pas de match,
+  "isDuplicate": true ou false,
+  "matchedModelIndex": numéro du modèle (1-${modelImages.length}) ou null,
   "confidence": pourcentage de 0 à 100,
   "reason": "explication courte"
 }
 
-Un compteur est considéré comme DOUBLON si:
-- C'est le MÊME modèle exact (même marque, même référence)
+RÈGLES:
+- isDuplicate = true UNIQUEMENT si c'est le MÊME modèle exact (même marque, même référence)
 - Pas juste un compteur similaire ou de la même famille
+- Sois strict: isDuplicate=true seulement si confiance > 80%
 
-Sois strict: ne retourne isDuplicate=true que si tu es sûr à plus de 80% que c'est le même modèle exact.`
+JSON:`
     })
 
     const response = await anthropic.messages.create({
@@ -131,13 +160,14 @@ Sois strict: ne retourne isDuplicate=true que si tu es sûr à plus de 80% que c
       } else {
         throw new Error('No JSON found')
       }
-    } catch {
+    } catch (e) {
+      console.error('JSON parse error:', textContent.text)
       return NextResponse.json({ isDuplicate: false, matchedModel: null, confidence: 0 })
     }
 
     // Si doublon détecté, retourner les infos du modèle correspondant
-    if (result.isDuplicate && result.matchedModelIndex) {
-      const matchedModel = modelsToCompare[result.matchedModelIndex - 1]
+    if (result.isDuplicate && result.matchedModelIndex && result.matchedModelIndex >= 1 && result.matchedModelIndex <= modelImages.length) {
+      const matchedModel = modelImages[result.matchedModelIndex - 1].model
       return NextResponse.json({
         isDuplicate: true,
         matchedModel: {
