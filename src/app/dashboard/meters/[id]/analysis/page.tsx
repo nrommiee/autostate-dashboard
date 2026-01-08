@@ -158,7 +158,17 @@ export default function MeterModelAnalysisPage() {
       if (testsData && testsData.length > 0) {
         const stats = calculateVersionStats(testsData)
         setVersionStats(stats)
-        const suggestionResult = analyzeVersions(stats, activeTest?.image_config_label || null)
+        // Get config label from active test's image_config_used
+        let activeConfigLabel: string | null = null
+        if (activeTest?.image_config_used) {
+          const config = activeTest.image_config_used
+          const parts = []
+          if (config.grayscale) parts.push('N&B')
+          else parts.push('Couleur')
+          if (config.contrast) parts.push(`C:${config.contrast > 0 ? '+' : ''}${config.contrast}%`)
+          activeConfigLabel = parts.join(' ')
+        }
+        const suggestionResult = analyzeVersions(stats, activeConfigLabel)
         setSuggestion(suggestionResult)
       }
 
