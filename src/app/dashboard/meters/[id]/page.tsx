@@ -129,6 +129,8 @@ export default function MeterModelDetailPage() {
   
   // UI
   const [showVersionDetail, setShowVersionDetail] = useState<ModelVersion | null>(null)
+  const [showDeactivateConfirm, setShowDeactivateConfirm] = useState(false)
+  const [pendingActiveState, setPendingActiveState] = useState<boolean | null>(null)
   
   // Tests
   const [testPhotoFile, setTestPhotoFile] = useState<File | null>(null)
@@ -251,7 +253,8 @@ export default function MeterModelDetailPage() {
         await supabase.from('meter_model_prompts').update({ prompt_text: promptText }).eq('id', activeVersion.id)
       }
 
-      router.push('/dashboard/meters')
+      // Recharger les données pour confirmer la sauvegarde
+      await loadModel()
     } catch (error) {
       console.error('Error:', error)
       alert('Erreur lors de la sauvegarde')
@@ -430,9 +433,11 @@ export default function MeterModelDetailPage() {
         )}
       </Card>
 
-      {/* Photo + Informations */}
+      {/* Photo + Informations + Versions */}
       <div className="grid md:grid-cols-2 gap-6 mb-6">
-        <Card className="p-4 flex items-center justify-center">{model.reference_photos?.[0] && <img src={model.reference_photos[0]} alt={model.name} className="max-h-56 w-auto rounded-lg object-contain" />}</Card>
+        <Card className="p-4 flex items-center justify-center">
+          {model.reference_photos?.[0] && <img src={model.reference_photos[0]} alt={model.name} className="max-h-72 w-auto rounded-lg object-contain" />}
+        </Card>
         <Card className="p-4">
           <h3 className="font-semibold mb-4">Informations</h3>
           <div className="space-y-3">
@@ -452,16 +457,39 @@ export default function MeterModelDetailPage() {
             </div>
             <div className="flex items-center justify-between pt-2">
               <div><div className="font-medium text-sm">Actif</div><div className="text-xs text-gray-500">Utilisé pour la reconnaissance</div></div>
-              <Switch checked={isActive} onCheckedChange={setIsActive} />
+              <Switch 
+                checked={isActive} 
+                onCheckedChange={(checked) => {
+                  if (!checked) {
+                    setPendingActiveState(false)
+                    setShowDeactivateConfirm(true)
+                  } else {
+                    setIsActive(true)
+                  }
+                }} 
+              />
+            </div>
+            
+            {/* Version active */}
+            <div className="pt-3 border-t mt-3">
+              <Label className="text-xs text-gray-500">Version active</Label>
+              {versions.length > 0 ? (
+                <div className="flex items-center gap-2 mt-1">
+                  <Badge className="bg-green-600 text-white">v{versions.find(v => v.is_active)?.version || versions[0].version}</Badge>
+                  <span className="text-sm text-gray-500">{formatDate(versions.find(v => v.is_active)?.created_at || versions[0].created_at)}</span>
+                </div>
+              ) : (
+                <p className="text-sm text-gray-400 mt-1">Aucune version</p>
+              )}
             </div>
           </div>
         </Card>
       </div>
 
-      {/* Index + Versions */}
-      <div className="grid md:grid-cols-2 gap-6 mb-6">
-        <Card className="p-4">
-          <h3 className="font-semibold mb-3">Index de consommation</h3>
+      {/* Index de consommation */}
+      <Card className="p-4 mb-6">
+        <h3 className="font-semibold mb-3">Index de consommation</h3>
+        <div className="grid md:grid-cols-2 gap-6">
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <div><Label className="text-xs text-gray-500">Chiffres entiers</Label><Input type="number" value={integerDigits} onChange={(e) => setIntegerDigits(parseInt(e.target.value) || 1)} className="mt-1" /></div>
@@ -475,7 +503,9 @@ export default function MeterModelDetailPage() {
               </Select>
               {decimalIndicator === 'other' && <Input value={customDecimalIndicator} onChange={(e) => setCustomDecimalIndicator(e.target.value)} placeholder="Décrivez..." className="mt-2" />}
             </div>
-            <div className="p-3 bg-gray-50 rounded-lg border text-center">
+          </div>
+          <div className="flex items-center justify-center">
+            <div className="p-4 bg-gray-50 rounded-lg border text-center">
               <div className="text-xs text-gray-500 mb-2">Format attendu</div>
               <div className="font-mono text-xl">
                 <span className="bg-gray-800 text-white px-2 py-1 rounded">{formatPreview.split(',')[0]}</span>
@@ -484,46 +514,8 @@ export default function MeterModelDetailPage() {
               </div>
             </div>
           </div>
-        </Card>
-
-        <Card className="p-4">
-          <h3 className="font-semibold mb-3">Versions du modèle</h3>
-          {versions.length <= 1 ? (
-            <div className={`p-3 rounded-lg ${versions.length === 1 ? 'bg-green-50 border border-green-200' : 'bg-gray-50'}`}>
-              {versions.length === 1 ? (
-                <div className="flex items-center gap-2">
-                  <span className="font-mono font-bold">v1</span>
-                  <Badge className="bg-green-600 text-white">Actif</Badge>
-                  <span className="text-sm text-gray-500 ml-auto">{formatDate(versions[0].created_at)}</span>
-                </div>
-              ) : (
-                <p className="text-gray-500 text-sm">Enregistrez pour créer la première version.</p>
-              )}
-            </div>
-          ) : (
-            <div className="space-y-2 max-h-48 overflow-y-auto">
-              {versions.map(v => (
-                <div key={v.id} className={`flex items-center justify-between p-2 rounded-lg border ${v.is_active ? 'bg-green-50 border-green-200' : 'bg-gray-50'}`}>
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono font-bold text-sm">v{v.version}</span>
-                    {v.is_active && <Badge className="bg-green-600 text-white text-xs">Actif</Badge>}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-gray-500">{formatDate(v.created_at)}</span>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild><Button variant="ghost" size="sm" className="h-7 w-7 p-0"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => setShowVersionDetail(v)}><Eye className="h-4 w-4 mr-2" /> Voir</DropdownMenuItem>
-                        {!v.is_active && <DropdownMenuItem onClick={() => activateVersion(v)}><RotateCcw className="h-4 w-4 mr-2" /> Activer</DropdownMenuItem>}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
-      </div>
+        </div>
+      </Card>
 
       {/* Historique tests */}
       {tests.length > 0 && (
@@ -551,6 +543,34 @@ export default function MeterModelDetailPage() {
       </Button>
 
       {/* Modals */}
+      {/* Popup désactivation */}
+      <Dialog open={showDeactivateConfirm} onOpenChange={setShowDeactivateConfirm}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertCircle className="h-5 w-5 text-orange-500" />
+              Désactiver ce modèle ?
+            </DialogTitle>
+            <DialogDescription>
+              Ce modèle ne sera plus utilisé pour la reconnaissance automatique des compteurs dans l'application.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowDeactivateConfirm(false); setPendingActiveState(null) }}>Annuler</Button>
+            <Button 
+              variant="destructive" 
+              onClick={() => { 
+                setIsActive(false)
+                setShowDeactivateConfirm(false)
+                setPendingActiveState(null)
+              }}
+            >
+              Désactiver
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={!!showVersionDetail} onOpenChange={() => setShowVersionDetail(null)}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
