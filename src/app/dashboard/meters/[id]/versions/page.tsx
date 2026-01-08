@@ -409,7 +409,7 @@ export default function ModelVersionsPage() {
                 <XAxis dataKey="name" />
                 <YAxis domain={[0, 100]} unit="%" />
                 <Tooltip 
-                  formatter={(value: any, name: string) => [
+                  formatter={(value: any, name: any) => [
                     name === 'taux' ? `${value}%` : value,
                     name === 'taux' ? 'Réussite' : name === 'confiance' ? 'Confiance' : 'Tests'
                   ]}
