@@ -1045,22 +1045,9 @@ RÈGLES DE LECTURE:`
                               )}
 
                               {zone.fieldType.includes('reading') && (
-                                <div className="flex items-center gap-1 ml-auto">
-                                  <span className="text-xs text-gray-500">Déc:</span>
-                                  <div className="flex border rounded overflow-hidden">
-                                    {[0, 1, 2, 3].map(n => (
-                                      <button 
-                                        key={n}
-                                        onClick={() => updateZone(zone.id, { decimalDigits: n })}
-                                        className={`px-2 py-0.5 text-xs font-medium ${
-                                          zone.decimalDigits === n ? 'bg-teal-600 text-white' : 'bg-gray-50 hover:bg-gray-100'
-                                        }`}
-                                      >
-                                        {n}
-                                      </button>
-                                    ))}
-                                  </div>
-                                </div>
+                                <Badge variant="outline" className="text-xs ml-auto">
+                                  {decimalDigits} déc.
+                                </Badge>
                               )}
                             </div>
                           </div>
