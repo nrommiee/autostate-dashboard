@@ -53,7 +53,9 @@ interface TestRecord {
   id: string
   model_id: string
   photo_url: string
-  success: boolean
+  success?: boolean
+  is_validated?: boolean
+  is_rejected?: boolean
   confidence: number
   extracted_serial: string | null
   extracted_reading: string | null
@@ -185,11 +187,12 @@ export default function MeterModelAnalysisPage() {
     })
 
     return Object.entries(groups).map(([label, groupTests]) => {
-      const successful = groupTests.filter(t => t.success).length
+      // Use success OR is_validated (for compatibility)
+      const successful = groupTests.filter(t => t.success ?? t.is_validated).length
       const successRate = (successful / groupTests.length) * 100
       
       // Calculate consistency (standard deviation of success rate)
-      const successValues: number[] = groupTests.map(t => t.success ? 1 : 0)
+      const successValues: number[] = groupTests.map(t => (t.success ?? t.is_validated) ? 1 : 0)
       const mean = successValues.reduce((a: number, b: number) => a + b, 0) / successValues.length
       const variance = successValues.reduce((sum: number, val: number) => sum + Math.pow(val - mean, 2), 0) / successValues.length
       const stdDev = Math.sqrt(variance)
@@ -579,13 +582,15 @@ export default function MeterModelAnalysisPage() {
             </div>
           ) : (
             <div className="space-y-2">
-              {tests.map((test, index) => (
+              {tests.map((test, index) => {
+                const isSuccess = test.success ?? test.is_validated
+                return (
                 <div 
                   key={test.id}
                   className={`p-4 rounded-lg border transition-colors ${
                     test.is_active 
                       ? 'bg-purple-50 border-purple-300' 
-                      : test.success 
+                      : isSuccess 
                         ? 'bg-green-50/50 border-green-200 hover:bg-green-50' 
                         : 'bg-red-50/50 border-red-200 hover:bg-red-50'
                   }`}
@@ -595,7 +600,7 @@ export default function MeterModelAnalysisPage() {
                       {test.is_active && (
                         <Star className="h-5 w-5 text-yellow-500 fill-yellow-500" />
                       )}
-                      {test.success ? (
+                      {isSuccess ? (
                         <CheckCircle className="h-5 w-5 text-green-600" />
                       ) : (
                         <X className="h-5 w-5 text-red-600" />
@@ -639,7 +644,7 @@ export default function MeterModelAnalysisPage() {
                         </TooltipTrigger>
                         <TooltipContent>Voir détails</TooltipContent>
                       </Tooltip>
-                      {test.success && !test.is_active && (
+                      {isSuccess && !test.is_active && (
                         <Button
                           size="sm"
                           variant="outline"
@@ -674,7 +679,7 @@ export default function MeterModelAnalysisPage() {
                     </div>
                   </div>
                 </div>
-              ))}
+              )})}
             </div>
           )}
         </Card>
@@ -710,7 +715,7 @@ export default function MeterModelAnalysisPage() {
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 Détail du test
-                {showTestDetailModal?.success ? (
+                {(showTestDetailModal?.success ?? showTestDetailModal?.is_validated) ? (
                   <Badge className="bg-green-600">Validé</Badge>
                 ) : (
                   <Badge className="bg-red-600">Rejeté</Badge>
