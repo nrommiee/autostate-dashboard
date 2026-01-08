@@ -6,7 +6,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
-// GET - List all meter models with test counts
+// GET - List all meter models with test counts from labs_experiments
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
@@ -30,30 +30,44 @@ export async function GET(request: NextRequest) {
 
     if (error) throw error
 
-    // Get test counts from lab_experiments for each model
+    // Get test stats from labs_experiments for each model
     if (models && models.length > 0) {
       const modelIds = models.map(m => m.id)
       
-      const { data: testCounts } = await supabase
-        .from('lab_experiments')
-        .select('meter_model_id')
+      // FIXED: Use labs_experiments (plural) and get status for stats
+      const { data: experiments } = await supabase
+        .from('labs_experiments')
+        .select('meter_model_id, status')
         .in('meter_model_id', modelIds)
       
-      // Count tests per model
-      const countMap: Record<string, number> = {}
-      if (testCounts) {
-        testCounts.forEach(t => {
-          countMap[t.meter_model_id] = (countMap[t.meter_model_id] || 0) + 1
+      // Calculate stats per model
+      const statsMap: Record<string, { total: number; success: number; failed: number }> = {}
+      
+      if (experiments) {
+        experiments.forEach(exp => {
+          if (!statsMap[exp.meter_model_id]) {
+            statsMap[exp.meter_model_id] = { total: 0, success: 0, failed: 0 }
+          }
+          statsMap[exp.meter_model_id].total++
+          
+          if (exp.status === 'validated' || exp.status === 'corrected') {
+            statsMap[exp.meter_model_id].success++
+          } else if (exp.status === 'rejected') {
+            statsMap[exp.meter_model_id].failed++
+          }
         })
       }
       
-      // Add test_count to each model
-      const modelsWithTests = models.map(m => ({
+      // Add stats to each model
+      const modelsWithStats = models.map(m => ({
         ...m,
-        test_count: countMap[m.id] || 0
+        total_scans: statsMap[m.id]?.total || 0,
+        success_count: statsMap[m.id]?.success || 0,
+        fail_count: statsMap[m.id]?.failed || 0,
+        test_count: statsMap[m.id]?.total || 0
       }))
       
-      return NextResponse.json(modelsWithTests)
+      return NextResponse.json(modelsWithStats)
     }
 
     return NextResponse.json(models || [])
