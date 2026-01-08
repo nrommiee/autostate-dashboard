@@ -61,7 +61,7 @@ interface TestConfig {
 
 interface LabsExperiment {
   id: string
-  model_id: string
+  meter_model_id: string
   prompt_version_id: string | null
   test_config_id: string | null
   status: string
@@ -144,7 +144,7 @@ export default function AnalysisPage() {
       const { data: testsData } = await supabase
         .from('labs_experiments')
         .select('*')
-        .eq('model_id', modelId)
+        .eq('meter_model_id', modelId)
         .order('created_at', { ascending: false })
 
       const testsArray = testsData || []
