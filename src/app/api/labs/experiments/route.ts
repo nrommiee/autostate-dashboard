@@ -96,7 +96,8 @@ export async function POST(request: NextRequest) {
       image_config_used,
       tokens_input,
       tokens_output,
-      processing_time_ms
+      processing_time_ms,
+      test_config_id // ID de la config de test nommée (optionnel)
     } = body
 
     if (!meter_model_id || !status) {
@@ -164,6 +165,7 @@ export async function POST(request: NextRequest) {
       .insert({
         meter_model_id,
         version_id: versionId, // Lier à la version
+        test_config_id: test_config_id || null, // Lier à la config nommée
         photo_url,
         photo_processed_url,
         extracted_data: extracted_data || {},
