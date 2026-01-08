@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useRef, useCallback } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -162,17 +162,21 @@ export default function LabsMetersPage() {
   // Single test state
   const [testPhotoFile, setTestPhotoFile] = useState<File | null>(null)
   const [testPhotoUrl, setTestPhotoUrl] = useState<string | null>(null)
-  const [testProcessedUrl, setTestProcessedUrl] = useState<string | null>(null)
   const [testConfig, setTestConfig] = useState<ImageConfig>(DEFAULT_CONFIG)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<any>(null)
+  const [validating, setValidating] = useState(false)
+  const [rejecting, setRejecting] = useState(false)
   
   // Correction modal
   const [showCorrectionModal, setShowCorrectionModal] = useState(false)
   const [correctionData, setCorrectionData] = useState<Record<string, string>>({})
   const [correctionPhotoId, setCorrectionPhotoId] = useState<string | null>(null)
   
-  const canvasRef = useRef<HTMLCanvasElement>(null)
+  // Modal correction test unitaire
+  const [showTestCorrectionModal, setShowTestCorrectionModal] = useState(false)
+  const [testCorrectionSerial, setTestCorrectionSerial] = useState('')
+  const [testCorrectionReading, setTestCorrectionReading] = useState('')
 
   // ============================================================================
   // DATA LOADING
@@ -182,16 +186,45 @@ export default function LabsMetersPage() {
     loadData()
   }, [])
 
+  // Récupérer les paramètres URL (tab et model)
+  useEffect(() => {
+    const tab = searchParams.get('tab')
+    const modelId = searchParams.get('model')
+    
+    if (tab === 'tests') {
+      setActiveTab('tests')
+    }
+    if (modelId) {
+      setTestModelId(modelId)
+      setTestMode('single')
+    }
+  }, [searchParams])
+
+  // Charger les experiments quand on sélectionne un modèle pour les tests
+  useEffect(() => {
+    if (testModelId) {
+      loadModelExperiments(testModelId)
+    }
+  }, [testModelId])
+
   async function loadData() {
     setLoading(true)
     try {
-      const [modelsRes, versionsRes] = await Promise.all([
+      const [modelsRes, versionsRes, allExperimentsRes] = await Promise.all([
         supabase.from('meter_models').select('*').order('name'),
-        supabase.from('recognition_versions').select('*').order('created_at', { ascending: false })
+        supabase.from('recognition_versions').select('*').order('created_at', { ascending: false }),
+        // Charger tous les experiments du mois pour les stats de coût
+        supabase.from('lab_experiments')
+          .select('*')
+          .gte('created_at', new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString())
       ])
       
       if (modelsRes.data) setModels(modelsRes.data)
       if (versionsRes.data) setVersions(versionsRes.data)
+      // Utiliser allExperiments pour les stats globales si pas de modèle sélectionné
+      if (allExperimentsRes.data && !testModelId) {
+        setExperiments(allExperimentsRes.data)
+      }
     } catch (err) {
       console.error('Error loading data:', err)
     }
@@ -199,14 +232,21 @@ export default function LabsMetersPage() {
   }
 
   async function loadModelExperiments(modelId: string) {
-    const { data } = await supabase
+    console.log('Loading experiments for model:', modelId)
+    const { data, error } = await supabase
       .from('lab_experiments')
       .select('*')
       .eq('meter_model_id', modelId)
       .order('created_at', { ascending: false })
       .limit(50)
     
-    if (data) setExperiments(data)
+    if (error) {
+      console.error('Error loading experiments:', error)
+    }
+    if (data) {
+      console.log('Loaded experiments:', data.length)
+      setExperiments(data)
+    }
   }
 
   // ============================================================================
@@ -255,11 +295,65 @@ export default function LabsMetersPage() {
   // HANDLERS
   // ============================================================================
 
-  // Bulk import
-  async function handleBulkImport(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(e.target.files || [])
+  // Redimensionner une image pour qu'elle ne dépasse pas maxSize (en pixels)
+  async function resizeImage(file: File, maxSize: number = 1600): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const img = new Image()
+      const objectUrl = URL.createObjectURL(file)
+      
+      img.onload = () => {
+        let { width, height } = img
+        
+        // Calculer les nouvelles dimensions
+        if (width > maxSize || height > maxSize) {
+          if (width > height) {
+            height = Math.round((height * maxSize) / width)
+            width = maxSize
+          } else {
+            width = Math.round((width * maxSize) / height)
+            height = maxSize
+          }
+        }
+        
+        // Créer un canvas et dessiner l'image redimensionnée
+        const canvas = document.createElement('canvas')
+        canvas.width = width
+        canvas.height = height
+        
+        const ctx = canvas.getContext('2d')
+        if (!ctx) {
+          URL.revokeObjectURL(objectUrl)
+          reject(new Error('Could not get canvas context'))
+          return
+        }
+        
+        ctx.drawImage(img, 0, 0, width, height)
+        
+        // Convertir en base64 avec compression JPEG
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.85)
+        const base64 = dataUrl.split(',')[1]
+        
+        console.log(`Resized image: ${img.width}x${img.height} -> ${width}x${height}, base64 length: ${base64.length}`)
+        
+        URL.revokeObjectURL(objectUrl)
+        resolve(base64)
+      }
+      
+      img.onerror = () => {
+        URL.revokeObjectURL(objectUrl)
+        reject(new Error('Failed to load image'))
+      }
+      
+      img.src = objectUrl
+    })
+  }
+
+  // Bulk import - traiter les fichiers
+  async function processBulkFiles(files: File[]) {
+    console.log('processBulkFiles called, files:', files.length)
     if (!files.length) return
 
+    // Créer les objets photo
     const newPhotos: ImportedPhoto[] = files.map(file => ({
       id: crypto.randomUUID(),
       file,
@@ -271,41 +365,73 @@ export default function LabsMetersPage() {
       confidence: 0
     }))
 
+    console.log('Setting imported photos:', newPhotos.length)
     setImportedPhotos(newPhotos)
     setClassifying(true)
 
-    // Analyze each photo
-    for (const photo of newPhotos) {
+    // Analyser chaque photo séquentiellement
+    for (let i = 0; i < newPhotos.length; i++) {
+      const photo = newPhotos[i]
+      console.log(`Processing photo ${i + 1}/${newPhotos.length}:`, photo.file.name)
+      
       try {
+        // Mettre à jour le statut à "analyzing"
         photo.status = 'analyzing'
         setImportedPhotos([...newPhotos])
 
-        const base64 = await fileToBase64(photo.file)
+        // Redimensionner et convertir en base64 (max 1600px pour rester sous 4MB)
+        const base64 = await resizeImage(photo.file, 1600)
+        console.log(`Photo ${i + 1} base64 length:`, base64.length)
+        
+        // Vérifier que la taille est OK
+        if (base64.length > 4000000) {
+          console.warn(`Photo ${i + 1} still too large, trying smaller size`)
+          const smallerBase64 = await resizeImage(photo.file, 1200)
+          console.log(`Photo ${i + 1} smaller base64 length:`, smallerBase64.length)
+        }
+        
+        // Appeler l'API de classification
         const response = await fetch('/api/labs/classify-meter', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ photo: base64 })
         })
 
+        console.log(`Photo ${i + 1} response:`, response.status, response.statusText)
+        
         if (response.ok) {
           const result = await response.json()
+          console.log(`Photo ${i + 1} result:`, result)
+          
           photo.matchedModelId = result.matchedModel?.id || null
-          photo.matchedModelName = result.matchedModel?.name || null
+          photo.matchedModelName = result.matchedModel?.name || 'Non reconnu'
           photo.extractedData = result.extractedData || null
           photo.confidence = result.confidence || 0
           photo.status = 'done'
         } else {
+          const errorText = await response.text()
+          console.error(`Photo ${i + 1} API error:`, response.status, errorText)
           photo.status = 'error'
-          photo.error = 'Échec de l\'analyse'
+          photo.error = response.status === 413 ? 'Photo trop grande' : `Erreur API: ${response.status}`
         }
-      } catch (err) {
+      } catch (err: any) {
+        console.error(`Photo ${i + 1} exception:`, err)
         photo.status = 'error'
-        photo.error = 'Erreur réseau'
+        photo.error = err.message || 'Erreur inconnue'
       }
+      
+      // Mettre à jour l'état après chaque photo
       setImportedPhotos([...newPhotos])
     }
 
+    console.log('Classification complete')
     setClassifying(false)
+  }
+
+  // Legacy handler pour l'input file (garde pour compatibilité)
+  async function handleBulkImport(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files || [])
+    await processBulkFiles(files)
   }
 
   // Start review session
@@ -522,6 +648,18 @@ export default function LabsMetersPage() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [reviewSession, showCorrectionModal])
 
+  // Charger la config du modèle quand on le sélectionne
+  useEffect(() => {
+    if (testModelId) {
+      const model = models.find(m => m.id === testModelId)
+      if (model?.image_config_overrides) {
+        setTestConfig(model.image_config_overrides)
+      } else {
+        setTestConfig(DEFAULT_CONFIG)
+      }
+    }
+  }, [testModelId, models])
+
   // Single test
   async function handleSingleTestPhoto(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -533,68 +671,80 @@ export default function LabsMetersPage() {
     setTestResult(null)
   }
 
-  // State for coherence check
-  const [checkingCoherence, setCheckingCoherence] = useState(false)
-  const [coherenceResult, setCoherenceResult] = useState<{
-    isCoherent: boolean
-    confidence: number
-    reason: string
-    modelName?: string
-  } | null>(null)
-  const [showCoherenceWarning, setShowCoherenceWarning] = useState(false)
+  // Générer une image avec les filtres appliqués ET redimensionnée
+  async function applyFiltersToImage(file: File, maxSize: number = 1600): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const img = new Image()
+      const objectUrl = URL.createObjectURL(file)
+      
+      img.onload = () => {
+        let { width, height } = img
+        
+        // Redimensionner si nécessaire
+        if (width > maxSize || height > maxSize) {
+          if (width > height) {
+            height = Math.round((height * maxSize) / width)
+            width = maxSize
+          } else {
+            width = Math.round((width * maxSize) / height)
+            height = maxSize
+          }
+        }
+        
+        const canvas = document.createElement('canvas')
+        canvas.width = width
+        canvas.height = height
+        
+        const ctx = canvas.getContext('2d')
+        if (!ctx) {
+          URL.revokeObjectURL(objectUrl)
+          reject(new Error('Could not get canvas context'))
+          return
+        }
+        
+        // Construire les filtres CSS
+        const filters: string[] = []
+        if (testConfig.grayscale) filters.push('grayscale(100%)')
+        if (testConfig.contrast !== 0) filters.push(`contrast(${100 + testConfig.contrast}%)`)
+        if (testConfig.brightness !== 0) filters.push(`brightness(${100 + testConfig.brightness}%)`)
+        
+        ctx.filter = filters.length > 0 ? filters.join(' ') : 'none'
+        ctx.drawImage(img, 0, 0, width, height)
+        
+        // Extraire le base64 avec compression JPEG
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.85)
+        const base64 = dataUrl.split(',')[1]
+        
+        console.log(`applyFiltersToImage: ${img.width}x${img.height} -> ${width}x${height}, filters: ${filters.join(' ') || 'none'}, base64: ${base64.length}`)
+        
+        URL.revokeObjectURL(objectUrl)
+        resolve(base64)
+      }
+      
+      img.onerror = () => {
+        URL.revokeObjectURL(objectUrl)
+        reject(new Error('Failed to load image'))
+      }
+      
+      img.src = objectUrl
+    })
+  }
 
   async function runSingleTest() {
     if (!testPhotoFile || !testModelId) return
     
-    // First, check coherence
-    setCheckingCoherence(true)
-    setCoherenceResult(null)
-    
-    try {
-      const base64 = await fileToBase64(testPhotoFile)
-      
-      const coherenceResponse = await fetch('/api/check-meter-coherence', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          testPhoto: base64,
-          modelId: testModelId
-        })
-      })
-      
-      const coherence = await coherenceResponse.json()
-      setCoherenceResult(coherence)
-      
-      // If not coherent and confidence is high, show warning
-      if (!coherence.isCoherent && coherence.confidence > 0.7 && !coherence.skipped) {
-        setCheckingCoherence(false)
-        setShowCoherenceWarning(true)
-        return
-      }
-      
-      // Continue with test
-      await executeTest(base64)
-      
-    } catch (err) {
-      console.error('Coherence check error:', err)
-      // Continue with test anyway if coherence check fails
-      const base64 = await fileToBase64(testPhotoFile)
-      await executeTest(base64)
-    }
-    
-    setCheckingCoherence(false)
-  }
-  
-  async function executeTest(base64: string) {
     setTesting(true)
     try {
+      // Générer l'image avec les filtres appliqués
+      const photoToAnalyze = await applyFiltersToImage(testPhotoFile)
+      
       const model = models.find(m => m.id === testModelId)
       
       const response = await fetch('/api/test-meter', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          testPhoto: base64,
+          testPhoto: photoToAnalyze,
           modelId: testModelId,
           imageConfig: testConfig,
           promptRules: model?.ai_description
@@ -609,11 +759,123 @@ export default function LabsMetersPage() {
     setTesting(false)
   }
 
+  // Valider test unitaire (prend en compte si corrigé ou non)
+  async function handleValidateSingleTest() {
+    if (!testPhotoFile || !testModelId || !testResult) return
+    
+    setValidating(true)
+    try {
+      const base64 = await fileToBase64(testPhotoFile)
+      
+      // Déterminer si c'est une correction ou une validation simple
+      const wasCorrected = testResult.wasCorrected === true
+      
+      await fetch('/api/labs/experiments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          meter_model_id: testModelId,
+          photo_base64: base64,
+          extracted_data: {
+            serial: { value: testResult.originalSerial || testResult.extractedSerial, confidence: testResult.confidence },
+            reading: { value: testResult.originalReading || testResult.extractedReading, confidence: testResult.confidence }
+          },
+          corrected_data: wasCorrected ? {
+            serial: testResult.extractedSerial,
+            reading: testResult.extractedReading
+          } : null,
+          confidence: testResult.confidence,
+          status: wasCorrected ? 'corrected' : 'validated',
+          image_config_used: testConfig
+        })
+      })
+      
+      // Reset
+      setTestPhotoUrl(null)
+      setTestPhotoFile(null)
+      setTestResult(null)
+      
+      // Refresh experiments pour ce modèle
+      await loadModelExperiments(testModelId)
+    } catch (err) {
+      console.error('Error validating test:', err)
+    }
+    setValidating(false)
+  }
+
+  // Rejeter test unitaire
+  async function handleRejectSingleTest() {
+    if (!testPhotoFile || !testModelId) return
+    
+    setRejecting(true)
+    try {
+      const base64 = await fileToBase64(testPhotoFile)
+      
+      await fetch('/api/labs/experiments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          meter_model_id: testModelId,
+          photo_base64: base64,
+          extracted_data: testResult ? {
+            serial: { value: testResult.extractedSerial, confidence: testResult.confidence },
+            reading: { value: testResult.extractedReading, confidence: testResult.confidence }
+          } : {},
+          corrected_data: null,
+          confidence: testResult?.confidence || 0,
+          status: 'rejected',
+          image_config_used: testConfig
+        })
+      })
+      
+      // Reset
+      setTestPhotoUrl(null)
+      setTestPhotoFile(null)
+      setTestResult(null)
+      
+      // Refresh experiments
+      await loadModelExperiments(testModelId)
+    } catch (err) {
+      console.error('Error rejecting test:', err)
+    }
+    setRejecting(false)
+  }
+
+  // Ouvrir le modal de correction avec les valeurs actuelles
+  function openTestCorrectionModal() {
+    setTestCorrectionSerial(testResult?.extractedSerial || '')
+    setTestCorrectionReading(testResult?.extractedReading || '')
+    setShowTestCorrectionModal(true)
+  }
+
+  // Appliquer la correction (met à jour les valeurs affichées sans sauvegarder)
+  function applyTestCorrection() {
+    setTestResult({
+      ...testResult,
+      extractedSerial: testCorrectionSerial,
+      extractedReading: testCorrectionReading,
+      wasCorrected: true,
+      originalSerial: testResult?.originalSerial || testResult?.extractedSerial,
+      originalReading: testResult?.originalReading || testResult?.extractedReading
+    })
+    setShowTestCorrectionModal(false)
+  }
+
   // Utility
   async function fileToBase64(file: File): Promise<string> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const reader = new FileReader()
-      reader.onloadend = () => resolve((reader.result as string).split(',')[1])
+      reader.onloadend = () => {
+        const result = reader.result as string
+        if (result) {
+          // Retirer le préfixe "data:image/jpeg;base64,"
+          const base64 = result.split(',')[1]
+          resolve(base64)
+        } else {
+          reject(new Error('FileReader returned empty result'))
+        }
+      }
+      reader.onerror = () => reject(reader.error)
       reader.readAsDataURL(file)
     })
   }
@@ -684,25 +946,56 @@ export default function LabsMetersPage() {
               Résultat IA
             </h3>
 
-            {currentPhoto.extractedData ? (
+            {currentPhoto.extractedData && Object.keys(currentPhoto.extractedData).length > 0 ? (
               <div className="space-y-4 flex-1">
-                {zones.map(zone => {
-                  const data = currentPhoto.extractedData?.[zone.id]
-                  return (
-                    <div key={zone.id} className="p-3 bg-gray-50 rounded-lg">
-                      <p className="text-xs text-gray-500 mb-1">{zone.label}</p>
-                      <p className="text-xl font-mono font-semibold">
-                        {data?.value || '-'}
-                      </p>
-                      {data?.confidence && (
-                        <p className="text-xs text-gray-400 mt-1">
-                          Confiance: {(data.confidence * 100).toFixed(0)}%
-                        </p>
-                      )}
-                    </div>
-                  )
-                })}
+                {/* Toujours afficher N° série et Index en premier */}
+                {currentPhoto.extractedData.serial && (
+                  <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
+                    <p className="text-xs text-blue-600 font-medium mb-1">N° SÉRIE</p>
+                    <p className="text-2xl font-mono font-bold text-blue-900">
+                      {currentPhoto.extractedData.serial.value}
+                    </p>
+                    <p className="text-xs text-blue-500 mt-1">
+                      Confiance: {(currentPhoto.extractedData.serial.confidence * 100).toFixed(0)}%
+                    </p>
+                  </div>
+                )}
 
+                {currentPhoto.extractedData.reading && (
+                  <div className="p-4 bg-green-50 rounded-lg border border-green-200">
+                    <p className="text-xs text-green-600 font-medium mb-1">INDEX</p>
+                    <p className="text-2xl font-mono font-bold text-green-900">
+                      {currentPhoto.extractedData.reading.value}
+                    </p>
+                    <p className="text-xs text-green-500 mt-1">
+                      Confiance: {(currentPhoto.extractedData.reading.confidence * 100).toFixed(0)}%
+                    </p>
+                  </div>
+                )}
+
+                {/* Index jour/nuit si présents */}
+                {currentPhoto.extractedData.reading_day && (
+                  <div className="p-3 bg-yellow-50 rounded-lg border border-yellow-200">
+                    <p className="text-xs text-yellow-600 font-medium mb-1">INDEX JOUR</p>
+                    <p className="text-xl font-mono font-bold">{currentPhoto.extractedData.reading_day.value}</p>
+                  </div>
+                )}
+                {currentPhoto.extractedData.reading_night && (
+                  <div className="p-3 bg-indigo-50 rounded-lg border border-indigo-200">
+                    <p className="text-xs text-indigo-600 font-medium mb-1">INDEX NUIT</p>
+                    <p className="text-xl font-mono font-bold">{currentPhoto.extractedData.reading_night.value}</p>
+                  </div>
+                )}
+
+                {/* EAN si présent */}
+                {currentPhoto.extractedData.ean && (
+                  <div className="p-3 bg-gray-50 rounded-lg">
+                    <p className="text-xs text-gray-500 mb-1">Code EAN</p>
+                    <p className="text-sm font-mono">{currentPhoto.extractedData.ean.value}</p>
+                  </div>
+                )}
+
+                {/* Confiance globale */}
                 <div className="p-3 bg-purple-50 rounded-lg">
                   <p className="text-xs text-gray-500 mb-1">Confiance globale</p>
                   <div className="flex items-center gap-2">
@@ -712,8 +1005,10 @@ export default function LabsMetersPage() {
                 </div>
               </div>
             ) : (
-              <div className="flex-1 flex items-center justify-center text-gray-400">
-                Aucune donnée extraite
+              <div className="flex-1 flex flex-col items-center justify-center text-gray-400">
+                <AlertTriangle className="h-12 w-12 mb-3 text-orange-400" />
+                <p className="font-medium text-gray-600">Aucune donnée extraite</p>
+                <p className="text-sm text-center mt-2">L'IA n'a pas pu lire les informations de ce compteur</p>
               </div>
             )}
 
@@ -821,8 +1116,6 @@ export default function LabsMetersPage() {
 
   return (
     <div className="p-6 space-y-6">
-      <canvas ref={canvasRef} className="hidden" />
-
       {/* Header avec fond mauve */}
       <div className="bg-gradient-to-r from-purple-600 to-purple-700 -mx-6 -mt-6 p-6 pb-4">
         <div className="flex items-center gap-4">
@@ -878,7 +1171,7 @@ export default function LabsMetersPage() {
       {activeTab === 'overview' && (
         <div className="space-y-6">
           {/* Stats */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
             <Card className="p-4">
               <p className="text-xs text-gray-500 mb-1">Total modèles</p>
               <p className="text-2xl font-bold">{stats.total}</p>
@@ -894,6 +1187,12 @@ export default function LabsMetersPage() {
             <Card className="p-4">
               <p className="text-xs text-gray-500 mb-1">Archivés</p>
               <p className="text-2xl font-bold text-gray-400">{stats.archived}</p>
+            </Card>
+            <Card className="p-4 bg-purple-50 border-purple-200">
+              <p className="text-xs text-purple-600 mb-1">Coût Labs (mois)</p>
+              <p className="text-2xl font-bold text-purple-700">
+                ${((experiments.reduce((acc, e) => acc + (e.tokens_input || 0) + (e.tokens_output || 0), 0) / 1000000) * 3).toFixed(2)}
+              </p>
             </Card>
           </div>
 
@@ -1063,11 +1362,49 @@ export default function LabsMetersPage() {
                   </DialogHeader>
 
                   <div className="space-y-4 py-4">
-                    {/* Status */}
-                    <div className="flex items-center gap-2">
-                      {selectedModel.status === 'draft' && <Badge className="bg-yellow-100 text-yellow-700">Brouillon</Badge>}
-                      {selectedModel.status === 'active' && <Badge className="bg-green-100 text-green-700">Actif</Badge>}
-                      {selectedModel.status === 'archived' && <Badge className="bg-gray-100 text-gray-600">Archivé</Badge>}
+                    {/* Photo + Status */}
+                    <div className="flex gap-4">
+                      {/* Photo du modèle */}
+                      <div className="w-32 h-32 rounded-lg bg-gray-100 overflow-hidden flex-shrink-0">
+                        {selectedModel.reference_photos?.[0] ? (
+                          <img 
+                            src={selectedModel.reference_photos[0]} 
+                            className="w-full h-full object-cover" 
+                            alt={selectedModel.name}
+                          />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-4xl text-gray-400">
+                            {METER_TYPE_ICONS[selectedModel.meter_type] || '📊'}
+                          </div>
+                        )}
+                      </div>
+                      
+                      {/* Status + Badge */}
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-3">
+                          {selectedModel.status === 'draft' && <Badge className="bg-yellow-100 text-yellow-700">Brouillon</Badge>}
+                          {selectedModel.status === 'active' && <Badge className="bg-green-100 text-green-700">Actif</Badge>}
+                          {selectedModel.status === 'archived' && <Badge className="bg-gray-100 text-gray-600">Archivé</Badge>}
+                        </div>
+                        
+                        {/* Stats mini */}
+                        <div className="grid grid-cols-3 gap-2">
+                          <div className="text-center p-2 bg-gray-50 rounded">
+                            <p className="text-lg font-bold">{selectedModel.total_scans || 0}</p>
+                            <p className="text-xs text-gray-500">Tests</p>
+                          </div>
+                          <div className="text-center p-2 bg-gray-50 rounded">
+                            <p className="text-lg font-bold text-green-600">{selectedModel.success_count || 0}</p>
+                            <p className="text-xs text-gray-500">Réussis</p>
+                          </div>
+                          <div className="text-center p-2 bg-gray-50 rounded">
+                            <p className="text-lg font-bold text-purple-600">
+                              {selectedModel.total_scans ? ((selectedModel.success_count || 0) / selectedModel.total_scans * 100).toFixed(0) : 0}%
+                            </p>
+                            <p className="text-xs text-gray-500">Succès</p>
+                          </div>
+                        </div>
+                      </div>
                     </div>
 
                     {/* Prompt */}
@@ -1079,7 +1416,7 @@ export default function LabsMetersPage() {
                         </Label>
                         <Badge variant="outline" className="text-xs">Auto-généré</Badge>
                       </div>
-                      <div className="p-3 bg-gray-50 rounded-lg text-sm font-mono whitespace-pre-wrap max-h-48 overflow-y-auto">
+                      <div className="p-3 bg-gray-50 rounded-lg text-sm font-mono whitespace-pre-wrap max-h-32 overflow-y-auto">
                         {selectedModel.ai_description || 'Aucun prompt défini'}
                       </div>
                     </div>
@@ -1102,24 +1439,6 @@ export default function LabsMetersPage() {
                         )}
                       </div>
                     </div>
-
-                    {/* Stats */}
-                    <div className="grid grid-cols-3 gap-4">
-                      <div className="p-3 bg-gray-50 rounded-lg text-center">
-                        <p className="text-2xl font-bold">{selectedModel.total_scans || 0}</p>
-                        <p className="text-xs text-gray-500">Tests</p>
-                      </div>
-                      <div className="p-3 bg-gray-50 rounded-lg text-center">
-                        <p className="text-2xl font-bold text-green-600">{selectedModel.success_count || 0}</p>
-                        <p className="text-xs text-gray-500">Réussis</p>
-                      </div>
-                      <div className="p-3 bg-gray-50 rounded-lg text-center">
-                        <p className="text-2xl font-bold text-purple-600">
-                          {selectedModel.total_scans ? ((selectedModel.success_count || 0) / selectedModel.total_scans * 100).toFixed(0) : 0}%
-                        </p>
-                        <p className="text-xs text-gray-500">Succès</p>
-                      </div>
-                    </div>
                   </div>
 
                   <DialogFooter>
@@ -1127,6 +1446,7 @@ export default function LabsMetersPage() {
                       <Button variant="outline" onClick={() => {
                         setSelectedModelId(null)
                         setTestModelId(selectedModel.id)
+                        setTestMode('single')
                         setActiveTab('tests')
                       }}>
                         <TestTube className="h-4 w-4 mr-2" />Tester dans Labs
@@ -1188,145 +1508,325 @@ export default function LabsMetersPage() {
           {testMode === 'single' && (
             <div className="space-y-4">
               {/* Model selector - ONLY ACTIVE MODELS */}
-              <div>
-                <Label>Modèle de compteur (actifs uniquement)</Label>
-                <Select value={testModelId} onValueChange={setTestModelId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Sélectionnez un modèle actif..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {models.filter(m => m.status === 'active').map(m => (
-                      <SelectItem key={m.id} value={m.id}>
-                        {METER_TYPE_ICONS[m.meter_type]} {m.name}
-                      </SelectItem>
-                    ))}
-                    {models.filter(m => m.status === 'active').length === 0 && (
-                      <div className="p-4 text-center text-gray-500 text-sm">
-                        Aucun modèle actif. Activez un modèle pour le tester.
-                      </div>
-                    )}
-                  </SelectContent>
-                </Select>
+              <div className="flex gap-4 items-end">
+                <div className="flex-1">
+                  <Label>Modèle de compteur (actifs uniquement)</Label>
+                  <Select value={testModelId} onValueChange={setTestModelId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Sélectionnez un modèle actif..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {models.filter(m => m.status === 'active').map(m => (
+                        <SelectItem key={m.id} value={m.id}>
+                          {METER_TYPE_ICONS[m.meter_type]} {m.name}
+                        </SelectItem>
+                      ))}
+                      {models.filter(m => m.status === 'active').length === 0 && (
+                        <div className="p-4 text-center text-gray-500 text-sm">
+                          Aucun modèle actif. Activez un modèle pour le tester.
+                        </div>
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {testModelId && (
+                  <Button 
+                    variant="outline" 
+                    onClick={() => router.push(`/dashboard/meters/${testModelId}`)}
+                    className="shrink-0"
+                  >
+                    <Eye className="h-4 w-4 mr-2" />
+                    Voir le modèle
+                  </Button>
+                )}
               </div>
 
               {testModelId && (
-                <div className="grid lg:grid-cols-3 gap-6">
-                  {/* Photo */}
-                  <Card className="p-4">
-                    <h3 className="font-semibold mb-3 flex items-center gap-2">
-                      <ImageIcon className="h-4 w-4" />Photo de test
-                    </h3>
-                    {testPhotoUrl ? (
-                      <div className="space-y-3">
+                <div className="space-y-4">
+                  {/* Photos côte à côte : Originale + Traitée */}
+                  <div className="grid md:grid-cols-2 gap-4">
+                    {/* Photo originale */}
+                    <Card className="p-4">
+                      <h3 className="font-semibold mb-3 flex items-center gap-2">
+                        <ImageIcon className="h-4 w-4" />Photo originale
+                      </h3>
+                      {testPhotoUrl ? (
                         <div className="relative">
-                          <img src={testPhotoUrl} alt="Test" className="w-full rounded-lg border" />
+                          <img src={testPhotoUrl} alt="Original" className="w-full rounded-lg border" />
                           <Button
                             variant="outline"
                             size="icon"
                             className="absolute top-2 right-2 bg-white/80"
-                            onClick={() => { setTestPhotoUrl(null); setTestPhotoFile(null); setTestResult(null) }}
+                            onClick={() => { 
+                              setTestPhotoUrl(null)
+                              setTestPhotoFile(null)
+                              setTestResult(null)
+                            }}
                           >
                             <RotateCcw className="h-4 w-4" />
                           </Button>
                         </div>
+                      ) : (
+                        <label className="block">
+                          <div className="h-48 flex flex-col items-center justify-center bg-gray-50 rounded-lg border-2 border-dashed hover:border-purple-400 cursor-pointer">
+                            <Upload className="h-8 w-8 text-gray-400 mb-2" />
+                            <p className="text-sm text-gray-500">Cliquez pour uploader</p>
+                          </div>
+                          <input type="file" accept="image/*" className="hidden" onChange={handleSingleTestPhoto} />
+                        </label>
+                      )}
+                    </Card>
+
+                    {/* Photo traitée - utilise CSS filters directement */}
+                    <Card className="p-4">
+                      <h3 className="font-semibold mb-3 flex items-center gap-2">
+                        <Zap className="h-4 w-4" />Photo traitée
+                        {(testConfig.grayscale || testConfig.contrast !== 0 || testConfig.brightness !== 0) && (
+                          <Badge variant="outline" className="ml-auto text-xs">
+                            {[
+                              testConfig.grayscale && 'N&B',
+                              testConfig.contrast !== 0 && `C:${testConfig.contrast > 0 ? '+' : ''}${testConfig.contrast}%`,
+                              testConfig.brightness !== 0 && `L:${testConfig.brightness > 0 ? '+' : ''}${testConfig.brightness}%`
+                            ].filter(Boolean).join(' ')}
+                          </Badge>
+                        )}
+                      </h3>
+                      {testPhotoUrl ? (
+                        <img 
+                          key={`${testConfig.grayscale}-${testConfig.contrast}-${testConfig.brightness}`}
+                          src={testPhotoUrl} 
+                          alt="Traitée" 
+                          className="w-full rounded-lg border"
+                          style={{
+                            filter: [
+                              testConfig.grayscale ? 'grayscale(100%)' : '',
+                              testConfig.contrast !== 0 ? `contrast(${100 + testConfig.contrast}%)` : '',
+                              testConfig.brightness !== 0 ? `brightness(${100 + testConfig.brightness}%)` : '',
+                            ].filter(Boolean).join(' ') || 'none'
+                          }}
+                        />
+                      ) : (
+                        <div className="h-48 flex items-center justify-center bg-gray-50 rounded-lg border text-gray-400 text-sm">
+                          Uploadez d'abord une photo
+                        </div>
+                      )}
+                    </Card>
+                  </div>
+
+                  {/* Config + Résultats */}
+                  <div className="grid md:grid-cols-2 gap-4">
+                    {/* Config */}
+                    <Card className="p-4">
+                      <h3 className="font-semibold mb-3 flex items-center gap-2">
+                        <Zap className="h-4 w-4" />Traitement image
+                      </h3>
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <Label>Noir & Blanc</Label>
+                          <Switch
+                            checked={testConfig.grayscale}
+                            onCheckedChange={(v) => setTestConfig({ ...testConfig, grayscale: v })}
+                          />
+                        </div>
+                        <div>
+                          <div className="flex justify-between mb-1">
+                            <Label className="text-sm">Contraste</Label>
+                            <span className="text-xs text-gray-500">{testConfig.contrast > 0 ? '+' : ''}{testConfig.contrast}%</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="-50"
+                            max="100"
+                            value={testConfig.contrast}
+                            onChange={(e) => setTestConfig({ ...testConfig, contrast: +e.target.value })}
+                            className="w-full accent-purple-600"
+                          />
+                        </div>
+                        <div>
+                          <div className="flex justify-between mb-1">
+                            <Label className="text-sm">Netteté</Label>
+                            <span className="text-xs text-gray-500">{testConfig.sharpness}%</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            value={testConfig.sharpness}
+                            onChange={(e) => setTestConfig({ ...testConfig, sharpness: +e.target.value })}
+                            className="w-full accent-purple-600"
+                          />
+                        </div>
+                        {testPhotoUrl && (
+                          <Button onClick={runSingleTest} disabled={testing} className="w-full mt-2 bg-purple-600">
+                            {testing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Play className="h-4 w-4 mr-2" />}
+                            Lancer l'analyse
+                          </Button>
+                        )}
+                      </div>
+                    </Card>
+
+                    {/* Résultats */}
+                    <Card className="p-4">
+                      <h3 className="font-semibold mb-3 flex items-center gap-2">
+                        <Target className="h-4 w-4" />Résultats IA
+                      </h3>
+                      {testResult ? (
+                        <div className="space-y-4">
+                          <div className={`p-4 rounded-lg ${
+                            testResult.wasCorrected ? 'bg-yellow-50 border border-yellow-200' :
+                            testResult.success ? 'bg-green-50 border border-green-200' : 
+                            'bg-red-50 border border-red-200'
+                          }`}>
+                            <div className="flex items-center gap-2 mb-3">
+                              {testResult.wasCorrected ? (
+                                <Pencil className="h-5 w-5 text-yellow-600" />
+                              ) : testResult.success ? (
+                                <CheckCircle className="h-5 w-5 text-green-600" />
+                              ) : (
+                                <XCircle className="h-5 w-5 text-red-600" />
+                              )}
+                              <span className="font-medium">
+                                {testResult.wasCorrected ? 'Corrigé' : testResult.success ? 'Reconnu' : 'Échec'}
+                              </span>
+                              <Badge variant="outline" className="ml-auto">{(testResult.confidence * 100).toFixed(0)}%</Badge>
+                            </div>
+                            <div className="space-y-2">
+                              <div className="p-2 bg-white rounded border">
+                                <p className="text-xs text-gray-500">N° série {testResult.wasCorrected && '(corrigé)'}</p>
+                                <p className="font-mono font-semibold">{testResult.extractedSerial || '-'}</p>
+                                {testResult.wasCorrected && testResult.originalSerial && (
+                                  <p className="text-xs text-gray-400 line-through">{testResult.originalSerial}</p>
+                                )}
+                              </div>
+                              <div className="p-2 bg-white rounded border">
+                                <p className="text-xs text-gray-500">Index {testResult.wasCorrected && '(corrigé)'}</p>
+                                <p className="font-mono font-semibold">{testResult.extractedReading || '-'}</p>
+                                {testResult.wasCorrected && testResult.originalReading && (
+                                  <p className="text-xs text-gray-400 line-through">{testResult.originalReading}</p>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-3 gap-2">
+                            <Button 
+                              className="bg-green-600 hover:bg-green-700" 
+                              onClick={handleValidateSingleTest}
+                              disabled={validating || rejecting}
+                            >
+                              {validating ? (
+                                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                              ) : (
+                                <Check className="h-4 w-4 mr-1" />
+                              )}
+                              {testResult.wasCorrected ? 'Valider correction' : 'Valider'}
+                            </Button>
+                            <Button variant="outline" onClick={openTestCorrectionModal} disabled={validating || rejecting}>
+                              <Pencil className="h-4 w-4 mr-1" />Corriger
+                            </Button>
+                            <Button 
+                              variant="outline" 
+                              className="text-red-600" 
+                              onClick={handleRejectSingleTest}
+                              disabled={validating || rejecting}
+                            >
+                              {rejecting ? (
+                                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                              ) : (
+                                <X className="h-4 w-4 mr-1" />
+                              )}
+                              Rejeter
+                            </Button>
+                          </div>
+                        </div>
+                      ) : testPhotoUrl ? (
+                        <div className="h-32 flex flex-col items-center justify-center text-gray-400 text-sm">
+                          <Target className="h-8 w-8 mb-2" />
+                          Lancez l'analyse pour voir les résultats
+                        </div>
+                      ) : (
+                        <div className="h-32 flex items-center justify-center text-gray-400 text-sm">
+                          Uploadez une photo
+                        </div>
+                      )}
+                    </Card>
+                  </div>
+
+                  {/* Liste des tests existants pour ce modèle */}
+                  <Card className="p-4">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="font-semibold flex items-center gap-2">
+                        <History className="h-4 w-4" />
+                        Historique des tests ({experiments.length})
+                      </h3>
+                      {experiments.length > 0 && (
+                        <Badge variant="outline">
+                          {experiments.filter(e => e.status === 'validated').length} validés / 
+                          {experiments.filter(e => e.status === 'rejected').length} rejetés
+                        </Badge>
+                      )}
+                    </div>
+                    
+                    {experiments.length === 0 ? (
+                      <div className="text-center py-8 text-gray-400">
+                        <TestTube className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                        <p>Aucun test pour ce modèle</p>
+                        <p className="text-sm mt-1">Uploadez une photo ci-dessus pour commencer</p>
                       </div>
                     ) : (
-                      <label className="block">
-                        <div className="h-48 flex flex-col items-center justify-center bg-gray-50 rounded-lg border-2 border-dashed hover:border-purple-400 cursor-pointer">
-                          <Upload className="h-8 w-8 text-gray-400 mb-2" />
-                          <p className="text-sm text-gray-500">Cliquez pour uploader</p>
-                        </div>
-                        <input type="file" accept="image/*" className="hidden" onChange={handleSingleTestPhoto} />
-                      </label>
-                    )}
-                  </Card>
-
-                  {/* Config */}
-                  <Card className="p-4">
-                    <h3 className="font-semibold mb-3 flex items-center gap-2">
-                      <Zap className="h-4 w-4" />Traitement
-                    </h3>
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <Label>Noir & Blanc</Label>
-                        <Switch
-                          checked={testConfig.grayscale}
-                          onCheckedChange={(v) => setTestConfig({ ...testConfig, grayscale: v })}
-                        />
-                      </div>
-                      <div>
-                        <div className="flex justify-between mb-1">
-                          <Label className="text-sm">Contraste</Label>
-                          <span className="text-xs text-gray-500">{testConfig.contrast > 0 ? '+' : ''}{testConfig.contrast}%</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="-50"
-                          max="100"
-                          value={testConfig.contrast}
-                          onChange={(e) => setTestConfig({ ...testConfig, contrast: +e.target.value })}
-                          className="w-full accent-purple-600"
-                        />
-                      </div>
-                      <div>
-                        <div className="flex justify-between mb-1">
-                          <Label className="text-sm">Netteté</Label>
-                          <span className="text-xs text-gray-500">{testConfig.sharpness}%</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="0"
-                          max="100"
-                          value={testConfig.sharpness}
-                          onChange={(e) => setTestConfig({ ...testConfig, sharpness: +e.target.value })}
-                          className="w-full accent-purple-600"
-                        />
-                      </div>
-                    </div>
-                  </Card>
-
-                  {/* Results */}
-                  <Card className="p-4">
-                    <h3 className="font-semibold mb-3 flex items-center gap-2">
-                      <Zap className="h-4 w-4" />Résultats
-                    </h3>
-                    {testPhotoUrl && !testResult && (
-                      <Button onClick={runSingleTest} disabled={testing} className="w-full mb-4 bg-purple-600">
-                        {testing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Play className="h-4 w-4 mr-2" />}
-                        Lancer l'analyse
-                      </Button>
-                    )}
-                    {testResult && (
-                      <div className="space-y-4">
-                        <div className={`p-4 rounded-lg ${testResult.success ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
-                          <div className="flex items-center gap-2 mb-2">
-                            {testResult.success ? (
-                              <CheckCircle className="h-5 w-5 text-green-600" />
+                      <div className="space-y-2 max-h-64 overflow-y-auto">
+                        {[...experiments].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).map(exp => (
+                          <div 
+                            key={exp.id} 
+                            className={`flex items-center gap-3 p-3 rounded-lg border ${
+                              exp.status === 'validated' ? 'bg-green-50 border-green-200' :
+                              exp.status === 'corrected' ? 'bg-yellow-50 border-yellow-200' :
+                              exp.status === 'rejected' ? 'bg-red-50 border-red-200' :
+                              'bg-gray-50 border-gray-200'
+                            }`}
+                          >
+                            {/* Thumbnail */}
+                            {exp.photo_url ? (
+                              <img src={exp.photo_url} className="w-12 h-12 object-cover rounded" />
                             ) : (
-                              <XCircle className="h-5 w-5 text-red-600" />
+                              <div className="w-12 h-12 bg-gray-200 rounded flex items-center justify-center">
+                                <ImageIcon className="h-5 w-5 text-gray-400" />
+                              </div>
                             )}
-                            <span className="font-medium">{testResult.success ? 'Reconnu' : 'Échec'}</span>
-                            <Badge variant="outline" className="ml-auto">{(testResult.confidence * 100).toFixed(0)}%</Badge>
+                            
+                            {/* Données extraites */}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                {exp.status === 'validated' && <CheckCircle className="h-4 w-4 text-green-600" />}
+                                {exp.status === 'corrected' && <Pencil className="h-4 w-4 text-yellow-600" />}
+                                {exp.status === 'rejected' && <XCircle className="h-4 w-4 text-red-600" />}
+                                <span className="font-mono text-sm">
+                                  {exp.extracted_data?.serial?.value || '-'} / {exp.extracted_data?.reading?.value || '-'}
+                                </span>
+                              </div>
+                              {exp.corrected_data && (
+                                <p className="text-xs text-yellow-600 mt-1">
+                                  Corrigé: {exp.corrected_data.serial || '-'} / {exp.corrected_data.reading || '-'}
+                                </p>
+                              )}
+                            </div>
+                            
+                            {/* Confiance + Date+Heure */}
+                            <div className="text-right text-sm">
+                              <Badge variant="outline" className="mb-1">
+                                {(exp.confidence * 100).toFixed(0)}%
+                              </Badge>
+                              <p className="text-xs text-gray-400">
+                                {new Date(exp.created_at).toLocaleDateString('fr-FR', {
+                                  day: '2-digit',
+                                  month: '2-digit',
+                                  year: 'numeric',
+                                  hour: '2-digit',
+                                  minute: '2-digit'
+                                })}
+                              </p>
+                            </div>
                           </div>
-                          {testResult.serialNumber && <p className="text-sm"><strong>N° série:</strong> {testResult.serialNumber}</p>}
-                          {testResult.reading && <p className="text-sm"><strong>Index:</strong> {testResult.reading}</p>}
-                        </div>
-                        <div className="flex gap-2">
-                          <Button className="flex-1 bg-green-600">
-                            <Check className="h-4 w-4 mr-1" />Valider
-                          </Button>
-                          <Button variant="outline" className="flex-1">
-                            <Pencil className="h-4 w-4 mr-1" />Corriger
-                          </Button>
-                          <Button variant="outline" className="flex-1 text-red-600">
-                            <X className="h-4 w-4 mr-1" />Rejeter
-                          </Button>
-                        </div>
-                      </div>
-                    )}
-                    {!testPhotoUrl && (
-                      <div className="h-32 flex items-center justify-center text-gray-400 text-sm">
-                        Uploadez une photo
+                        ))}
                       </div>
                     )}
                   </Card>
@@ -1343,22 +1843,74 @@ export default function LabsMetersPage() {
                   <FolderInput className="h-5 w-5" />
                   Import multiple
                 </h3>
-                <label className="block">
-                  <div className="h-48 flex flex-col items-center justify-center bg-gray-50 rounded-lg border-2 border-dashed hover:border-purple-400 hover:bg-purple-50 cursor-pointer transition-colors">
-                    <Upload className="h-12 w-12 text-gray-400 mb-3" />
-                    <p className="text-gray-600 font-medium">Glissez-déposez vos photos de compteurs</p>
-                    <p className="text-sm text-gray-400 mt-1">ou cliquez pour sélectionner</p>
-                  </div>
-                  <input type="file" accept="image/*" multiple className="hidden" onChange={handleBulkImport} />
-                </label>
+                <div
+                  className="h-48 flex flex-col items-center justify-center bg-gray-50 rounded-lg border-2 border-dashed hover:border-purple-400 hover:bg-purple-50 cursor-pointer transition-colors"
+                  onClick={() => document.getElementById('bulk-file-input')?.click()}
+                  onDragOver={(e) => { e.preventDefault(); e.stopPropagation() }}
+                  onDrop={async (e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'))
+                    if (files.length > 0) {
+                      await processBulkFiles(files)
+                    }
+                  }}
+                >
+                  <Upload className="h-12 w-12 text-gray-400 mb-3" />
+                  <p className="text-gray-600 font-medium">Glissez-déposez vos photos de compteurs</p>
+                  <p className="text-sm text-gray-400 mt-1">ou cliquez pour sélectionner</p>
+                </div>
+                <input 
+                  id="bulk-file-input"
+                  type="file" 
+                  accept="image/*" 
+                  multiple 
+                  className="hidden" 
+                  onChange={(e) => {
+                    const files = Array.from(e.target.files || [])
+                    if (files.length > 0) {
+                      processBulkFiles(files)
+                    }
+                  }} 
+                />
               </Card>
 
-              {/* Same classification results as overview */}
+              {/* Progress during classification */}
               {classifying && (
                 <Card className="p-6">
-                  <div className="flex items-center justify-center gap-3 text-purple-600">
-                    <Loader2 className="h-6 w-6 animate-spin" />
-                    <span>Classification en cours... {importedPhotos.filter(p => p.status === 'done').length}/{importedPhotos.length}</span>
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium">Classification en cours...</span>
+                      <span className="text-purple-600 font-semibold">
+                        {importedPhotos.filter(p => p.status === 'done' || p.status === 'error').length}/{importedPhotos.length}
+                      </span>
+                    </div>
+                    <Progress 
+                      value={(importedPhotos.filter(p => p.status === 'done' || p.status === 'error').length / importedPhotos.length) * 100} 
+                      className="h-2"
+                    />
+                    <div className="flex gap-2 overflow-x-auto pb-2">
+                      {importedPhotos.map(photo => (
+                        <div key={photo.id} className="relative shrink-0">
+                          <img src={photo.url} className="h-16 w-16 object-cover rounded-lg border" />
+                          {photo.status === 'analyzing' && (
+                            <div className="absolute inset-0 bg-black/50 rounded-lg flex items-center justify-center">
+                              <Loader2 className="h-5 w-5 text-white animate-spin" />
+                            </div>
+                          )}
+                          {photo.status === 'done' && (
+                            <div className="absolute -top-1 -right-1 bg-green-500 rounded-full p-0.5">
+                              <Check className="h-3 w-3 text-white" />
+                            </div>
+                          )}
+                          {photo.status === 'error' && (
+                            <div className="absolute -top-1 -right-1 bg-red-500 rounded-full p-0.5">
+                              <X className="h-3 w-3 text-white" />
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </Card>
               )}
@@ -1381,15 +1933,64 @@ export default function LabsMetersPage() {
                           <span className="font-medium">{group.modelName}</span>
                           <Badge variant="outline">{group.photos.length} photos</Badge>
                         </div>
-                        <Button onClick={() => startReview(group.modelId, group.modelName, group.photos)}>
-                          Reviewer <ArrowRight className="h-4 w-4 ml-1" />
-                        </Button>
+                        <div className="flex gap-2">
+                          {!group.modelId && group.photos[0]?.extractedData && (
+                            <Button 
+                              variant="outline"
+                              onClick={() => {
+                                // Encoder les données extraites pour la création
+                                const photo = group.photos[0]
+                                const params = new URLSearchParams()
+                                if (photo.extractedData?.serial?.value) {
+                                  params.set('serial', photo.extractedData.serial.value)
+                                }
+                                if (photo.extractedData?.reading?.value) {
+                                  params.set('reading', photo.extractedData.reading.value)
+                                }
+                                // Passer aussi l'URL de la photo si possible
+                                if (photo.url) {
+                                  // Stocker temporairement dans sessionStorage car l'URL blob ne survivra pas
+                                  sessionStorage.setItem('newMeterPhoto', photo.url)
+                                  params.set('hasPhoto', 'true')
+                                }
+                                router.push(`/dashboard/meters/new?${params.toString()}`)
+                              }}
+                            >
+                              <Plus className="h-4 w-4 mr-1" />
+                              Créer ce modèle
+                            </Button>
+                          )}
+                          {group.modelId && (
+                            <Button onClick={() => startReview(group.modelId, group.modelName, group.photos)}>
+                              Reviewer <ArrowRight className="h-4 w-4 ml-1" />
+                            </Button>
+                          )}
+                        </div>
                       </div>
                       <div className="flex gap-2 overflow-x-auto pb-2">
                         {group.photos.map(photo => (
-                          <img key={photo.id} src={photo.url} className="h-16 w-16 object-cover rounded-lg border" />
+                          <div key={photo.id} className="relative shrink-0">
+                            <img src={photo.url} className="h-16 w-16 object-cover rounded-lg border" />
+                            {photo.extractedData && (
+                              <div className="absolute -bottom-1 -right-1 bg-blue-500 rounded-full p-0.5">
+                                <Check className="h-3 w-3 text-white" />
+                              </div>
+                            )}
+                          </div>
                         ))}
                       </div>
+                      {/* Afficher les données extraites pour les non reconnus */}
+                      {!group.modelId && group.photos[0]?.extractedData && (
+                        <div className="mt-3 p-2 bg-white rounded border text-sm">
+                          <span className="text-gray-500">Données détectées: </span>
+                          {group.photos[0].extractedData.serial?.value && (
+                            <span className="font-mono mr-3">N°: {group.photos[0].extractedData.serial.value}</span>
+                          )}
+                          {group.photos[0].extractedData.reading?.value && (
+                            <span className="font-mono">Index: {group.photos[0].extractedData.reading.value}</span>
+                          )}
+                        </div>
+                      )}
                     </Card>
                   ))}
                 </div>
@@ -1495,49 +2096,50 @@ export default function LabsMetersPage() {
         </div>
       )}
 
-      {/* Modal: Coherence Warning */}
-      <Dialog open={showCoherenceWarning} onOpenChange={setShowCoherenceWarning}>
+      {/* Modal correction test unitaire */}
+      <Dialog open={showTestCorrectionModal} onOpenChange={setShowTestCorrectionModal}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-orange-600">
-              <AlertTriangle className="h-5 w-5" />
-              Attention : Incohérence détectée
-            </DialogTitle>
+            <DialogTitle>Corriger les valeurs extraites</DialogTitle>
             <DialogDescription>
-              La photo de test ne semble pas correspondre au modèle sélectionné.
+              Modifiez les valeurs puis cliquez sur Appliquer. Validez ensuite avec le bouton Valider.
             </DialogDescription>
           </DialogHeader>
-          
-          {coherenceResult && (
-            <div className="py-4">
-              <Card className="p-4 bg-orange-50 border-orange-200">
-                <p className="font-medium">{coherenceResult.modelName}</p>
-                <p className="text-sm text-gray-600 mt-2">{coherenceResult.reason}</p>
-                <Badge variant="outline" className="mt-2">
-                  Confiance : {Math.round(coherenceResult.confidence * 100)}%
-                </Badge>
-              </Card>
+          <div className="space-y-4 py-4">
+            <div>
+              <Label>N° série</Label>
+              <Input
+                value={testCorrectionSerial}
+                onChange={(e) => setTestCorrectionSerial(e.target.value)}
+                className="font-mono"
+                placeholder="Ex: 22004338530"
+              />
+              {testResult?.originalSerial && (
+                <p className="text-xs text-gray-400 mt-1">
+                  Valeur IA originale: {testResult.originalSerial}
+                </p>
+              )}
             </div>
-          )}
-
-          <DialogFooter className="flex gap-2">
-            <Button 
-              variant="outline" 
-              onClick={() => setShowCoherenceWarning(false)}
-            >
-              Annuler
-            </Button>
-            <Button 
-              className="bg-orange-600 hover:bg-orange-700"
-              onClick={async () => {
-                setShowCoherenceWarning(false)
-                if (testPhotoFile) {
-                  const base64 = await fileToBase64(testPhotoFile)
-                  await executeTest(base64)
-                }
-              }}
-            >
-              Continuer quand même
+            <div>
+              <Label>Index</Label>
+              <Input
+                value={testCorrectionReading}
+                onChange={(e) => setTestCorrectionReading(e.target.value)}
+                className="font-mono"
+                placeholder="Ex: 00374.805"
+              />
+              {testResult?.originalReading && (
+                <p className="text-xs text-gray-400 mt-1">
+                  Valeur IA originale: {testResult.originalReading}
+                </p>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowTestCorrectionModal(false)}>Annuler</Button>
+            <Button onClick={applyTestCorrection} className="bg-purple-600 hover:bg-purple-700">
+              <Check className="h-4 w-4 mr-2" />
+              Appliquer la correction
             </Button>
           </DialogFooter>
         </DialogContent>
