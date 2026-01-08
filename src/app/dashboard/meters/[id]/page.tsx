@@ -44,7 +44,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { 
   ArrowLeft, Save, Loader2, Check, Trash2, CheckCircle, XCircle, AlertCircle,
-  Target, MoreHorizontal, RotateCcw, Eye, Upload, Play, Edit3, X, BarChart3
+  Target, MoreHorizontal, RotateCcw, Eye, Upload, Play, Edit3, X
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 
@@ -56,7 +56,6 @@ interface MeterModel {
   unit: string
   reference_photos: string[]
   is_active: boolean
-  status: 'draft' | 'active' | 'archived'
 }
 
 interface ReadingRule {
@@ -184,29 +183,8 @@ export default function MeterModelDetailPage() {
       const { data: versionsData } = await supabase.from('meter_model_prompts').select('*').eq('model_id', modelId).order('version', { ascending: false })
       if (versionsData) setVersions(versionsData)
 
-      // Charger les tests depuis les deux sources
-      const [testsOld, testsLabs] = await Promise.all([
-        supabase.from('meter_model_tests').select('*').eq('model_id', modelId).order('created_at', { ascending: false }),
-        supabase.from('lab_experiments').select('*').eq('meter_model_id', modelId).order('created_at', { ascending: false })
-      ])
-      
-      // Combiner les deux sources (formater lab_experiments comme TestRecord)
-      const oldTests = testsOld.data || []
-      const labTests = (testsLabs.data || []).map((t: any) => ({
-        id: t.id,
-        extracted_serial: t.extracted_data?.serial?.value || null,
-        extracted_reading: t.extracted_data?.reading?.value || null,
-        is_validated: t.status === 'validated',
-        is_rejected: t.status === 'rejected',
-        correct_reading: t.corrected_data?.reading || null,
-        rejection_reason: null,
-        created_at: t.created_at,
-        source: 'labs' as const
-      }))
-      
-      setTests([...oldTests, ...labTests].sort((a, b) => 
-        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      ))
+      const { data: testsData } = await supabase.from('meter_model_tests').select('*').eq('model_id', modelId).order('created_at', { ascending: false })
+      if (testsData) setTests(testsData)
     } catch (error) {
       console.error('Error:', error)
     } finally {
@@ -372,44 +350,37 @@ export default function MeterModelDetailPage() {
             <p className="text-gray-500 text-sm">{model.manufacturer} • {typeConfig.label}</p>
           </div>
         </div>
-        <AlertDialog>
-          <AlertDialogTrigger asChild><Button variant="destructive" size="sm"><Trash2 className="h-4 w-4" /></Button></AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader><AlertDialogTitle>Supprimer ce modèle ?</AlertDialogTitle><AlertDialogDescription>Cette action est irréversible.</AlertDialogDescription></AlertDialogHeader>
-            <AlertDialogFooter><AlertDialogCancel>Annuler</AlertDialogCancel><AlertDialogAction onClick={handleDelete} className="bg-red-600 hover:bg-red-700">{deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Supprimer'}</AlertDialogAction></AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+        <div className="flex items-center gap-2">
+          <Link href={`/dashboard/meters/${modelId}/analysis`}>
+            <Button variant="outline" className="gap-2">
+              <Target className="h-4 w-4" />
+              Analyser les versions
+            </Button>
+          </Link>
+          <AlertDialog>
+            <AlertDialogTrigger asChild><Button variant="destructive" size="sm"><Trash2 className="h-4 w-4" /></Button></AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader><AlertDialogTitle>Supprimer ce modèle ?</AlertDialogTitle><AlertDialogDescription>Cette action est irréversible.</AlertDialogDescription></AlertDialogHeader>
+              <AlertDialogFooter><AlertDialogCancel>Annuler</AlertDialogCancel><AlertDialogAction onClick={handleDelete} className="bg-red-600 hover:bg-red-700">{deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Supprimer'}</AlertDialogAction></AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </div>
       </div>
 
       {/* Taux de réussite */}
       <Card className={`p-4 mb-6 ${testStats.total === 0 ? 'bg-gray-50' : testStats.successRate && testStats.successRate >= 80 ? 'bg-green-50 border-green-200' : testStats.successRate && testStats.successRate >= 50 ? 'bg-orange-50 border-orange-200' : 'bg-red-50 border-red-200'}`}>
         {testStats.total === 0 ? (
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Target className="h-6 w-6 text-gray-400" />
-              <span className="text-gray-500">Pas encore de tests</span>
-            </div>
-            {model?.status === 'active' && (
-              <Button variant="outline" size="sm" onClick={() => router.push(`/dashboard/labs/meters?tab=tests&model=${model.id}`)}>
-                Faire un test →
-              </Button>
-            )}
-          </div>
+          <div className="flex items-center gap-3"><Target className="h-6 w-6 text-gray-400" /><span className="text-gray-500">Pas encore de tests</span></div>
         ) : (
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               {testStats.successRate && testStats.successRate >= 80 ? <CheckCircle className="h-6 w-6 text-green-600" /> : testStats.successRate && testStats.successRate >= 50 ? <AlertCircle className="h-6 w-6 text-orange-600" /> : <XCircle className="h-6 w-6 text-red-600" />}
               <span className={`text-2xl font-bold ${testStats.successRate && testStats.successRate >= 80 ? 'text-green-700' : testStats.successRate && testStats.successRate >= 50 ? 'text-orange-700' : 'text-red-700'}`}>{testStats.successRate?.toFixed(0)}%</span>
             </div>
-            <div className="flex items-center gap-6">
-              <div className="flex gap-6 text-sm">
-                <div className="text-center"><div className="font-bold">{testStats.total}</div><div className="text-gray-500">Tests</div></div>
-                <div className="text-center"><div className="font-bold text-green-600">{testStats.validated}</div><div className="text-gray-500">Validés</div></div>
-                <div className="text-center"><div className="font-bold text-red-600">{testStats.rejected}</div><div className="text-gray-500">Rejetés</div></div>
-              </div>
-              <Button variant="outline" size="sm" onClick={() => router.push(`/dashboard/labs/meters?tab=tests&model=${model?.id}`)}>
-                Voir les tests →
-              </Button>
+            <div className="flex gap-6 text-sm">
+              <div className="text-center"><div className="font-bold">{testStats.total}</div><div className="text-gray-500">Tests</div></div>
+              <div className="text-center"><div className="font-bold text-green-600">{testStats.validated}</div><div className="text-gray-500">Validés</div></div>
+              <div className="text-center"><div className="font-bold text-red-600">{testStats.rejected}</div><div className="text-gray-500">Rejetés</div></div>
             </div>
           </div>
         )}
@@ -471,41 +442,8 @@ export default function MeterModelDetailPage() {
           </div>
         </Card>
 
-        {/* Prompt de reconnaissance */}
-        <Card className="p-4 md:col-span-2">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="font-semibold flex items-center gap-2">
-              <Edit3 className="h-4 w-4" />
-              Prompt de reconnaissance
-            </h3>
-            <Badge variant="outline" className="text-xs">Auto-généré</Badge>
-          </div>
-          <div className="bg-gray-50 rounded-lg border p-4">
-            <pre className="text-sm whitespace-pre-wrap font-mono text-gray-700">
-              {generatePromptText()}
-            </pre>
-          </div>
-          <p className="text-xs text-gray-400 mt-2">
-            Ce prompt est envoyé à l'IA pour la reconnaissance. Il est généré automatiquement à partir des informations ci-dessus.
-          </p>
-        </Card>
-      </div>
-
-      {/* Versions du modèle */}
-      <div className="grid md:grid-cols-2 gap-6 mb-6">
         <Card className="p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="font-semibold">Versions du modèle</h3>
-            {versions.length > 0 && (
-              <Button 
-                variant="outline" 
-                size="sm"
-                onClick={() => router.push(`/dashboard/meters/${modelId}/versions`)}
-              >
-                <BarChart3 className="h-4 w-4 mr-1" /> Analyser
-              </Button>
-            )}
-          </div>
+          <h3 className="font-semibold mb-3">Versions du modèle</h3>
           {versions.length <= 1 ? (
             <div className={`p-3 rounded-lg ${versions.length === 1 ? 'bg-green-50 border border-green-200' : 'bg-gray-50'}`}>
               {versions.length === 1 ? (
@@ -543,20 +481,72 @@ export default function MeterModelDetailPage() {
         </Card>
       </div>
 
-      {/* Lien vers Tests dans Labs */}
-      {model?.status === 'active' && (
-        <Card className="p-4 mb-6 bg-purple-50 border-purple-200">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="font-semibold text-purple-900">Tester ce modèle</h3>
-              <p className="text-sm text-purple-700">Les tests se font dans le Labs Vision Compteurs</p>
-            </div>
-            <Button onClick={() => router.push(`/dashboard/labs/meters?tab=tests&model=${model.id}`)} className="bg-purple-600 hover:bg-purple-700">
-              Aller aux Tests
-            </Button>
+      {/* Tests */}
+      <Card className="p-4 mb-6">
+        <h3 className="font-semibold mb-3">Ajouter un test</h3>
+        <div className="grid md:grid-cols-2 gap-4">
+          <div>
+            {testPhotoUrl ? (
+              <div className="relative">
+                <img src={testPhotoUrl} alt="Test" className="w-full max-h-48 object-contain rounded-lg border" />
+                <button onClick={resetTest} className="absolute top-2 right-2 p-1.5 bg-gray-800 text-white rounded-full"><RotateCcw className="h-4 w-4" /></button>
+              </div>
+            ) : (
+              <label className="flex flex-col items-center justify-center h-40 border-2 border-dashed rounded-lg cursor-pointer hover:border-teal-500 hover:bg-teal-50">
+                <Upload className="h-8 w-8 text-gray-400 mb-2" />
+                <span className="text-sm text-gray-500">Photo de test</span>
+                <input type="file" accept="image/*" onChange={handleTestPhotoUpload} className="hidden" />
+              </label>
+            )}
+            {testPhotoUrl && !currentTestResult && (
+              <Button onClick={runTest} disabled={testing} className="w-full mt-3 gap-2">
+                {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                Lancer le test
+              </Button>
+            )}
           </div>
-        </Card>
-      )}
+          <div>
+            {currentTestResult ? (
+              <div className={`p-4 rounded-lg h-full ${currentTestResult.success ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
+                <div className="flex items-center gap-2 mb-2">
+                  {currentTestResult.success ? <CheckCircle className="h-5 w-5 text-green-600" /> : <X className="h-5 w-5 text-red-600" />}
+                  <span className={`font-medium ${currentTestResult.success ? 'text-green-700' : 'text-red-700'}`}>{currentTestResult.success ? 'Reconnu' : 'Erreur'}</span>
+                  <Badge variant="outline">{Math.round(currentTestResult.confidence * 100)}%</Badge>
+                </div>
+                {currentTestResult.extractedSerial && <p className="text-sm">N°: <span className="font-mono">{currentTestResult.extractedSerial}</span></p>}
+                {currentTestResult.extractedReading && <p className="text-sm">Index: <span className="font-mono">{currentTestResult.extractedReading}</span></p>}
+                <div className="flex gap-2 mt-3">
+                  <Button onClick={validateTest} className="flex-1 gap-1"><Check className="h-4 w-4" /> Valider</Button>
+                  <Button onClick={openCorrectionModal} variant="outline" className="flex-1 gap-1"><Edit3 className="h-4 w-4" /> Corriger</Button>
+                </div>
+              </div>
+            ) : (
+              <div className="h-40 flex items-center justify-center text-gray-400 text-sm text-center p-4">
+                Les corrections enrichissent automatiquement le modèle
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Historique tests */}
+        {tests.length > 0 && (
+          <div className="mt-4 pt-4 border-t">
+            <h4 className="font-medium text-sm mb-2">Historique ({tests.length})</h4>
+            <div className="space-y-1 max-h-32 overflow-y-auto">
+              {tests.slice(0, 5).map((t, i) => (
+                <div key={t.id} className={`flex items-center justify-between p-2 rounded text-xs ${t.is_validated ? 'bg-green-50' : 'bg-red-50'}`}>
+                  <div className="flex items-center gap-2">
+                    {t.is_validated ? <Check className="h-3 w-3 text-green-600" /> : <X className="h-3 w-3 text-red-600" />}
+                    <span className="font-mono">{t.extracted_reading || '-'}</span>
+                    {t.correct_reading && <span className="text-green-600">→ {t.correct_reading}</span>}
+                  </div>
+                  <span className="text-gray-400">{formatDate(t.created_at)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </Card>
 
       {/* Enregistrer */}
       <Button onClick={() => setShowSaveConfirm(true)} disabled={saving || !name.trim()} className="w-full h-12 text-base">
