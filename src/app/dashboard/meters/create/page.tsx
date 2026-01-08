@@ -1048,7 +1048,7 @@ RÈGLES DE LECTURE:`
                                 <div className="flex items-center gap-1 ml-auto">
                                   <span className="text-xs text-gray-500">Déc:</span>
                                   <div className="flex border rounded overflow-hidden">
-                                    {[1, 2, 3].map(n => (
+                                    {[0, 1, 2, 3].map(n => (
                                       <button 
                                         key={n}
                                         onClick={() => updateZone(zone.id, { decimalDigits: n })}
