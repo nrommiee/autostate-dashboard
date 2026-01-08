@@ -38,7 +38,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { 
   ArrowLeft, Save, Loader2, Check, Trash2, CheckCircle, XCircle, AlertCircle,
-  Target, RotateCcw, Eye, EyeOff, Upload, Edit3, X, Move, ZoomIn, Camera
+  Target, RotateCcw, Eye, EyeOff, Upload, Edit3, X, Move, ZoomIn, Camera, Plus
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 
@@ -105,9 +105,10 @@ const DECIMAL_INDICATORS = [
 ]
 
 const ZONE_TYPES = [
-  { value: 'serialNumber', label: 'N° série', color: '#3B82F6' },
-  { value: 'readingSingle', label: 'Index', color: '#10B981' },
-  { value: 'ean', label: 'Code EAN', color: '#8B5CF6' },
+  { value: 'meterBounds', label: 'Zone compteur', color: '#6B7280', isParent: true },
+  { value: 'serialNumber', label: 'N° série', color: '#3B82F6', isParent: false },
+  { value: 'readingSingle', label: 'Index', color: '#10B981', isParent: false },
+  { value: 'ean', label: 'Code EAN', color: '#8B5CF6', isParent: false },
 ]
 
 export default function MeterModelDetailPage() {
@@ -590,7 +591,8 @@ export default function MeterModelDetailPage() {
                   } else {
                     setIsActive(true)
                   }
-                }} 
+                }}
+                className={isActive ? 'data-[state=checked]:bg-green-500' : 'data-[state=unchecked]:bg-red-400'}
               />
             </div>
             
@@ -612,65 +614,109 @@ export default function MeterModelDetailPage() {
 
       {/* Zones de calibration */}
       <Card className="p-4 mb-6">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="font-semibold">Zones de lecture</h3>
-          <div className="flex gap-2">
-            {ZONE_TYPES.map((type) => (
-              <Button 
-                key={type.value}
-                variant="outline" 
-                size="sm" 
-                onClick={() => addZone(type.value)}
-                disabled={zones.some(z => z.fieldType === type.value)}
-                className="gap-1 h-8 text-xs"
-                style={{ borderColor: zones.some(z => z.fieldType === type.value) ? type.color : undefined }}
-              >
-                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: type.color }} />
-                {type.label}
-              </Button>
-            ))}
-          </div>
-        </div>
+        <h3 className="font-semibold mb-3">Zones de lecture</h3>
         
-        {zones.length === 0 ? (
-          <p className="text-gray-400 text-sm py-4 text-center">Ajoutez des zones pour calibrer la lecture automatique</p>
-        ) : (
-          <div className="space-y-2">
-            {zones.map((zone) => {
-              const config = ZONE_TYPES.find(z => z.value === zone.fieldType)
-              return (
-                <div 
-                  key={zone.id} 
-                  className="flex items-center justify-between p-3 border rounded-lg"
-                  style={{ borderLeftWidth: 4, borderLeftColor: config?.color || '#6B7280' }}
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="font-medium text-sm">{zone.label}</span>
-                    {zone.position ? (
-                      <Badge variant="outline" className="text-xs bg-green-50 text-green-700">✓ Positionné</Badge>
-                    ) : (
-                      <Badge variant="outline" className="text-xs bg-orange-50 text-orange-700">Non positionné</Badge>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button 
-                      variant={zone.position ? "outline" : "default"}
-                      size="sm" 
-                      className={`h-7 text-xs gap-1 ${!zone.position ? 'bg-teal-600 hover:bg-teal-700' : ''}`}
-                      onClick={() => startRepositioning(zone.id)}
-                    >
-                      <Move className="h-3 w-3" />
-                      {zone.position ? 'Modifier' : 'Positionner'}
-                    </Button>
-                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-500" onClick={() => removeZone(zone.id)}>
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
-                  </div>
-                </div>
-              )
-            })}
+        {/* Zone compteur (parent) */}
+        <div className="mb-4">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-medium text-gray-700">1. Zone compteur</span>
           </div>
-        )}
+          {!zones.find(z => z.fieldType === 'meterBounds') ? (
+            <Button 
+              onClick={() => addZone('meterBounds')} 
+              className="w-full gap-2 bg-gray-600 hover:bg-gray-700"
+            >
+              <Plus className="h-4 w-4" />
+              Délimiter le compteur
+            </Button>
+          ) : (
+            <div className="p-3 border rounded-lg" style={{ borderLeftWidth: 4, borderLeftColor: '#6B7280' }}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium text-sm">🔲 Zone compteur</span>
+                  {zones.find(z => z.fieldType === 'meterBounds')?.position ? (
+                    <Badge variant="outline" className="text-xs bg-green-50 text-green-700">✓ Définie</Badge>
+                  ) : (
+                    <Badge variant="outline" className="text-xs bg-orange-50 text-orange-700">À définir</Badge>
+                  )}
+                </div>
+                <div className="flex gap-1">
+                  <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => startRepositioning(zones.find(z => z.fieldType === 'meterBounds')!.id)}>
+                    <Move className="h-3 w-3 mr-1" />Modifier
+                  </Button>
+                  <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-500" onClick={() => removeZone(zones.find(z => z.fieldType === 'meterBounds')!.id)}>
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Zones de données */}
+        <div className={`space-y-2 ${!zones.find(z => z.fieldType === 'meterBounds')?.position ? 'opacity-50 pointer-events-none' : ''}`}>
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-medium text-gray-700">2. Zones de données</span>
+            <div className="flex gap-2">
+              {ZONE_TYPES.filter(t => !t.isParent).map((type) => (
+                <Button 
+                  key={type.value}
+                  variant="outline" 
+                  size="sm" 
+                  onClick={() => addZone(type.value)}
+                  disabled={zones.some(z => z.fieldType === type.value)}
+                  className="gap-1 h-8 text-xs"
+                  style={{ borderColor: zones.some(z => z.fieldType === type.value) ? type.color : undefined }}
+                >
+                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: type.color }} />
+                  {type.label}
+                </Button>
+              ))}
+            </div>
+          </div>
+          
+          {zones.filter(z => z.fieldType !== 'meterBounds').length === 0 ? (
+            <p className="text-gray-400 text-sm py-4 text-center">Ajoutez des zones pour N° série, Index, etc.</p>
+          ) : (
+            <div className="space-y-2">
+              {zones.filter(z => z.fieldType !== 'meterBounds').map((zone) => {
+                const config = ZONE_TYPES.find(z => z.value === zone.fieldType)
+                return (
+                  <div 
+                    key={zone.id} 
+                    className="p-3 border rounded-lg"
+                    style={{ borderLeftWidth: 4, borderLeftColor: config?.color || '#6B7280' }}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <span className="font-medium text-sm">{zone.label}</span>
+                        {zone.position ? (
+                          <Badge variant="outline" className="text-xs bg-green-50 text-green-700">✓ Positionné</Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-xs bg-orange-50 text-orange-700">Non positionné</Badge>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button 
+                          variant={zone.position ? "outline" : "default"}
+                          size="sm" 
+                          className={`h-7 text-xs gap-1 ${!zone.position ? 'bg-teal-600 hover:bg-teal-700' : ''}`}
+                          onClick={() => startRepositioning(zone.id)}
+                        >
+                          <Move className="h-3 w-3" />
+                          {zone.position ? 'Modifier' : 'Positionner'}
+                        </Button>
+                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-500" onClick={() => removeZone(zone.id)}>
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
       </Card>
 
       {/* Index de consommation */}
@@ -695,9 +741,13 @@ export default function MeterModelDetailPage() {
             <div className="p-4 bg-gray-50 rounded-lg border text-center">
               <div className="text-xs text-gray-500 mb-2">Format attendu</div>
               <div className="font-mono text-xl">
-                <span className="bg-gray-800 text-white px-2 py-1 rounded">{formatPreview.split(',')[0]}</span>
-                <span className="text-gray-400 mx-1">,</span>
-                <span className={`px-2 py-1 rounded ${decimalIndicator === 'red_digits' || decimalIndicator === 'red_background' ? 'bg-red-500 text-white' : 'bg-gray-300'}`}>{formatPreview.split(',')[1]}</span>
+                <span className="bg-gray-800 text-white px-2 py-1 rounded">{'X'.repeat(integerDigits)}</span>
+                {decimalDigits > 0 && (
+                  <>
+                    <span className="text-gray-400 mx-1">,</span>
+                    <span className="bg-red-500 text-white px-2 py-1 rounded">{'X'.repeat(decimalDigits)}</span>
+                  </>
+                )}
               </div>
             </div>
           </div>
