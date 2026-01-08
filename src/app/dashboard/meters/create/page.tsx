@@ -33,7 +33,8 @@ import {
 import { 
   ArrowLeft, ArrowRight, Loader2, Save, CheckCircle, Upload, 
   Sparkles, X, Trash2, Plus, Check, 
-  AlertTriangle, Move, Eye, EyeOff, ZoomIn, ExternalLink
+  AlertTriangle, Move, Eye, EyeOff, ZoomIn, ExternalLink,
+  Square, Circle, RectangleHorizontal, MessageSquare
 } from 'lucide-react'
 
 // Types
@@ -48,38 +49,23 @@ const METER_TYPES = [
 ]
 
 const DISPLAY_TYPES = [
-  { 
-    value: 'mechanical', 
-    label: 'Mécanique', 
-    description: 'Rouleaux à chiffres',
-    image: '🔢'
-  },
-  { 
-    value: 'digital', 
-    label: 'Digital', 
-    description: 'Écran LCD/LED',
-    image: '📟'
-  },
-  { 
-    value: 'dials', 
-    label: 'Cadrans', 
-    description: 'Aiguilles rotatives',
-    image: '🎯'
-  },
-  { 
-    value: 'other', 
-    label: 'Autre', 
-    description: 'Type personnalisé',
-    image: '⚙️'
-  },
+  { value: 'mechanical', label: 'Mécanique', description: 'Rouleaux à chiffres', image: '🔢' },
+  { value: 'digital', label: 'Digital', description: 'Écran LCD/LED', image: '📟' },
+  { value: 'dials', label: 'Cadrans', description: 'Aiguilles rotatives', image: '🎯' },
+  { value: 'other', label: 'Autre', description: 'Type personnalisé', image: '⚙️' },
 ]
 
 const ZONE_TYPES = [
-  { value: 'serialNumber', label: 'N° série', icon: '🔢', color: '#3B82F6' },
-  { value: 'readingSingle', label: 'Index unique', icon: '📊', color: '#10B981' },
-  { value: 'ean', label: 'Code EAN', icon: '📋', color: '#8B5CF6' },
-  { value: 'readingDay', label: 'Index jour', icon: '☀️', color: '#F59E0B' },
-  { value: 'readingNight', label: 'Index nuit', icon: '🌙', color: '#6366F1' },
+  { value: 'meterBounds', label: 'Zone compteur', icon: '🔲', color: '#6B7280', isParent: true },
+  { value: 'serialNumber', label: 'N° série', icon: '🔢', color: '#3B82F6', isParent: false },
+  { value: 'readingSingle', label: 'Index', icon: '📊', color: '#10B981', isParent: false },
+  { value: 'ean', label: 'Code EAN', icon: '📋', color: '#8B5CF6', isParent: false },
+]
+
+const ZONE_SHAPES = [
+  { value: 'rectangle', label: 'Rectangle', icon: RectangleHorizontal },
+  { value: 'square', label: 'Carré', icon: Square },
+  { value: 'circle', label: 'Rond', icon: Circle },
 ]
 
 const DECIMAL_INDICATORS = [
@@ -90,14 +76,22 @@ const DECIMAL_INDICATORS = [
   { value: 'other', label: 'Autre' },
 ]
 
+interface ZonePosition {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
 interface Zone {
   id: string
   fieldType: string
   label: string
-  extractedValue: string
-  position: { x: number; y: number; w: number; h: number } | null
+  shape: 'rectangle' | 'square' | 'circle'
+  position: ZonePosition | null
+  positionRelative: ZonePosition | null // Position relative à la zone parent (compteur)
+  remark: string // Remarque pour améliorer le prompt
   isValidated: boolean
-  decimalDigits: number
 }
 
 interface DuplicateMatch {
@@ -110,7 +104,7 @@ interface DuplicateMatch {
 
 const STEPS = [
   { id: 1, label: 'Photo & Informations', icon: '📷' },
-  { id: 2, label: 'Index & Zones', icon: '🎯' },
+  { id: 2, label: 'Zones & Index', icon: '🎯' },
 ]
 
 export default function CreateMeterModelPage() {
@@ -122,7 +116,7 @@ export default function CreateMeterModelPage() {
   const [photoUrl, setPhotoUrl] = useState<string | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
 
-  // Informations - tous vides au départ
+  // Informations
   const [name, setName] = useState('')
   const [manufacturer, setManufacturer] = useState('')
   const [meterType, setMeterType] = useState<string>('')
@@ -135,18 +129,21 @@ export default function CreateMeterModelPage() {
 
   // Index de consommation
   const [integerDigits, setIntegerDigits] = useState(5)
-  const [decimalDigits, setDecimalDigits] = useState(3)
-  const [decimalIndicator, setDecimalIndicator] = useState('red_digits')
+  const [decimalDigits, setDecimalDigits] = useState(0)
+  const [decimalIndicator, setDecimalIndicator] = useState('none')
   const [customDecimalIndicator, setCustomDecimalIndicator] = useState('')
 
-  // Zones
+  // Zones - nouveau système
   const [zones, setZones] = useState<Zone[]>([])
-  const [showZonesOnPhoto, setShowZonesOnPhoto] = useState(false)
+  const [showZonesOnPhoto, setShowZonesOnPhoto] = useState(true)
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null)
   const [repositioningZoneId, setRepositioningZoneId] = useState<string | null>(null)
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null)
+  const [selectedShape, setSelectedShape] = useState<'rectangle' | 'square' | 'circle'>('rectangle')
+  const [selectedZoneType, setSelectedZoneType] = useState<string | null>(null)
+  const [editingRemarkZoneId, setEditingRemarkZoneId] = useState<string | null>(null)
 
-  // Modal lightbox pour agrandir image
+  // Modal lightbox
   const [showImageLightbox, setShowImageLightbox] = useState(false)
   const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null)
 
@@ -157,15 +154,21 @@ export default function CreateMeterModelPage() {
   const [duplicateConfidence, setDuplicateConfidence] = useState(0)
   const [duplicateReason, setDuplicateReason] = useState('')
 
-  // Validation error
+  // Validation
   const [validationError, setValidationError] = useState<string | null>(null)
-
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
-
-  // État pour l'animation pulse après analyse IA
   const [justAnalyzed, setJustAnalyzed] = useState(false)
+
+  // Store pending analysis
+  const [pendingAnalysis, setPendingAnalysis] = useState<any>(null)
+  const [pendingBase64, setPendingBase64] = useState<string | null>(null)
+
+  // Computed values
+  const meterBoundsZone = zones.find(z => z.fieldType === 'meterBounds')
+  const childZones = zones.filter(z => z.fieldType !== 'meterBounds')
+  const hasMeterBounds = !!meterBoundsZone?.position
 
   // Photo handlers
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -191,13 +194,12 @@ export default function CreateMeterModelPage() {
     setNeedsAnalysis(false)
   }
 
-  // Ouvrir lightbox
   const openLightbox = (url: string) => {
     setLightboxImageUrl(url)
     setShowImageLightbox(true)
   }
 
-  // Check duplicate - returns true if duplicate found
+  // Check duplicate
   const checkDuplicate = async (base64: string, detectedName: string, detectedManufacturer: string, detectedType: string): Promise<boolean> => {
     setCheckingDuplicate(true)
     try {
@@ -211,9 +213,7 @@ export default function CreateMeterModelPage() {
           detected_type: detectedType
         })
       })
-
       const result = await response.json()
-      
       if (result.isDuplicate && result.matchedModel) {
         setDuplicateMatch(result.matchedModel)
         setDuplicateConfidence(result.confidence)
@@ -230,11 +230,7 @@ export default function CreateMeterModelPage() {
     }
   }
 
-  // Store pending analysis result
-  const [pendingAnalysis, setPendingAnalysis] = useState<any>(null)
-  const [pendingBase64, setPendingBase64] = useState<string | null>(null)
-
-  // Apply analysis results to form
+  // Apply analysis results
   const applyAnalysisResults = (result: any) => {
     if (result.name) setName(result.name)
     if (result.manufacturer) setManufacturer(result.manufacturer)
@@ -250,47 +246,15 @@ export default function CreateMeterModelPage() {
     }
     if (result.displayType) {
       const knownDisplay = DISPLAY_TYPES.find(d => d.value === result.displayType)
-      if (knownDisplay) {
-        setDisplayType(result.displayType)
-      } else {
-        setDisplayType('other')
-        setCustomDisplayType(result.displayType)
-      }
+      if (knownDisplay) setDisplayType(result.displayType)
+      else { setDisplayType('other'); setCustomDisplayType(result.displayType) }
     } else if (!displayType) {
       setDisplayType('mechanical')
     }
     if (result.keywords) {
       setKeywords(result.keywords.map((kw: string) => ({ value: kw, selected: true })))
     }
-
-    // Créer les zones depuis l'analyse
-    const newZones: Zone[] = []
-    if (result.serialNumber) {
-      newZones.push({
-        id: crypto.randomUUID(),
-        fieldType: 'serialNumber',
-        label: 'N° série',
-        extractedValue: result.serialNumber,
-        position: result.serialPosition || null,
-        isValidated: false,
-        decimalDigits: 0
-      })
-    }
-    if (result.reading) {
-      const typeLabel = METER_TYPES.find(t => t.value === result.meterType)?.label?.toLowerCase() || 'compteur'
-      newZones.push({
-        id: crypto.randomUUID(),
-        fieldType: 'readingSingle',
-        label: `Index ${typeLabel}`,
-        extractedValue: result.reading,
-        position: result.readingPosition || null,
-        isValidated: false,
-        decimalDigits: 3
-      })
-    }
-    setZones(newZones)
     
-    // Déclencher l'animation pulse
     setJustAnalyzed(true)
     setNeedsAnalysis(false)
     setTimeout(() => setJustAnalyzed(false), 2000)
@@ -314,11 +278,9 @@ export default function CreateMeterModelPage() {
       const result = await response.json()
       if (!response.ok) throw new Error(result.error || 'Erreur analyse')
 
-      // Store the analysis result for later
       setPendingAnalysis(result)
       setPendingBase64(base64)
 
-      // Check for duplicates BEFORE applying results
       const isDuplicate = await checkDuplicate(
         base64, 
         result.name || '', 
@@ -326,14 +288,11 @@ export default function CreateMeterModelPage() {
         result.meterType || ''
       )
 
-      // If no duplicate found, apply results immediately
       if (!isDuplicate) {
         applyAnalysisResults(result)
         setPendingAnalysis(null)
         setPendingBase64(null)
       }
-      // If duplicate found, popup is shown and results will be applied on "Continue"
-
     } catch (err: any) {
       setError(err.message || 'Erreur analyse')
     } finally {
@@ -341,7 +300,6 @@ export default function CreateMeterModelPage() {
     }
   }
 
-  // Handle continue after duplicate warning
   const handleContinueAfterDuplicate = () => {
     setShowDuplicateModal(false)
     if (pendingAnalysis) {
@@ -351,7 +309,6 @@ export default function CreateMeterModelPage() {
     }
   }
 
-  // Handle cancel after duplicate warning
   const handleCancelAfterDuplicate = () => {
     setShowDuplicateModal(false)
     removePhoto()
@@ -359,131 +316,197 @@ export default function CreateMeterModelPage() {
     setPendingBase64(null)
   }
 
-  // Zones
-  const startRepositioning = (zoneId: string) => {
-    setRepositioningZoneId(zoneId)
-    setSelectedZoneId(zoneId)
+  // Zone management
+  const addZone = (fieldType: string) => {
+    const config = ZONE_TYPES.find(z => z.value === fieldType)
+    if (!config) return
+    
+    // Check if already exists (except for meterBounds which is unique)
+    if (zones.find(z => z.fieldType === fieldType)) return
+    
+    const newZone: Zone = {
+      id: crypto.randomUUID(),
+      fieldType,
+      label: config.label,
+      shape: selectedShape,
+      position: null,
+      positionRelative: null,
+      remark: '',
+      isValidated: false
+    }
+    
+    setZones([...zones, newZone])
+    setSelectedZoneType(fieldType)
+    setRepositioningZoneId(newZone.id)
     setShowZonesOnPhoto(true)
+  }
+
+  const removeZone = (id: string) => {
+    const zone = zones.find(z => z.id === id)
+    // If removing meterBounds, remove all child zones too
+    if (zone?.fieldType === 'meterBounds') {
+      setZones([])
+    } else {
+      setZones(zones.filter(z => z.id !== id))
+    }
+  }
+
+  const updateZone = (id: string, updates: Partial<Zone>) => {
+    setZones(zones.map(z => z.id === id ? { ...z, ...updates } : z))
+  }
+
+  const startRepositioning = (zoneId: string) => {
+    const zone = zones.find(z => z.id === zoneId)
+    if (zone) {
+      setSelectedShape(zone.shape)
+      setSelectedZoneType(zone.fieldType)
+    }
+    setRepositioningZoneId(zoneId)
+    setShowZonesOnPhoto(true)
+  }
+
+  // Calculate relative position within meter bounds
+  const calculateRelativePosition = (absolutePos: ZonePosition, boundsPos: ZonePosition): ZonePosition => {
+    return {
+      x: (absolutePos.x - boundsPos.x) / boundsPos.w,
+      y: (absolutePos.y - boundsPos.y) / boundsPos.h,
+      w: absolutePos.w / boundsPos.w,
+      h: absolutePos.h / boundsPos.h
+    }
   }
 
   const handlePhotoMouseDown = (e: React.MouseEvent) => {
     if (!repositioningZoneId || !photoContainerRef.current) return
+    e.preventDefault()
     const rect = photoContainerRef.current.getBoundingClientRect()
-    setDragStart({ x: (e.clientX - rect.left) / rect.width, y: (e.clientY - rect.top) / rect.height })
+    const x = (e.clientX - rect.left) / rect.width
+    const y = (e.clientY - rect.top) / rect.height
+    setDragStart({ x, y })
   }
 
   const handlePhotoMouseMove = (e: React.MouseEvent) => {
     if (!repositioningZoneId || !dragStart || !photoContainerRef.current) return
     const rect = photoContainerRef.current.getBoundingClientRect()
-    const x = (e.clientX - rect.left) / rect.width
-    const y = (e.clientY - rect.top) / rect.height
+    const currentX = (e.clientX - rect.left) / rect.width
+    const currentY = (e.clientY - rect.top) / rect.height
+    
+    const zone = zones.find(z => z.id === repositioningZoneId)
+    if (!zone) return
+
+    let newPosition: ZonePosition
+
+    if (zone.shape === 'square' || zone.shape === 'circle') {
+      // Force equal width and height
+      const size = Math.max(Math.abs(currentX - dragStart.x), Math.abs(currentY - dragStart.y))
+      newPosition = {
+        x: currentX > dragStart.x ? dragStart.x : dragStart.x - size,
+        y: currentY > dragStart.y ? dragStart.y : dragStart.y - size,
+        w: size,
+        h: size
+      }
+    } else {
+      // Rectangle
+      newPosition = {
+        x: Math.min(dragStart.x, currentX),
+        y: Math.min(dragStart.y, currentY),
+        w: Math.abs(currentX - dragStart.x),
+        h: Math.abs(currentY - dragStart.y)
+      }
+    }
+
+    // Calculate relative position for child zones
+    let relativePosition: ZonePosition | null = null
+    if (zone.fieldType !== 'meterBounds' && meterBoundsZone?.position) {
+      relativePosition = calculateRelativePosition(newPosition, meterBoundsZone.position)
+    }
+
     updateZone(repositioningZoneId, { 
-      position: { 
-        x: Math.min(dragStart.x, x), 
-        y: Math.min(dragStart.y, y), 
-        w: Math.abs(x - dragStart.x), 
-        h: Math.abs(y - dragStart.y) 
-      } 
+      position: newPosition,
+      positionRelative: relativePosition
     })
   }
 
-  const handlePhotoMouseUp = () => { 
+  const handlePhotoMouseUp = () => {
     setDragStart(null)
-    setRepositioningZoneId(null) 
+    setRepositioningZoneId(null)
+    setSelectedZoneType(null)
   }
 
-  const addZone = (fieldType: string) => {
-    const config = ZONE_TYPES.find(z => z.value === fieldType)
-    setZones([...zones, { 
-      id: crypto.randomUUID(), 
-      fieldType, 
-      label: config?.label || fieldType,
-      extractedValue: '', 
-      position: null, 
-      isValidated: false,
-      decimalDigits: fieldType.includes('reading') ? 3 : 0
-    }])
-  }
-
-  const removeZone = (id: string) => setZones(zones.filter(z => z.id !== id))
-  
-  const updateZone = (id: string, updates: Partial<Zone>) => {
-    setZones(zones.map(z => z.id === id ? { ...z, ...updates } : z))
-  }
-
-  const validateZone = (id: string) => {
-    updateZone(id, { isValidated: true })
-  }
-
-  const validateAllZones = () => {
-    setZones(zones.map(z => ({ ...z, isValidated: true })))
-  }
-
-  const allZonesValidated = zones.length > 0 && zones.every(z => z.isValidated)
-
-  // Générer le prompt
+  // Generate prompt with zones
   function generatePromptText(): string {
     const typeLabel = meterType === 'other' ? customMeterType : METER_TYPES.find(t => t.value === meterType)?.label || meterType
     const displayLabel = displayType === 'other' ? customDisplayType : DISPLAY_TYPES.find(d => d.value === displayType)?.label || displayType
-    
-    const formatExample = 'X'.repeat(integerDigits) + ',' + 'X'.repeat(decimalDigits)
+    const formatExample = 'X'.repeat(integerDigits) + (decimalDigits > 0 ? ',' + 'X'.repeat(decimalDigits) : '')
     
     let prompt = `MODÈLE: ${manufacturer ? manufacturer + ' ' : ''}${name}
 TYPE: ${typeLabel}
 AFFICHAGE: ${displayLabel}
 
-RÈGLES DE LECTURE:`
+RÈGLES DE LECTURE:
+- Index: ${integerDigits} chiffres entiers${decimalDigits > 0 ? ` + ${decimalDigits} décimales` : ' (pas de décimales)'}
+- Format attendu: ${formatExample}`
 
-    const serialZone = zones.find(z => z.fieldType === 'serialNumber')
-    if (serialZone) {
-      const digits = serialZone.extractedValue?.replace(/[^0-9]/g, '').length || 8
-      prompt += `\n- N° série: ${digits} chiffres`
+    if (decimalDigits > 0) {
+      if (decimalIndicator === 'red_digits') {
+        prompt += `\n- Les ${decimalDigits} derniers chiffres en ROUGE = décimales`
+      } else if (decimalIndicator === 'red_background') {
+        prompt += `\n- Les ${decimalDigits} derniers chiffres sur FOND ROUGE = décimales`
+      } else if (decimalIndicator === 'comma') {
+        prompt += `\n- Virgule visible entre entiers et décimales`
+      } else if (decimalIndicator === 'other' && customDecimalIndicator) {
+        prompt += `\n- ${customDecimalIndicator}`
+      }
     }
 
-    prompt += `\n- Index: ${integerDigits} entiers + ${decimalDigits} décimales`
-    prompt += `\n- Format attendu: ${formatExample}`
-
-    if (decimalIndicator === 'red_digits') {
-      prompt += `\n- Les ${decimalDigits} derniers chiffres en ROUGE = décimales`
-    } else if (decimalIndicator === 'red_background') {
-      prompt += `\n- Les ${decimalDigits} derniers chiffres sur FOND ROUGE = décimales`
-    } else if (decimalIndicator === 'comma') {
-      prompt += `\n- Virgule visible entre entiers et décimales`
-    } else if (decimalIndicator === 'other' && customDecimalIndicator) {
-      prompt += `\n- ${customDecimalIndicator}`
+    // Add zones with relative positions and remarks
+    if (meterBoundsZone?.position) {
+      prompt += `\n\nINSTRUCTIONS DE LECTURE:`
+      prompt += `\n1. D'abord, localiser le compteur dans l'image`
+      
+      const childZonesWithPos = childZones.filter(z => z.positionRelative)
+      if (childZonesWithPos.length > 0) {
+        prompt += `\n2. Dans la zone du compteur, identifier:`
+        childZonesWithPos.forEach(z => {
+          if (z.positionRelative) {
+            const xStart = Math.round(z.positionRelative.x * 100)
+            const xEnd = Math.round((z.positionRelative.x + z.positionRelative.w) * 100)
+            const yStart = Math.round(z.positionRelative.y * 100)
+            const yEnd = Math.round((z.positionRelative.y + z.positionRelative.h) * 100)
+            
+            // Position description
+            let posDesc = ''
+            if (yStart < 33) posDesc = 'partie supérieure'
+            else if (yStart < 66) posDesc = 'partie centrale'
+            else posDesc = 'partie inférieure'
+            
+            prompt += `\n   - ${z.label}: ${posDesc} du compteur (${xStart}-${xEnd}% horizontal, ${yStart}-${yEnd}% vertical)`
+            
+            // Add remark if present
+            if (z.remark) {
+              prompt += `\n     ⚠️ ${z.remark}`
+            }
+          }
+        })
+      }
     }
 
     return prompt
   }
 
-  // Save - utilise l'API existante /api/meter-models
+  // Save
   const handleSave = async () => {
-    // Validation
     const finalMeterType = meterType === 'other' ? customMeterType : meterType
     const finalDisplayType = displayType === 'other' ? customDisplayType : displayType
     
-    if (!name.trim()) {
-      setError('Le nom est requis')
-      return
-    }
-    if (!finalMeterType) {
-      setError('Le type de compteur est requis')
-      return
-    }
-    if (!photoUrl) {
-      setError('La photo est requise')
-      return
-    }
-    if (zones.length === 0) {
-      setError('Au moins une zone est requise')
-      return
-    }
+    if (!name.trim()) { setError('Le nom est requis'); return }
+    if (!finalMeterType) { setError('Le type de compteur est requis'); return }
+    if (!photoUrl) { setError('La photo est requise'); return }
+    if (!meterBoundsZone?.position) { setError('La zone compteur est requise'); return }
     
     setSaving(true)
     setError(null)
     
     try {
-      // Upload photo
       let uploadedPhotoUrl = photoUrl
       if (photoFile) {
         const formData = new FormData()
@@ -498,7 +521,6 @@ RÈGLES DE LECTURE:`
       const finalDecimalIndicator = decimalIndicator === 'other' ? customDecimalIndicator : decimalIndicator
       const promptText = generatePromptText()
 
-      // Appel à l'API existante
       const response = await fetch('/api/meter-models', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -520,24 +542,21 @@ RÈGLES DE LECTURE:`
             id: z.id,
             fieldType: z.fieldType,
             label: z.label,
-            extractedValue: z.extractedValue,
+            shape: z.shape,
             position: z.position,
-            hasDecimals: z.fieldType?.includes('reading'),
-            decimalDigits: z.decimalDigits || 0
+            positionRelative: z.positionRelative,
+            remark: z.remark
           })),
           is_verified: false,
-          is_active: true
+          is_active: true,
+          prompt_text: promptText // For creating initial prompt version
         })
       })
 
       const result = await response.json()
-      
-      if (!response.ok) {
-        throw new Error(result.error || 'Erreur lors de la création')
-      }
+      if (!response.ok) throw new Error(result.error || 'Erreur lors de la création')
 
       setSaved(true)
-      // Redirection vers la liste des modèles
       setTimeout(() => router.push('/dashboard/meters'), 1500)
     } catch (err: any) { 
       setError(err.message || 'Erreur lors de la sauvegarde') 
@@ -550,45 +569,68 @@ RÈGLES DE LECTURE:`
   const canProceed = (step: number): boolean => { 
     switch (step) { 
       case 1: return !!photoUrl && !!name.trim() && !!(meterType === 'other' ? customMeterType : meterType)
-      case 2: return allZonesValidated
+      case 2: return !!meterBoundsZone?.position
       default: return true 
     } 
   }
 
   const goToStep = (step: number) => { 
     if (step < 1 || step > 2) return
-    
-    if (step > currentStep) {
-      if (!canProceed(currentStep)) {
-        if (currentStep === 2 && !allZonesValidated) {
-          setValidationError('Veuillez valider toutes les zones en cliquant sur "OK" avant de continuer.')
-          return
-        }
-        if (currentStep === 1) {
-          if (!photoUrl) {
-            setValidationError('Veuillez ajouter une photo.')
-            return
-          }
-          if (!name.trim()) {
-            setValidationError('Veuillez ajouter un nom.')
-            return
-          }
-          const finalType = meterType === 'other' ? customMeterType : meterType
-          if (!finalType) {
-            setValidationError('Veuillez sélectionner un type de compteur.')
-            return
-          }
-        }
-        return
+    if (step > currentStep && !canProceed(currentStep)) {
+      if (currentStep === 1) {
+        if (!photoUrl) { setValidationError('Veuillez ajouter une photo.'); return }
+        if (!name.trim()) { setValidationError('Veuillez ajouter un nom.'); return }
+        if (!(meterType === 'other' ? customMeterType : meterType)) { setValidationError('Veuillez sélectionner un type.'); return }
       }
+      return
     }
-    
     setValidationError(null)
     setCurrentStep(step) 
   }
 
-  // Format preview
-  const formatPreview = 'X'.repeat(integerDigits) + ',' + 'X'.repeat(decimalDigits)
+  const formatPreview = 'X'.repeat(integerDigits) + (decimalDigits > 0 ? ',' + 'X'.repeat(decimalDigits) : '')
+  const typeConfig = METER_TYPES.find(t => t.value === meterType)
+
+  // Render zone on photo
+  const renderZone = (zone: Zone) => {
+    if (!zone.position) return null
+    const config = ZONE_TYPES.find(z => z.value === zone.fieldType)
+    const isSelected = repositioningZoneId === zone.id
+    
+    const style: React.CSSProperties = {
+      left: `${zone.position.x * 100}%`,
+      top: `${zone.position.y * 100}%`,
+      width: `${zone.position.w * 100}%`,
+      height: `${zone.position.h * 100}%`,
+      borderColor: config?.color || '#6B7280',
+      backgroundColor: `${config?.color || '#6B7280'}20`,
+      borderWidth: isSelected ? 3 : 2,
+    }
+
+    if (zone.shape === 'circle') {
+      style.borderRadius = '50%'
+    } else if (zone.shape === 'square') {
+      style.borderRadius = '4px'
+    } else {
+      style.borderRadius = '4px'
+    }
+
+    return (
+      <div 
+        key={zone.id}
+        className={`absolute border-2 ${isSelected ? 'ring-2 ring-white' : ''}`}
+        style={style}
+        onClick={(e) => { e.stopPropagation(); setSelectedZoneId(zone.id) }}
+      >
+        <span 
+          className="absolute -top-6 left-0 px-2 py-0.5 text-xs text-white rounded whitespace-nowrap"
+          style={{ backgroundColor: config?.color || '#6B7280' }}
+        >
+          {zone.label}
+        </span>
+      </div>
+    )
+  }
 
   return (
     <TooltipProvider>
@@ -652,7 +694,7 @@ RÈGLES DE LECTURE:`
             {/* STEP 1 - PHOTO & INFORMATIONS */}
             {currentStep === 1 && (
               <div className="grid md:grid-cols-2 gap-6">
-                {/* Photo à gauche - RÉDUITE À 70% */}
+                {/* Photo */}
                 <Card className="p-4">
                   <h3 className="font-semibold text-sm mb-2">Photo de référence</h3>
                   <p className="text-gray-500 text-xs mb-3">L'IA analyse la photo pour pré-remplir les informations.</p>
@@ -660,7 +702,7 @@ RÈGLES DE LECTURE:`
                   {photoUrl ? (
                     <div className="space-y-3">
                       <div className="relative flex justify-center">
-                        <div className="relative w-[70%]">
+                        <div className="relative w-[85%]">
                           <img 
                             src={photoUrl} 
                             alt="Compteur" 
@@ -670,51 +712,21 @@ RÈGLES DE LECTURE:`
                           <button onClick={removePhoto} className="absolute top-2 right-2 p-1.5 bg-red-500 text-white rounded-full hover:bg-red-600">
                             <X className="h-4 w-4" />
                           </button>
-                          <button 
-                            onClick={() => openLightbox(photoUrl)} 
-                            className="absolute bottom-2 right-2 p-1.5 bg-black/50 text-white rounded-full hover:bg-black/70"
-                          >
+                          <button onClick={() => openLightbox(photoUrl)} className="absolute bottom-2 right-2 p-1.5 bg-black/50 text-white rounded-full hover:bg-black/70">
                             <ZoomIn className="h-4 w-4" />
                           </button>
                         </div>
                       </div>
                       {needsAnalysis ? (
                         <Button onClick={analyzePhoto} disabled={analyzing || checkingDuplicate} className="w-full gap-2 bg-teal-600 hover:bg-teal-700">
-                          {analyzing ? (
-                            <>
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                              Analyse en cours...
-                            </>
-                          ) : checkingDuplicate ? (
-                            <>
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                              Vérification doublons...
-                            </>
-                          ) : (
-                            <>
-                              <Sparkles className="h-4 w-4" />
-                              Analyser cette photo
-                            </>
-                          )}
+                          {analyzing ? <><Loader2 className="h-4 w-4 animate-spin" />Analyse...</> : 
+                           checkingDuplicate ? <><Loader2 className="h-4 w-4 animate-spin" />Vérification doublons...</> :
+                           <><Sparkles className="h-4 w-4" />Analyser cette photo</>}
                         </Button>
                       ) : (
                         <Button onClick={analyzePhoto} disabled={analyzing || checkingDuplicate} variant="outline" className="w-full gap-2">
-                          {analyzing ? (
-                            <>
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                              Analyse en cours...
-                            </>
-                          ) : checkingDuplicate ? (
-                            <>
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                              Vérification doublons...
-                            </>
-                          ) : (
-                            <>
-                              <Sparkles className="h-4 w-4" />
-                              Réanalyser la photo
-                            </>
-                          )}
+                          {analyzing ? <><Loader2 className="h-4 w-4 animate-spin" />Analyse...</> :
+                           <><Sparkles className="h-4 w-4" />Réanalyser</>}
                         </Button>
                       )}
                     </div>
@@ -728,7 +740,7 @@ RÈGLES DE LECTURE:`
                   )}
                 </Card>
 
-                {/* Informations à droite */}
+                {/* Informations */}
                 <Card className={`p-4 transition-all duration-500 ${justAnalyzed ? 'ring-2 ring-teal-500 ring-opacity-50' : ''}`}>
                   <div className="flex items-center gap-2 mb-4">
                     <h3 className="font-semibold">Informations</h3>
@@ -742,21 +754,11 @@ RÈGLES DE LECTURE:`
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <Label className="text-xs text-gray-500">Nom *</Label>
-                        <Input 
-                          value={name} 
-                          onChange={(e) => setName(e.target.value)} 
-                          placeholder="Ex: G4 RF1" 
-                          className={`mt-1 transition-all ${justAnalyzed && name ? 'ring-2 ring-teal-300 bg-teal-50' : ''}`} 
-                        />
+                        <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex: G4 RF1" className={`mt-1 ${justAnalyzed && name ? 'ring-2 ring-teal-300 bg-teal-50' : ''}`} />
                       </div>
                       <div>
                         <Label className="text-xs text-gray-500">Fabricant</Label>
-                        <Input 
-                          value={manufacturer} 
-                          onChange={(e) => setManufacturer(e.target.value)} 
-                          placeholder="Ex: Itron" 
-                          className={`mt-1 transition-all ${justAnalyzed && manufacturer ? 'ring-2 ring-teal-300 bg-teal-50' : ''}`} 
-                        />
+                        <Input value={manufacturer} onChange={(e) => setManufacturer(e.target.value)} placeholder="Ex: Itron" className={`mt-1 ${justAnalyzed && manufacturer ? 'ring-2 ring-teal-300 bg-teal-50' : ''}`} />
                       </div>
                     </div>
 
@@ -776,308 +778,266 @@ RÈGLES DE LECTURE:`
                           </button>
                         ))}
                       </div>
-                      {!meterType && !justAnalyzed && (
-                        <p className="text-xs text-gray-400 mt-1">Sélectionnez un type ou analysez la photo</p>
-                      )}
                       {meterType === 'other' && (
-                        <Input 
-                          value={customMeterType} 
-                          onChange={(e) => setCustomMeterType(e.target.value)} 
-                          placeholder="Type personnalisé"
-                          className="mt-2" 
-                        />
+                        <Input value={customMeterType} onChange={(e) => setCustomMeterType(e.target.value)} placeholder="Type personnalisé" className="mt-2" />
                       )}
                     </div>
 
-                    <div>
-                      <Label className="text-xs text-gray-500">Unité</Label>
-                      <Input 
-                        value={unit} 
-                        onChange={(e) => setUnit(e.target.value)} 
-                        placeholder="Ex: m³, kWh, L" 
-                        className={`mt-1 ${justAnalyzed && unit ? 'ring-2 ring-teal-300 bg-teal-50' : ''}`} 
-                      />
-                    </div>
-
-                    {/* Type d'affichage - Version liste UNIQUEMENT avec Autre */}
-                    <div>
-                      <Label className="text-xs text-gray-500">Type d'affichage</Label>
-                      <div className={`grid grid-cols-4 gap-2 mt-2 ${justAnalyzed && displayType ? 'ring-2 ring-teal-300 rounded-lg p-1' : ''}`}>
-                        {DISPLAY_TYPES.map(d => (
-                          <div 
-                            key={d.value} 
-                            className={`p-2 rounded-lg border text-center cursor-pointer transition-colors ${
-                              displayType === d.value ? 'border-teal-500 bg-teal-50' : 'border-gray-200 hover:border-gray-300'
-                            }`}
-                            onClick={() => setDisplayType(d.value)}
-                          >
-                            <div className="text-xl mb-1">{d.image}</div>
-                            <div className="text-xs font-medium">{d.label}</div>
-                            <div className="text-[10px] text-gray-400">{d.description}</div>
-                          </div>
-                        ))}
-                      </div>
-                      {displayType === 'other' && (
-                        <Input 
-                          value={customDisplayType} 
-                          onChange={(e) => setCustomDisplayType(e.target.value)} 
-                          placeholder="Type d'affichage personnalisé"
-                          className="mt-2" 
-                        />
-                      )}
-                    </div>
-
-                    {keywords.length > 0 && (
+                    <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <Label className="text-xs text-gray-500">Mots-clés détectés</Label>
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {keywords.map((kw, i) => (
-                            <Badge 
-                              key={i} 
-                              variant={kw.selected ? 'default' : 'outline'} 
-                              className={`cursor-pointer text-xs ${kw.selected ? 'bg-teal-600' : ''}`}
-                              onClick={() => setKeywords(keywords.map((k, j) => j === i ? { ...k, selected: !k.selected } : k))}
-                            >
-                              {kw.selected && <Check className="h-3 w-3 mr-1" />}
-                              {kw.value}
-                            </Badge>
-                          ))}
-                        </div>
+                        <Label className="text-xs text-gray-500">Unité</Label>
+                        <Input value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="Ex: m³, kWh" className="mt-1" />
                       </div>
-                    )}
+                      <div>
+                        <Label className="text-xs text-gray-500">Type d'affichage</Label>
+                        <Select value={displayType} onValueChange={setDisplayType}>
+                          <SelectTrigger className="mt-1"><SelectValue placeholder="Sélectionner" /></SelectTrigger>
+                          <SelectContent>
+                            {DISPLAY_TYPES.map(d => <SelectItem key={d.value} value={d.value}>{d.image} {d.label}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
                   </div>
                 </Card>
               </div>
             )}
 
-            {/* STEP 2 - INDEX & ZONES */}
+            {/* STEP 2 - ZONES & INDEX */}
             {currentStep === 2 && (
               <div className="grid md:grid-cols-2 gap-6">
-                {/* Photo avec zones - RÉDUITE À 70% */}
+                {/* Photo avec zones */}
                 <Card className="p-4">
-                  <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center justify-between mb-3">
                     <h3 className="font-semibold text-sm">
                       Photo
                       {repositioningZoneId && <span className="text-teal-600 ml-2">— Dessinez la zone</span>}
                     </h3>
-                    <Button 
-                      variant="ghost" 
-                      size="sm" 
-                      onClick={() => setShowZonesOnPhoto(!showZonesOnPhoto)}
-                      className="h-8 text-xs gap-1"
-                    >
-                      {showZonesOnPhoto ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-                      {showZonesOnPhoto ? 'Masquer zones' : 'Afficher zones'}
-                    </Button>
+                    {zones.length > 0 && (
+                      <Button variant="ghost" size="sm" onClick={() => setShowZonesOnPhoto(!showZonesOnPhoto)} className="h-8 text-xs gap-1">
+                        {showZonesOnPhoto ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                        {showZonesOnPhoto ? 'Masquer' : 'Afficher'}
+                      </Button>
+                    )}
                   </div>
                   
                   {photoUrl && (
-                    <div className="flex justify-center">
-                      <div 
-                        ref={photoContainerRef} 
-                        className={`relative select-none w-[70%] ${repositioningZoneId ? 'cursor-crosshair' : ''}`}
-                        onMouseDown={handlePhotoMouseDown}
-                        onMouseMove={handlePhotoMouseMove}
-                        onMouseUp={handlePhotoMouseUp}
-                        onMouseLeave={handlePhotoMouseUp}
-                      >
-                        <img 
-                          src={photoUrl} 
-                          alt="Compteur" 
-                          className="w-full rounded-lg cursor-pointer" 
-                          draggable={false} 
-                          onClick={() => !repositioningZoneId && openLightbox(photoUrl)}
-                        />
-                        <button 
-                          onClick={() => openLightbox(photoUrl)} 
-                          className="absolute bottom-2 right-2 p-1.5 bg-black/50 text-white rounded-full hover:bg-black/70"
-                        >
+                    <div 
+                      ref={photoContainerRef} 
+                      className={`relative select-none ${repositioningZoneId ? 'cursor-crosshair' : ''}`}
+                      onMouseDown={handlePhotoMouseDown}
+                      onMouseMove={handlePhotoMouseMove}
+                      onMouseUp={handlePhotoMouseUp}
+                      onMouseLeave={handlePhotoMouseUp}
+                    >
+                      <img src={photoUrl} alt="Compteur" className="w-full rounded-lg" draggable={false} />
+                      
+                      {/* Zones overlay */}
+                      {showZonesOnPhoto && zones.map(zone => renderZone(zone))}
+                      
+                      {!repositioningZoneId && (
+                        <button onClick={() => openLightbox(photoUrl)} className="absolute bottom-2 right-2 p-1.5 bg-black/50 text-white rounded-full hover:bg-black/70">
                           <ZoomIn className="h-4 w-4" />
                         </button>
-                        {showZonesOnPhoto && zones.map((zone) => zone.position && (
-                          <div 
-                            key={zone.id}
-                            className={`absolute border-2 rounded ${selectedZoneId === zone.id ? 'ring-2 ring-white' : ''}`}
-                            style={{
-                              left: `${zone.position.x * 100}%`,
-                              top: `${zone.position.y * 100}%`,
-                              width: `${zone.position.w * 100}%`,
-                              height: `${zone.position.h * 100}%`,
-                              borderColor: ZONE_TYPES.find(z => z.value === zone.fieldType)?.color || '#6B7280',
-                              backgroundColor: `${ZONE_TYPES.find(z => z.value === zone.fieldType)?.color || '#6B7280'}30`
+                      )}
+                    </div>
+                  )}
+
+                  {/* Shape selector - visible when adding/modifying zone */}
+                  {repositioningZoneId && (
+                    <div className="mt-3 p-3 bg-teal-50 rounded-lg border border-teal-200">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-xs font-medium text-teal-700">Forme :</span>
+                        {ZONE_SHAPES.map(shape => (
+                          <Button
+                            key={shape.value}
+                            variant={selectedShape === shape.value ? 'default' : 'outline'}
+                            size="sm"
+                            className={`h-8 gap-1 ${selectedShape === shape.value ? 'bg-teal-600' : ''}`}
+                            onClick={() => {
+                              setSelectedShape(shape.value as any)
+                              if (repositioningZoneId) {
+                                updateZone(repositioningZoneId, { shape: shape.value as any })
+                              }
                             }}
-                            onClick={() => setSelectedZoneId(zone.id)}
                           >
-                            <span 
-                              className="absolute -top-5 left-0 px-1 text-xs text-white rounded"
-                              style={{ backgroundColor: ZONE_TYPES.find(z => z.value === zone.fieldType)?.color || '#6B7280' }}
-                            >
-                              {zone.label}
-                            </span>
-                          </div>
+                            <shape.icon className="h-3 w-3" />
+                            <span className="text-xs">{shape.label}</span>
+                          </Button>
                         ))}
                       </div>
+                      <p className="text-xs text-teal-600">Cliquez et glissez sur la photo pour dessiner la zone</p>
                     </div>
                   )}
                 </Card>
 
-                {/* Index + Zones à droite */}
+                {/* Zones + Index */}
                 <div className="space-y-4">
-                  {/* Index de consommation */}
+                  {/* Zones de lecture */}
                   <Card className="p-4">
-                    <h3 className="font-semibold mb-3">Index de consommation</h3>
-                    <div className="grid grid-cols-2 gap-3 mb-3">
-                      <div>
-                        <Label className="text-xs text-gray-500">Chiffres entiers</Label>
-                        <Input 
-                          type="number" 
-                          value={integerDigits} 
-                          onChange={(e) => setIntegerDigits(parseInt(e.target.value) || 1)} 
-                          className="mt-1" 
-                        />
+                    <h3 className="font-semibold mb-3">Zones de lecture</h3>
+                    
+                    {/* Zone compteur (parent) - toujours en premier */}
+                    <div className="mb-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-sm font-medium text-gray-700">1. Zone compteur (obligatoire)</span>
                       </div>
-                      <div>
-                        <Label className="text-xs text-gray-500">Décimales à utiliser</Label>
-                        <Input 
-                          type="number" 
-                          value={decimalDigits} 
-                          onChange={(e) => setDecimalDigits(parseInt(e.target.value) || 0)} 
-                          className="mt-1" 
-                        />
-                      </div>
-                    </div>
-                    <div className="mb-3">
-                      <Label className="text-xs text-gray-500">Comment repérer les décimales ?</Label>
-                      <Select value={decimalIndicator} onValueChange={setDecimalIndicator}>
-                        <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {DECIMAL_INDICATORS.map(d => (
-                            <SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      {decimalIndicator === 'other' && (
-                        <Input 
-                          value={customDecimalIndicator} 
-                          onChange={(e) => setCustomDecimalIndicator(e.target.value)} 
-                          placeholder="Décrivez..."
-                          className="mt-2" 
-                        />
+                      {!meterBoundsZone ? (
+                        <Button 
+                          onClick={() => addZone('meterBounds')} 
+                          className="w-full gap-2 bg-gray-600 hover:bg-gray-700"
+                        >
+                          <Plus className="h-4 w-4" />
+                          Délimiter le compteur
+                        </Button>
+                      ) : (
+                        <div className="p-3 border rounded-lg" style={{ borderLeftWidth: 4, borderLeftColor: '#6B7280' }}>
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium text-sm">🔲 Zone compteur</span>
+                              {meterBoundsZone.position ? (
+                                <Badge variant="outline" className="text-xs bg-green-50 text-green-700">✓ Définie</Badge>
+                              ) : (
+                                <Badge variant="outline" className="text-xs bg-orange-50 text-orange-700">À définir</Badge>
+                              )}
+                            </div>
+                            <div className="flex gap-1">
+                              <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => startRepositioning(meterBoundsZone.id)}>
+                                <Move className="h-3 w-3 mr-1" />{meterBoundsZone.position ? 'Modifier' : 'Dessiner'}
+                              </Button>
+                              <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-500" onClick={() => removeZone(meterBoundsZone.id)}>
+                                <Trash2 className="h-3 w-3" />
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
                       )}
                     </div>
-                    <div className="p-3 bg-gray-50 rounded-lg border text-center">
-                      <div className="text-xs text-gray-500 mb-2">Format attendu</div>
-                      <div className="font-mono text-xl">
-                        <span className="bg-gray-800 text-white px-2 py-1 rounded">{formatPreview.split(',')[0]}</span>
-                        <span className="text-gray-400 mx-1">,</span>
-                        <span className={`px-2 py-1 rounded ${
-                          decimalIndicator === 'red_digits' || decimalIndicator === 'red_background' 
-                            ? 'bg-red-500 text-white' 
-                            : 'bg-gray-300'
-                        }`}>
-                          {formatPreview.split(',')[1]}
-                        </span>
+
+                    {/* Child zones */}
+                    <div className={`space-y-2 ${!hasMeterBounds ? 'opacity-50 pointer-events-none' : ''}`}>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-sm font-medium text-gray-700">2. Zones de données</span>
                       </div>
-                    </div>
-                  </Card>
+                      
+                      {/* Add zone buttons */}
+                      <div className="flex flex-wrap gap-2 mb-3">
+                        {ZONE_TYPES.filter(t => !t.isParent).map(type => {
+                          const exists = zones.find(z => z.fieldType === type.value)
+                          return (
+                            <Button
+                              key={type.value}
+                              variant="outline"
+                              size="sm"
+                              onClick={() => addZone(type.value)}
+                              disabled={!!exists || !hasMeterBounds}
+                              className="gap-1 h-8"
+                              style={{ borderColor: exists ? type.color : undefined }}
+                            >
+                              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: type.color }} />
+                              {type.label}
+                              {exists && <Check className="h-3 w-3 ml-1" />}
+                            </Button>
+                          )
+                        })}
+                      </div>
 
-                  {/* Zones */}
-                  <Card className="p-4">
-                    <div className="flex items-center justify-between mb-3">
-                      <h3 className="font-semibold">Zones ({zones.length})</h3>
-                      <Button 
-                        variant="outline" 
-                        size="sm" 
-                        onClick={validateAllZones}
-                        disabled={zones.length === 0 || allZonesValidated}
-                        className="h-7 text-xs"
-                      >
-                        <Check className="h-3 w-3 mr-1" /> Tout valider
-                      </Button>
-                    </div>
-
-                    <div className="space-y-2 max-h-64 overflow-y-auto">
-                      {zones.map((zone) => {
+                      {/* Child zones list */}
+                      {childZones.map(zone => {
                         const config = ZONE_TYPES.find(z => z.value === zone.fieldType)
                         return (
                           <div 
                             key={zone.id} 
-                            className={`p-3 border rounded-lg ${zone.isValidated ? 'bg-green-50 border-green-200' : 'bg-white'}`}
+                            className="p-3 border rounded-lg"
                             style={{ borderLeftWidth: 4, borderLeftColor: config?.color || '#6B7280' }}
                           >
                             <div className="flex items-center justify-between mb-2">
-                              <span className="font-medium text-sm">{zone.label}</span>
-                              <Button variant="ghost" size="icon" className="h-6 w-6 text-red-500" onClick={() => removeZone(zone.id)}>
-                                <Trash2 className="h-3 w-3" />
-                              </Button>
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium text-sm">{config?.icon} {zone.label}</span>
+                                {zone.position ? (
+                                  <Badge variant="outline" className="text-xs bg-green-50 text-green-700">✓ Positionné</Badge>
+                                ) : (
+                                  <Badge variant="outline" className="text-xs bg-orange-50 text-orange-700">À positionner</Badge>
+                                )}
+                              </div>
+                              <div className="flex gap-1">
+                                <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => startRepositioning(zone.id)}>
+                                  <Move className="h-3 w-3 mr-1" />{zone.position ? 'Modifier' : 'Dessiner'}
+                                </Button>
+                                <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-500" onClick={() => removeZone(zone.id)}>
+                                  <Trash2 className="h-3 w-3" />
+                                </Button>
+                              </div>
                             </div>
                             
-                            <div className="flex items-center gap-2 mb-2">
-                              <Input 
-                                value={zone.extractedValue} 
-                                onChange={(e) => updateZone(zone.id, { extractedValue: e.target.value })}
-                                className="font-mono flex-1 h-9"
-                                placeholder="Valeur..."
+                            {/* Remark field */}
+                            <div className="mt-2">
+                              <div className="flex items-center gap-1 mb-1">
+                                <MessageSquare className="h-3 w-3 text-gray-400" />
+                                <span className="text-xs text-gray-500">Remarque (optionnel)</span>
+                              </div>
+                              <Input
+                                value={zone.remark}
+                                onChange={(e) => updateZone(zone.id, { remark: e.target.value })}
+                                placeholder="Ex: Ne pas inclure les lettres 'Nr' devant le numéro"
+                                className="h-8 text-xs"
                               />
-                              <Button 
-                                size="sm" 
-                                variant={zone.isValidated ? 'secondary' : 'default'}
-                                onClick={() => validateZone(zone.id)}
-                                disabled={zone.isValidated}
-                                className="h-9 px-4"
-                              >
-                                {zone.isValidated ? '✓' : 'OK'}
-                              </Button>
-                            </div>
-
-                            <div className="flex items-center gap-2 flex-wrap">
-                              {zone.position ? (
-                                <>
-                                  <Badge variant="outline" className="text-xs bg-green-50">✓ Positionné</Badge>
-                                  <Button variant="outline" size="sm" className="h-6 text-xs" onClick={() => startRepositioning(zone.id)}>
-                                    <Move className="h-3 w-3 mr-1" /> Modifier
-                                  </Button>
-                                </>
-                              ) : (
-                                <Button variant="default" size="sm" className="h-7 text-xs bg-teal-600 hover:bg-teal-700" onClick={() => startRepositioning(zone.id)}>
-                                  <Move className="h-3 w-3 mr-1" /> Positionner
-                                </Button>
-                              )}
-
-                              {zone.fieldType.includes('reading') && (
-                                <Badge variant="outline" className="text-xs ml-auto">
-                                  {decimalDigits} déc.
-                                </Badge>
-                              )}
                             </div>
                           </div>
                         )
                       })}
-                    </div>
 
-                    {/* Ajouter zone */}
-                    <div className="mt-3 pt-3 border-t">
-                      <span className="text-xs text-gray-500 block mb-2">Ajouter :</span>
-                      <div className="flex flex-wrap gap-2">
-                        {ZONE_TYPES.map((type) => (
-                          <Tooltip key={type.value}>
-                            <TooltipTrigger asChild>
-                              <Button 
-                                variant="outline" 
-                                size="sm" 
-                                onClick={() => addZone(type.value)}
-                                className="gap-1 h-8"
-                              >
-                                <Plus className="h-3 w-3" />
-                                <span>{type.icon}</span>
-                                <span className="text-xs">{type.label}</span>
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              <p>Ajouter {type.label}</p>
-                            </TooltipContent>
-                          </Tooltip>
-                        ))}
+                      {childZones.length === 0 && hasMeterBounds && (
+                        <p className="text-gray-400 text-sm text-center py-4">
+                          Ajoutez des zones pour N° série, Index, etc.
+                        </p>
+                      )}
+                    </div>
+                  </Card>
+
+                  {/* Index de consommation */}
+                  <Card className="p-4">
+                    <h3 className="font-semibold mb-3">Index de consommation</h3>
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <Label className="text-xs text-gray-500">Chiffres entiers</Label>
+                          <Input type="number" min={1} max={10} value={integerDigits} onChange={(e) => setIntegerDigits(parseInt(e.target.value) || 1)} className="mt-1" />
+                        </div>
+                        <div>
+                          <Label className="text-xs text-gray-500">Décimales</Label>
+                          <Input type="number" min={0} max={5} value={decimalDigits} onChange={(e) => setDecimalDigits(parseInt(e.target.value) || 0)} className="mt-1" />
+                        </div>
+                      </div>
+                      
+                      {decimalDigits > 0 && (
+                        <div>
+                          <Label className="text-xs text-gray-500">Comment repérer les décimales ?</Label>
+                          <Select value={decimalIndicator} onValueChange={setDecimalIndicator}>
+                            <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              {DECIMAL_INDICATORS.map(d => <SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>)}
+                            </SelectContent>
+                          </Select>
+                          {decimalIndicator === 'other' && (
+                            <Input value={customDecimalIndicator} onChange={(e) => setCustomDecimalIndicator(e.target.value)} placeholder="Décrivez..." className="mt-2" />
+                          )}
+                        </div>
+                      )}
+                      
+                      <div className="p-3 bg-gray-50 rounded-lg border text-center">
+                        <div className="text-xs text-gray-500 mb-2">Format attendu</div>
+                        <div className="font-mono text-xl">
+                          <span className="bg-gray-800 text-white px-2 py-1 rounded">{'X'.repeat(integerDigits)}</span>
+                          {decimalDigits > 0 && (
+                            <>
+                              <span className="text-gray-400 mx-1">,</span>
+                              <span className={`px-2 py-1 rounded ${decimalIndicator === 'red_digits' || decimalIndicator === 'red_background' ? 'bg-red-500 text-white' : 'bg-gray-300'}`}>
+                                {'X'.repeat(decimalDigits)}
+                              </span>
+                            </>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </Card>
@@ -1095,7 +1055,7 @@ RÈGLES DE LECTURE:`
                   Suivant <ArrowRight className="h-4 w-4 ml-1" />
                 </Button>
               ) : (
-                <Button onClick={handleSave} disabled={saving || !allZonesValidated} className="min-w-32">
+                <Button onClick={handleSave} disabled={saving || !meterBoundsZone?.position} className="min-w-32">
                   {saving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Save className="h-4 w-4 mr-1" />}
                   Enregistrer
                 </Button>
@@ -1104,25 +1064,14 @@ RÈGLES DE LECTURE:`
           </>
         )}
 
-        {/* Modal Lightbox pour agrandir les images */}
+        {/* Lightbox */}
         <Dialog open={showImageLightbox} onOpenChange={setShowImageLightbox}>
           <DialogContent className="max-w-4xl p-2">
-            <DialogHeader className="sr-only">
-              <DialogTitle>Image agrandie</DialogTitle>
-            </DialogHeader>
+            <DialogHeader className="sr-only"><DialogTitle>Image agrandie</DialogTitle></DialogHeader>
             {lightboxImageUrl && (
               <div className="relative">
-                <img 
-                  src={lightboxImageUrl} 
-                  alt="Image agrandie" 
-                  className="w-full h-auto max-h-[80vh] object-contain rounded-lg"
-                />
-                <Button 
-                  variant="ghost" 
-                  size="icon" 
-                  className="absolute top-2 right-2 bg-black/50 text-white hover:bg-black/70"
-                  onClick={() => setShowImageLightbox(false)}
-                >
+                <img src={lightboxImageUrl} alt="Image agrandie" className="w-full h-auto max-h-[80vh] object-contain rounded-lg" />
+                <Button variant="ghost" size="icon" className="absolute top-2 right-2 bg-black/50 text-white hover:bg-black/70" onClick={() => setShowImageLightbox(false)}>
                   <X className="h-5 w-5" />
                 </Button>
               </div>
@@ -1130,7 +1079,7 @@ RÈGLES DE LECTURE:`
           </DialogContent>
         </Dialog>
 
-        {/* Modal Duplicate Detection */}
+        {/* Duplicate Modal */}
         <Dialog open={showDuplicateModal} onOpenChange={setShowDuplicateModal}>
           <DialogContent className="max-w-2xl">
             <DialogHeader>
@@ -1139,44 +1088,25 @@ RÈGLES DE LECTURE:`
                 Modèle similaire détecté
               </DialogTitle>
               <DialogDescription>
-                Ce compteur semble correspondre à un modèle existant dans votre base de données.
+                Ce compteur semble correspondre à un modèle existant.
               </DialogDescription>
             </DialogHeader>
             
             <div className="grid grid-cols-2 gap-4 py-4">
-              {/* Photo uploadée */}
               <div className="text-center">
                 <p className="text-sm font-medium text-gray-700 mb-2">Votre photo</p>
                 <div className="border rounded-lg p-2 bg-gray-50">
-                  {photoUrl && (
-                    <img 
-                      src={photoUrl} 
-                      alt="Nouveau compteur" 
-                      className="w-full h-48 object-contain rounded"
-                    />
-                  )}
+                  {photoUrl && <img src={photoUrl} alt="Nouveau" className="w-full h-48 object-contain rounded" />}
                 </div>
                 <p className="text-sm text-gray-500 mt-2">{pendingAnalysis?.name || 'Nouveau modèle'}</p>
               </div>
-              
-              {/* Photo existante */}
               <div className="text-center">
                 <p className="text-sm font-medium text-gray-700 mb-2">Modèle existant</p>
                 <div className="border rounded-lg p-2 bg-orange-50 border-orange-200">
-                  {duplicateMatch?.photo && (
-                    <img 
-                      src={duplicateMatch.photo} 
-                      alt="Modèle existant" 
-                      className="w-full h-48 object-contain rounded"
-                    />
-                  )}
+                  {duplicateMatch?.photo && <img src={duplicateMatch.photo} alt="Existant" className="w-full h-48 object-contain rounded" />}
                 </div>
-                <p className="text-sm text-gray-900 font-medium mt-2">
-                  {duplicateMatch?.name}
-                </p>
-                <p className="text-xs text-gray-500">
-                  {duplicateMatch?.manufacturer} • {METER_TYPES.find(t => t.value === duplicateMatch?.meter_type)?.label || duplicateMatch?.meter_type}
-                </p>
+                <p className="text-sm text-gray-900 font-medium mt-2">{duplicateMatch?.name}</p>
+                <p className="text-xs text-gray-500">{duplicateMatch?.manufacturer}</p>
               </div>
             </div>
 
@@ -1188,31 +1118,11 @@ RÈGLES DE LECTURE:`
             </div>
 
             <DialogFooter className="gap-2 sm:gap-0">
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setShowDuplicateModal(false)
-                  if (duplicateMatch?.id) {
-                    router.push(`/dashboard/meters/${duplicateMatch.id}`)
-                  }
-                }}
-                className="gap-2"
-              >
-                <ExternalLink className="h-4 w-4" />
-                Voir le modèle existant
+              <Button variant="outline" onClick={() => { setShowDuplicateModal(false); if (duplicateMatch?.id) router.push(`/dashboard/meters/${duplicateMatch.id}`) }} className="gap-2">
+                <ExternalLink className="h-4 w-4" />Voir existant
               </Button>
-              <Button
-                variant="outline"
-                onClick={handleCancelAfterDuplicate}
-              >
-                Annuler
-              </Button>
-              <Button
-                onClick={handleContinueAfterDuplicate}
-                className="bg-orange-600 hover:bg-orange-700"
-              >
-                Continuer quand même
-              </Button>
+              <Button variant="outline" onClick={handleCancelAfterDuplicate}>Annuler</Button>
+              <Button onClick={handleContinueAfterDuplicate} className="bg-orange-600 hover:bg-orange-700">Continuer</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -1222,14 +1132,10 @@ RÈGLES DE LECTURE:`
 }
 
 async function fileToBase64(file: File): Promise<string> { 
-  // Compress image if too large (max 1MB)
-  const maxSize = 1 * 1024 * 1024 // 1MB
-  
+  const maxSize = 1 * 1024 * 1024
   if (file.size > maxSize) {
-    const compressed = await compressImage(file, 0.7, 1200)
-    return compressed
+    return compressImage(file, 0.7, 1200)
   }
-  
   return new Promise((resolve) => { 
     const reader = new FileReader()
     reader.onloadend = () => resolve((reader.result as string).split(',')[1])
@@ -1242,26 +1148,18 @@ async function compressImage(file: File, quality: number = 0.7, maxWidth: number
     const canvas = document.createElement('canvas')
     const ctx = canvas.getContext('2d')
     const img = new Image()
-    
     img.onload = () => {
-      // Calculate new dimensions
       let width = img.width
       let height = img.height
-      
       if (width > maxWidth) {
         height = (height * maxWidth) / width
         width = maxWidth
       }
-      
       canvas.width = width
       canvas.height = height
-      
-      // Draw and compress
       ctx?.drawImage(img, 0, 0, width, height)
-      const dataUrl = canvas.toDataURL('image/jpeg', quality)
-      resolve(dataUrl.split(',')[1])
+      resolve(canvas.toDataURL('image/jpeg', quality).split(',')[1])
     }
-    
     img.src = URL.createObjectURL(file)
   })
 }
