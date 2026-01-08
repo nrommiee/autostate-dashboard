@@ -852,7 +852,7 @@ export default function LabsMetersPage() {
                               <span className="flex items-center gap-2">
                                 {c.is_active && <Star className="h-3 w-3 text-yellow-500" />}
                                 #{i + 1} - {c.name || formatTestConfig(c)}
-                                {c.success_rate !== null && <span className={`ml-2 text-xs ${c.success_rate >= 70 ? 'text-green-600' : 'text-red-600'}`}>({c.success_rate}%)</span>}
+                                {c.success_rate !== null && c.success_rate !== undefined && <span className={`ml-2 text-xs ${c.success_rate >= 70 ? 'text-green-600' : 'text-red-600'}`}>({c.success_rate}%)</span>}
                               </span>
                             </SelectItem>
                           ))}
