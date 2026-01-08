@@ -1058,7 +1058,7 @@ RÈGLES DE LECTURE:
                           {decimalDigits > 0 && (
                             <>
                               <span className="text-gray-400 mx-1">,</span>
-                              <span className={`px-2 py-1 rounded ${decimalIndicator === 'red_digits' || decimalIndicator === 'red_background' ? 'bg-red-500 text-white' : 'bg-gray-300'}`}>
+                              <span className="bg-red-500 text-white px-2 py-1 rounded">
                                 {'X'.repeat(decimalDigits)}
                               </span>
                             </>
