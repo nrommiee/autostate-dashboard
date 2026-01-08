@@ -102,7 +102,7 @@ export default function LabsVersionsPage() {
         const statsMap: Record<string, VersionStats> = {}
         for (const version of data) {
           const { data: expData } = await supabase
-            .from('labs_experiments')
+            .from('lab_experiments')
             .select('confidence, tokens_input, tokens_output, status')
             .eq('recognition_version_id', version.id)
 
