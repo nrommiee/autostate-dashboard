@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Card } from '@/components/ui/card'
@@ -36,15 +36,9 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
 import { 
   ArrowLeft, Save, Loader2, Check, Trash2, CheckCircle, XCircle, AlertCircle,
-  Target, MoreHorizontal, RotateCcw, Eye, Upload, Play, Edit3, X
+  Target, RotateCcw, Eye, EyeOff, Upload, Edit3, X, Move, ZoomIn, Camera
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 
@@ -56,6 +50,7 @@ interface MeterModel {
   unit: string
   reference_photos: string[]
   is_active: boolean
+  zones?: Zone[]
 }
 
 interface ReadingRule {
@@ -84,6 +79,13 @@ interface TestRecord {
   created_at: string
 }
 
+interface Zone {
+  id: string
+  fieldType: string
+  label: string
+  position: { x: number; y: number; w: number; h: number } | null
+}
+
 const METER_TYPES = [
   { value: 'gas', label: 'Gaz', icon: '🔥', unit: 'm³' },
   { value: 'electricity', label: 'Électricité', icon: '⚡', unit: 'kWh' },
@@ -102,10 +104,17 @@ const DECIMAL_INDICATORS = [
   { value: 'other', label: 'Autre' },
 ]
 
+const ZONE_TYPES = [
+  { value: 'serialNumber', label: 'N° série', color: '#3B82F6' },
+  { value: 'readingSingle', label: 'Index', color: '#10B981' },
+  { value: 'ean', label: 'Code EAN', color: '#8B5CF6' },
+]
+
 export default function MeterModelDetailPage() {
   const params = useParams()
   const router = useRouter()
   const modelId = params.id as string
+  const photoContainerRef = useRef<HTMLDivElement>(null)
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -127,22 +136,30 @@ export default function MeterModelDetailPage() {
   const [decimalIndicator, setDecimalIndicator] = useState('red_digits')
   const [customDecimalIndicator, setCustomDecimalIndicator] = useState('')
   
+  // Zones calibration
+  const [zones, setZones] = useState<Zone[]>([])
+  const [showZonesOnPhoto, setShowZonesOnPhoto] = useState(true)
+  const [repositioningZoneId, setRepositioningZoneId] = useState<string | null>(null)
+  const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null)
+  const [calibrationPhotoFile, setCalibrationPhotoFile] = useState<File | null>(null)
+  const [calibrationPhotoUrl, setCalibrationPhotoUrl] = useState<string | null>(null)
+  
+  // Lightbox
+  const [showImageLightbox, setShowImageLightbox] = useState(false)
+  
   // UI
   const [showVersionDetail, setShowVersionDetail] = useState<ModelVersion | null>(null)
   const [showDeactivateConfirm, setShowDeactivateConfirm] = useState(false)
   const [pendingActiveState, setPendingActiveState] = useState<boolean | null>(null)
   
   // Tests
-  const [testPhotoFile, setTestPhotoFile] = useState<File | null>(null)
-  const [testPhotoUrl, setTestPhotoUrl] = useState<string | null>(null)
-  const [testing, setTesting] = useState(false)
-  const [currentTestResult, setCurrentTestResult] = useState<any>(null)
   const [showCorrectionModal, setShowCorrectionModal] = useState(false)
+  const [currentTestResult, setCurrentTestResult] = useState<any>(null)
   const [correctionSerial, setCorrectionSerial] = useState('')
   const [correctionReading, setCorrectionReading] = useState('')
   const [correctionReason, setCorrectionReason] = useState('')
 
-  // Stats - FIXED: use status field from labs_experiments
+  // Stats
   const testStats = {
     total: tests.length,
     validated: tests.filter(t => t.status === 'validated' || t.status === 'corrected').length,
@@ -165,6 +182,13 @@ export default function MeterModelDetailPage() {
         else { setMeterType('other'); setCustomMeterType(modelData.meter_type || '') }
         setUnit(modelData.unit || 'm³')
         setIsActive(modelData.is_active)
+        
+        // Load zones from ai_analysis_data or zones field
+        if (modelData.zones) {
+          setZones(modelData.zones)
+        } else if (modelData.ai_analysis_data?.zones) {
+          setZones(modelData.ai_analysis_data.zones)
+        }
       }
 
       const { data: rulesData } = await supabase.from('meter_reading_rules').select('*').eq('model_id', modelId).single()
@@ -180,7 +204,6 @@ export default function MeterModelDetailPage() {
       const { data: versionsData } = await supabase.from('meter_model_prompts').select('*').eq('model_id', modelId).order('version', { ascending: false })
       if (versionsData) setVersions(versionsData)
 
-      // FIXED: Load from labs_experiments instead of meter_model_tests
       const { data: testsData } = await supabase
         .from('labs_experiments')
         .select('*')
@@ -194,6 +217,72 @@ export default function MeterModelDetailPage() {
     }
   }
 
+  // Zone management
+  function addZone(fieldType: string) {
+    const config = ZONE_TYPES.find(z => z.value === fieldType)
+    // Check if zone already exists
+    if (zones.find(z => z.fieldType === fieldType)) return
+    setZones([...zones, { 
+      id: crypto.randomUUID(), 
+      fieldType, 
+      label: config?.label || fieldType,
+      position: null
+    }])
+  }
+
+  function removeZone(id: string) {
+    setZones(zones.filter(z => z.id !== id))
+  }
+
+  function startRepositioning(zoneId: string) {
+    setRepositioningZoneId(zoneId)
+    setShowZonesOnPhoto(true)
+  }
+
+  function handlePhotoMouseDown(e: React.MouseEvent) {
+    if (!repositioningZoneId || !photoContainerRef.current) return
+    e.preventDefault()
+    const rect = photoContainerRef.current.getBoundingClientRect()
+    setDragStart({ x: (e.clientX - rect.left) / rect.width, y: (e.clientY - rect.top) / rect.height })
+  }
+
+  function handlePhotoMouseMove(e: React.MouseEvent) {
+    if (!repositioningZoneId || !dragStart || !photoContainerRef.current) return
+    const rect = photoContainerRef.current.getBoundingClientRect()
+    const x = (e.clientX - rect.left) / rect.width
+    const y = (e.clientY - rect.top) / rect.height
+    setZones(zones.map(z => z.id === repositioningZoneId ? { 
+      ...z, 
+      position: { 
+        x: Math.min(dragStart.x, x), 
+        y: Math.min(dragStart.y, y), 
+        w: Math.abs(x - dragStart.x), 
+        h: Math.abs(y - dragStart.y) 
+      } 
+    } : z))
+  }
+
+  function handlePhotoMouseUp() { 
+    setDragStart(null)
+    setRepositioningZoneId(null) 
+  }
+
+  // Calibration photo
+  function handleCalibrationPhotoUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (calibrationPhotoUrl?.startsWith('blob:')) URL.revokeObjectURL(calibrationPhotoUrl)
+    setCalibrationPhotoFile(file)
+    setCalibrationPhotoUrl(URL.createObjectURL(file))
+  }
+
+  function removeCalibrationPhoto() {
+    if (calibrationPhotoUrl?.startsWith('blob:')) URL.revokeObjectURL(calibrationPhotoUrl)
+    setCalibrationPhotoFile(null)
+    setCalibrationPhotoUrl(null)
+  }
+
+  // Generate prompt with zones
   function generatePromptText(): string {
     const typeLabel = meterType === 'other' ? customMeterType : METER_TYPES.find(t => t.value === meterType)?.label || meterType
     const formatExample = 'X'.repeat(integerDigits) + ',' + 'X'.repeat(decimalDigits)
@@ -205,7 +294,22 @@ export default function MeterModelDetailPage() {
     else if (decimalIndicator === 'comma') prompt += `\n- Virgule visible entre entiers et décimales`
     else if (decimalIndicator === 'other' && customDecimalIndicator) prompt += `\n- ${customDecimalIndicator}`
 
-    // FIXED: Use corrected_data from labs_experiments
+    // Add zones positions to prompt
+    const zonesWithPosition = zones.filter(z => z.position)
+    if (zonesWithPosition.length > 0) {
+      prompt += `\n\nZONES À ANALYSER:`
+      zonesWithPosition.forEach(z => {
+        if (z.position) {
+          const xStart = Math.round(z.position.x * 100)
+          const xEnd = Math.round((z.position.x + z.position.w) * 100)
+          const yStart = Math.round(z.position.y * 100)
+          const yEnd = Math.round((z.position.y + z.position.h) * 100)
+          prompt += `\n- ${z.label}: zone ${xStart}-${xEnd}% horizontal, ${yStart}-${yEnd}% vertical`
+        }
+      })
+    }
+
+    // Add corrections
     const corrections = tests.filter(t => t.status === 'corrected' && t.corrected_data?.reading)
     if (corrections.length > 0) {
       prompt += `\n\nCORRECTIONS (erreurs à éviter):`
@@ -227,16 +331,30 @@ export default function MeterModelDetailPage() {
       const finalDecimalIndicator = decimalIndicator === 'other' ? customDecimalIndicator : decimalIndicator
       const promptText = generatePromptText()
 
-      // Sauvegarder les infos du modèle
+      // Upload calibration photo if new
+      let photoUrl = model.reference_photos?.[0]
+      if (calibrationPhotoFile) {
+        const formData = new FormData()
+        formData.append('file', calibrationPhotoFile)
+        const uploadRes = await fetch('/api/upload-meter-photo', { method: 'POST', body: formData })
+        if (uploadRes.ok) { 
+          const { url } = await uploadRes.json()
+          photoUrl = url 
+        }
+      }
+
+      // Save model with zones
       await supabase.from('meter_models').update({ 
         name, 
         manufacturer: manufacturer || null, 
         meter_type: finalMeterType, 
         unit, 
-        is_active: isActive 
+        is_active: isActive,
+        reference_photos: photoUrl ? [photoUrl] : model.reference_photos,
+        zones: zones
       }).eq('id', modelId)
 
-      // Sauvegarder les règles de lecture (sans créer de nouvelle version)
+      // Save reading rules
       const rulesData = { 
         model_id: modelId, 
         reading_integer_digits: integerDigits, 
@@ -247,13 +365,18 @@ export default function MeterModelDetailPage() {
       if (rules?.id) await supabase.from('meter_reading_rules').update(rulesData).eq('id', rules.id)
       else await supabase.from('meter_reading_rules').insert(rulesData)
 
-      // Mettre à jour le prompt de la version active (sans créer de nouvelle version)
+      // Update active version prompt
       const activeVersion = versions.find(v => v.is_active)
       if (activeVersion) {
         await supabase.from('meter_model_prompts').update({ prompt_text: promptText }).eq('id', activeVersion.id)
       }
 
-      // Recharger les données pour confirmer la sauvegarde
+      // Clear calibration photo state
+      if (calibrationPhotoFile) {
+        setCalibrationPhotoFile(null)
+        setCalibrationPhotoUrl(null)
+      }
+
       await loadModel()
     } catch (error) {
       console.error('Error:', error)
@@ -276,112 +399,16 @@ export default function MeterModelDetailPage() {
     router.push('/dashboard/meters')
   }
 
-  // Tests
-  function handleTestPhotoUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (!file) return
-    if (testPhotoUrl?.startsWith('blob:')) URL.revokeObjectURL(testPhotoUrl)
-    setTestPhotoFile(file)
-    setTestPhotoUrl(URL.createObjectURL(file))
-    setCurrentTestResult(null)
-  }
-
-  async function runTest() {
-    if (!testPhotoFile) return
-    setTesting(true)
-    try {
-      const base64 = await fileToBase64(testPhotoFile)
-      const promptText = rules?.prompt_rules || generatePromptText()
-      const response = await fetch('/api/test-meter', { 
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' }, 
-        body: JSON.stringify({ testPhoto: base64, promptRules: promptText, modelData: { name, manufacturer, meterType, unit, integerDigits, decimalDigits } }) 
-      })
-      const result = await response.json()
-      setCurrentTestResult({ 
-        success: result.success !== false, 
-        confidence: result.confidence || 0.95, 
-        extractedSerial: result.extractedSerial || result.serialNumber, 
-        extractedReading: result.extractedReading || result.reading
-      })
-    } catch { 
-      setCurrentTestResult({ success: false, confidence: 0 }) 
-    } finally { 
-      setTesting(false) 
-    }
-  }
-
-  // FIXED: Save to labs_experiments instead of meter_model_tests
-  async function validateTest() { 
-    if (!currentTestResult || !testPhotoFile) return
-    const base64 = await fileToBase64(testPhotoFile)
-    await fetch('/api/labs/experiments', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        meter_model_id: modelId,
-        photo_base64: base64,
-        extracted_data: {
-          serial: { value: currentTestResult.extractedSerial || '', confidence: currentTestResult.confidence },
-          reading: { value: currentTestResult.extractedReading || '', confidence: currentTestResult.confidence }
-        },
-        corrected_data: null,
-        confidence: currentTestResult.confidence,
-        status: 'validated',
-        image_config_used: {}
-      })
-    })
-    resetTest()
-    loadModel()
-  }
-
-  function openCorrectionModal() {
-    if (!currentTestResult) return
-    setCorrectionSerial(currentTestResult.extractedSerial || '')
-    setCorrectionReading(currentTestResult.extractedReading || '')
-    setCorrectionReason('')
-    setShowCorrectionModal(true)
-  }
-
-  // FIXED: Save to labs_experiments instead of meter_model_tests
   async function submitCorrection() {
-    if (!currentTestResult || !testPhotoFile) return
-    const base64 = await fileToBase64(testPhotoFile)
-    await fetch('/api/labs/experiments', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        meter_model_id: modelId,
-        photo_base64: base64,
-        extracted_data: {
-          serial: { value: currentTestResult.extractedSerial || '', confidence: currentTestResult.confidence },
-          reading: { value: currentTestResult.extractedReading || '', confidence: currentTestResult.confidence }
-        },
-        corrected_data: {
-          serial: correctionSerial,
-          reading: correctionReading
-        },
-        confidence: currentTestResult.confidence,
-        status: 'corrected',
-        image_config_used: {}
-      })
-    })
+    if (!currentTestResult) return
     setShowCorrectionModal(false)
-    resetTest()
-    loadModel()
-  }
-
-  function resetTest() { 
-    if (testPhotoUrl?.startsWith('blob:')) URL.revokeObjectURL(testPhotoUrl)
-    setTestPhotoFile(null)
-    setTestPhotoUrl(null)
-    setCurrentTestResult(null)
   }
 
   function formatDate(d: string) { return new Date(d).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) }
 
   const formatPreview = 'X'.repeat(integerDigits) + ',' + 'X'.repeat(decimalDigits)
   const typeConfig = METER_TYPES.find(t => t.value === meterType) || METER_TYPES[0]
+  const displayPhotoUrl = calibrationPhotoUrl || model?.reference_photos?.[0]
 
   if (loading) return <div className="p-6 flex items-center justify-center min-h-screen"><Loader2 className="h-8 w-8 animate-spin text-teal-600" /></div>
   if (!model) return <div className="p-6 text-center"><p className="text-gray-500">Modèle non trouvé</p><Link href="/dashboard/meters"><Button variant="outline" className="mt-4">Retour</Button></Link></div>
@@ -433,11 +460,108 @@ export default function MeterModelDetailPage() {
         )}
       </Card>
 
-      {/* Photo + Informations + Versions */}
+      {/* Photo avec zones + Informations */}
       <div className="grid md:grid-cols-2 gap-6 mb-6">
-        <Card className="p-4 flex items-center justify-center">
-          {model.reference_photos?.[0] && <img src={model.reference_photos[0]} alt={model.name} className="max-h-72 w-auto rounded-lg object-contain" />}
+        {/* Photo avec zones */}
+        <Card className="p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-semibold text-sm">
+              Photo
+              {repositioningZoneId && <span className="text-teal-600 ml-2">— Dessinez la zone</span>}
+            </h3>
+            <div className="flex items-center gap-2">
+              {zones.length > 0 && (
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  onClick={() => setShowZonesOnPhoto(!showZonesOnPhoto)}
+                  className="h-8 text-xs gap-1"
+                >
+                  {showZonesOnPhoto ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                  {showZonesOnPhoto ? 'Masquer' : 'Afficher'}
+                </Button>
+              )}
+            </div>
+          </div>
+          
+          {displayPhotoUrl ? (
+            <div className="space-y-3">
+              <div 
+                ref={photoContainerRef} 
+                className={`relative select-none ${repositioningZoneId ? 'cursor-crosshair' : 'cursor-pointer'}`}
+                onMouseDown={handlePhotoMouseDown}
+                onMouseMove={handlePhotoMouseMove}
+                onMouseUp={handlePhotoMouseUp}
+                onMouseLeave={handlePhotoMouseUp}
+                onClick={() => !repositioningZoneId && !dragStart && setShowImageLightbox(true)}
+              >
+                <img 
+                  src={displayPhotoUrl} 
+                  alt={model.name} 
+                  className="w-full rounded-lg" 
+                  draggable={false}
+                />
+                {!repositioningZoneId && (
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); setShowImageLightbox(true) }} 
+                    className="absolute bottom-2 right-2 p-1.5 bg-black/50 text-white rounded-full hover:bg-black/70"
+                  >
+                    <ZoomIn className="h-4 w-4" />
+                  </button>
+                )}
+                
+                {/* Zones overlay */}
+                {showZonesOnPhoto && zones.map((zone) => zone.position && (
+                  <div 
+                    key={zone.id}
+                    className="absolute border-2 rounded"
+                    style={{
+                      left: `${zone.position.x * 100}%`,
+                      top: `${zone.position.y * 100}%`,
+                      width: `${zone.position.w * 100}%`,
+                      height: `${zone.position.h * 100}%`,
+                      borderColor: ZONE_TYPES.find(z => z.value === zone.fieldType)?.color || '#6B7280',
+                      backgroundColor: `${ZONE_TYPES.find(z => z.value === zone.fieldType)?.color || '#6B7280'}30`
+                    }}
+                  >
+                    <span 
+                      className="absolute -top-5 left-0 px-1 text-xs text-white rounded"
+                      style={{ backgroundColor: ZONE_TYPES.find(z => z.value === zone.fieldType)?.color || '#6B7280' }}
+                    >
+                      {zone.label}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              
+              {/* Change photo button */}
+              <div className="flex gap-2">
+                <label className="flex-1">
+                  <Button variant="outline" size="sm" className="w-full gap-2" asChild>
+                    <span>
+                      <Camera className="h-4 w-4" />
+                      {calibrationPhotoFile ? 'Changer la photo' : 'Nouvelle photo de calibration'}
+                    </span>
+                  </Button>
+                  <input type="file" accept="image/*" onChange={handleCalibrationPhotoUpload} className="hidden" />
+                </label>
+                {calibrationPhotoFile && (
+                  <Button variant="outline" size="sm" onClick={removeCalibrationPhoto}>
+                    <X className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
+            </div>
+          ) : (
+            <label className="flex flex-col items-center justify-center h-48 border-2 border-dashed rounded-lg cursor-pointer hover:border-teal-500 hover:bg-teal-50 transition-colors">
+              <Upload className="h-8 w-8 text-gray-400 mb-2" />
+              <span className="text-gray-600 text-sm">Ajouter une photo</span>
+              <input type="file" accept="image/*" onChange={handleCalibrationPhotoUpload} className="hidden" />
+            </label>
+          )}
         </Card>
+
+        {/* Informations */}
         <Card className="p-4">
           <h3 className="font-semibold mb-4">Informations</h3>
           <div className="space-y-3">
@@ -485,6 +609,69 @@ export default function MeterModelDetailPage() {
           </div>
         </Card>
       </div>
+
+      {/* Zones de calibration */}
+      <Card className="p-4 mb-6">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-semibold">Zones de lecture</h3>
+          <div className="flex gap-2">
+            {ZONE_TYPES.map((type) => (
+              <Button 
+                key={type.value}
+                variant="outline" 
+                size="sm" 
+                onClick={() => addZone(type.value)}
+                disabled={zones.some(z => z.fieldType === type.value)}
+                className="gap-1 h-8 text-xs"
+                style={{ borderColor: zones.some(z => z.fieldType === type.value) ? type.color : undefined }}
+              >
+                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: type.color }} />
+                {type.label}
+              </Button>
+            ))}
+          </div>
+        </div>
+        
+        {zones.length === 0 ? (
+          <p className="text-gray-400 text-sm py-4 text-center">Ajoutez des zones pour calibrer la lecture automatique</p>
+        ) : (
+          <div className="space-y-2">
+            {zones.map((zone) => {
+              const config = ZONE_TYPES.find(z => z.value === zone.fieldType)
+              return (
+                <div 
+                  key={zone.id} 
+                  className="flex items-center justify-between p-3 border rounded-lg"
+                  style={{ borderLeftWidth: 4, borderLeftColor: config?.color || '#6B7280' }}
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="font-medium text-sm">{zone.label}</span>
+                    {zone.position ? (
+                      <Badge variant="outline" className="text-xs bg-green-50 text-green-700">✓ Positionné</Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-xs bg-orange-50 text-orange-700">Non positionné</Badge>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button 
+                      variant={zone.position ? "outline" : "default"}
+                      size="sm" 
+                      className={`h-7 text-xs gap-1 ${!zone.position ? 'bg-teal-600 hover:bg-teal-700' : ''}`}
+                      onClick={() => startRepositioning(zone.id)}
+                    >
+                      <Move className="h-3 w-3" />
+                      {zone.position ? 'Modifier' : 'Positionner'}
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-500" onClick={() => removeZone(zone.id)}>
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </Card>
 
       {/* Index de consommation */}
       <Card className="p-4 mb-6">
@@ -543,6 +730,32 @@ export default function MeterModelDetailPage() {
       </Button>
 
       {/* Modals */}
+      {/* Lightbox */}
+      <Dialog open={showImageLightbox} onOpenChange={setShowImageLightbox}>
+        <DialogContent className="max-w-4xl p-2">
+          <DialogHeader className="sr-only">
+            <DialogTitle>Image agrandie</DialogTitle>
+          </DialogHeader>
+          {displayPhotoUrl && (
+            <div className="relative">
+              <img 
+                src={displayPhotoUrl} 
+                alt="Image agrandie" 
+                className="w-full h-auto max-h-[80vh] object-contain rounded-lg"
+              />
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                className="absolute top-2 right-2 bg-black/50 text-white hover:bg-black/70"
+                onClick={() => setShowImageLightbox(false)}
+              >
+                <X className="h-5 w-5" />
+              </Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
       {/* Popup désactivation */}
       <Dialog open={showDeactivateConfirm} onOpenChange={setShowDeactivateConfirm}>
         <DialogContent>
@@ -621,12 +834,4 @@ export default function MeterModelDetailPage() {
       </Dialog>
     </div>
   )
-}
-
-async function fileToBase64(file: File): Promise<string> { 
-  return new Promise((resolve) => { 
-    const reader = new FileReader()
-    reader.onloadend = () => resolve((reader.result as string).split(',')[1])
-    reader.readAsDataURL(file) 
-  }) 
 }
