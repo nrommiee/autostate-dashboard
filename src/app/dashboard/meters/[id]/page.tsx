@@ -418,7 +418,7 @@ export default function MeterModelDetailPage() {
 
       {/* Photo + Informations */}
       <div className="grid md:grid-cols-2 gap-6 mb-6">
-        <Card className="p-4">{model.reference_photos?.[0] && <img src={model.reference_photos[0]} alt={model.name} className="w-full rounded-lg" />}</Card>
+        <Card className="p-4 flex items-center justify-center">{model.reference_photos?.[0] && <img src={model.reference_photos[0]} alt={model.name} className="max-h-56 w-auto rounded-lg object-contain" />}</Card>
         <Card className="p-4">
           <h3 className="font-semibold mb-4">Informations</h3>
           <div className="space-y-3">
