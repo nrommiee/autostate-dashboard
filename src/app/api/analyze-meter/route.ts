@@ -5,6 +5,17 @@ const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!
 })
 
+// Helper to detect image media type from base64
+function detectMediaType(base64: string): string {
+  // Check the first few bytes for image signatures
+  if (base64.startsWith('/9j/')) return 'image/jpeg'
+  if (base64.startsWith('iVBORw')) return 'image/png'
+  if (base64.startsWith('R0lGOD')) return 'image/gif'
+  if (base64.startsWith('UklGR')) return 'image/webp'
+  // Default to jpeg
+  return 'image/jpeg'
+}
+
 export async function POST(request: NextRequest) {
   try {
     const { photos, existingType } = await request.json()
@@ -21,11 +32,12 @@ export async function POST(request: NextRequest) {
 
     // Add each photo as an image
     for (let i = 0; i < Math.min(photos.length, 4); i++) {
+      const mediaType = detectMediaType(photos[i])
       content.push({
         type: 'image',
         source: {
           type: 'base64',
-          media_type: 'image/jpeg',
+          media_type: mediaType,
           data: photos[i]
         }
       })
@@ -40,7 +52,11 @@ export async function POST(request: NextRequest) {
   "name": "Nom du modèle de compteur (ex: Itron Aquadis+)",
   "manufacturer": "Fabricant (ex: Itron, Landis+Gyr, Elster)",
   "meterType": "Type parmi: water_general, water_passage, electricity, gas, oil_tank, calorimeter, other",
+  "displayType": "Type d'affichage parmi: mechanical, digital, dials, other",
   "description": "Description technique du compteur en 2-3 phrases",
+  "serialNumber": "Numéro de série visible ou null",
+  "reading": "Index/lecture visible ou null",
+  "keywords": ["mot-clé1", "mot-clé2"],
   "suggestedZones": [
     {
       "fieldType": "Type parmi: serialNumber, ean, readingSingle, readingDay, readingNight, readingExclusiveNight, readingProduction, subscribedPower, custom",
@@ -96,7 +112,8 @@ Réponds UNIQUEMENT avec le JSON, sans markdown ni explications.`
       } else {
         analysis = JSON.parse(textContent.text)
       }
-    } catch {
+    } catch (parseError) {
+      console.error('JSON parse error:', textContent.text)
       // If JSON parsing fails, return raw analysis
       analysis = {
         rawAnalysis: textContent.text,
@@ -105,11 +122,10 @@ Réponds UNIQUEMENT avec le JSON, sans markdown ni explications.`
     }
 
     return NextResponse.json(analysis)
-
-  } catch (error) {
+  } catch (error: any) {
     console.error('Meter analysis error:', error)
     return NextResponse.json(
-      { error: 'Erreur lors de l\'analyse' },
+      { error: error.message || 'Erreur lors de l\'analyse' },
       { status: 500 }
     )
   }
