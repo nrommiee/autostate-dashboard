@@ -197,8 +197,8 @@ export default function CreateMeterModelPage() {
     setShowImageLightbox(true)
   }
 
-  // Check duplicate
-  const checkDuplicate = async (base64: string, detectedName: string, detectedManufacturer: string, detectedType: string) => {
+  // Check duplicate - returns true if duplicate found
+  const checkDuplicate = async (base64: string, detectedName: string, detectedManufacturer: string, detectedType: string): Promise<boolean> => {
     setCheckingDuplicate(true)
     try {
       const response = await fetch('/api/check-duplicate-meter', {
@@ -219,13 +219,81 @@ export default function CreateMeterModelPage() {
         setDuplicateConfidence(result.confidence)
         setDuplicateReason(result.reason || '')
         setShowDuplicateModal(true)
+        return true
       }
+      return false
     } catch (err) {
       console.error('Duplicate check error:', err)
-      // Silently fail - continue with creation
+      return false
     } finally {
       setCheckingDuplicate(false)
     }
+  }
+
+  // Store pending analysis result
+  const [pendingAnalysis, setPendingAnalysis] = useState<any>(null)
+  const [pendingBase64, setPendingBase64] = useState<string | null>(null)
+
+  // Apply analysis results to form
+  const applyAnalysisResults = (result: any) => {
+    if (result.name) setName(result.name)
+    if (result.manufacturer) setManufacturer(result.manufacturer)
+    if (result.meterType) {
+      const known = METER_TYPES.find(t => t.value === result.meterType)
+      if (known) {
+        setMeterType(result.meterType)
+        setUnit(known.unit)
+      } else {
+        setMeterType('other')
+        setCustomMeterType(result.meterType)
+      }
+    }
+    if (result.displayType) {
+      const knownDisplay = DISPLAY_TYPES.find(d => d.value === result.displayType)
+      if (knownDisplay) {
+        setDisplayType(result.displayType)
+      } else {
+        setDisplayType('other')
+        setCustomDisplayType(result.displayType)
+      }
+    } else if (!displayType) {
+      setDisplayType('mechanical')
+    }
+    if (result.keywords) {
+      setKeywords(result.keywords.map((kw: string) => ({ value: kw, selected: true })))
+    }
+
+    // Créer les zones depuis l'analyse
+    const newZones: Zone[] = []
+    if (result.serialNumber) {
+      newZones.push({
+        id: crypto.randomUUID(),
+        fieldType: 'serialNumber',
+        label: 'N° série',
+        extractedValue: result.serialNumber,
+        position: result.serialPosition || null,
+        isValidated: false,
+        decimalDigits: 0
+      })
+    }
+    if (result.reading) {
+      const typeLabel = METER_TYPES.find(t => t.value === result.meterType)?.label?.toLowerCase() || 'compteur'
+      newZones.push({
+        id: crypto.randomUUID(),
+        fieldType: 'readingSingle',
+        label: `Index ${typeLabel}`,
+        extractedValue: result.reading,
+        position: result.readingPosition || null,
+        isValidated: false,
+        decimalDigits: 3
+      })
+    }
+    setZones(newZones)
+    
+    // Déclencher l'animation pulse
+    setJustAnalyzed(true)
+    setNeedsAnalysis(false)
+    setTimeout(() => setJustAnalyzed(false), 2000)
   }
 
   // Analysis
@@ -246,85 +314,49 @@ export default function CreateMeterModelPage() {
       const result = await response.json()
       if (!response.ok) throw new Error(result.error || 'Erreur analyse')
 
-      let detectedName = ''
-      let detectedManufacturer = ''
-      let detectedType = ''
+      // Store the analysis result for later
+      setPendingAnalysis(result)
+      setPendingBase64(base64)
 
-      if (result.name) {
-        setName(result.name)
-        detectedName = result.name
-      }
-      if (result.manufacturer) {
-        setManufacturer(result.manufacturer)
-        detectedManufacturer = result.manufacturer
-      }
-      if (result.meterType) {
-        const known = METER_TYPES.find(t => t.value === result.meterType)
-        if (known) {
-          setMeterType(result.meterType)
-          setUnit(known.unit)
-          detectedType = result.meterType
-        } else {
-          setMeterType('other')
-          setCustomMeterType(result.meterType)
-          detectedType = result.meterType
-        }
-      }
-      if (result.displayType) {
-        const knownDisplay = DISPLAY_TYPES.find(d => d.value === result.displayType)
-        if (knownDisplay) {
-          setDisplayType(result.displayType)
-        } else {
-          setDisplayType('other')
-          setCustomDisplayType(result.displayType)
-        }
-      } else if (!displayType) {
-        setDisplayType('mechanical')
-      }
-      if (result.keywords) {
-        setKeywords(result.keywords.map((kw: string) => ({ value: kw, selected: true })))
-      }
+      // Check for duplicates BEFORE applying results
+      const isDuplicate = await checkDuplicate(
+        base64, 
+        result.name || '', 
+        result.manufacturer || '', 
+        result.meterType || ''
+      )
 
-      // Créer les zones depuis l'analyse
-      const newZones: Zone[] = []
-      if (result.serialNumber) {
-        newZones.push({
-          id: crypto.randomUUID(),
-          fieldType: 'serialNumber',
-          label: 'N° série',
-          extractedValue: result.serialNumber,
-          position: result.serialPosition || null,
-          isValidated: false,
-          decimalDigits: 0
-        })
+      // If no duplicate found, apply results immediately
+      if (!isDuplicate) {
+        applyAnalysisResults(result)
+        setPendingAnalysis(null)
+        setPendingBase64(null)
       }
-      if (result.reading) {
-        const typeLabel = METER_TYPES.find(t => t.value === result.meterType)?.label?.toLowerCase() || 'compteur'
-        newZones.push({
-          id: crypto.randomUUID(),
-          fieldType: 'readingSingle',
-          label: `Index ${typeLabel}`,
-          extractedValue: result.reading,
-          position: result.readingPosition || null,
-          isValidated: false,
-          decimalDigits: 3
-        })
-      }
-      setZones(newZones)
-      
-      // Déclencher l'animation pulse
-      setJustAnalyzed(true)
-      setNeedsAnalysis(false)
-      setTimeout(() => setJustAnalyzed(false), 2000)
-
-      // Check for duplicates AFTER analysis
-      await checkDuplicate(base64, detectedName, detectedManufacturer, detectedType)
+      // If duplicate found, popup is shown and results will be applied on "Continue"
 
     } catch (err: any) {
       setError(err.message || 'Erreur analyse')
     } finally {
       setAnalyzing(false)
     }
+  }
+
+  // Handle continue after duplicate warning
+  const handleContinueAfterDuplicate = () => {
+    setShowDuplicateModal(false)
+    if (pendingAnalysis) {
+      applyAnalysisResults(pendingAnalysis)
+      setPendingAnalysis(null)
+      setPendingBase64(null)
+    }
+  }
+
+  // Handle cancel after duplicate warning
+  const handleCancelAfterDuplicate = () => {
+    setShowDuplicateModal(false)
+    removePhoto()
+    setPendingAnalysis(null)
+    setPendingBase64(null)
   }
 
   // Zones
@@ -1137,7 +1169,7 @@ RÈGLES DE LECTURE:`
                     />
                   )}
                 </div>
-                <p className="text-sm text-gray-500 mt-2">{name || 'Nouveau modèle'}</p>
+                <p className="text-sm text-gray-500 mt-2">{pendingAnalysis?.name || 'Nouveau modèle'}</p>
               </div>
               
               {/* Photo existante */}
@@ -1184,15 +1216,12 @@ RÈGLES DE LECTURE:`
               </Button>
               <Button
                 variant="outline"
-                onClick={() => {
-                  setShowDuplicateModal(false)
-                  removePhoto()
-                }}
+                onClick={handleCancelAfterDuplicate}
               >
                 Annuler
               </Button>
               <Button
-                onClick={() => setShowDuplicateModal(false)}
+                onClick={handleContinueAfterDuplicate}
                 className="bg-orange-600 hover:bg-orange-700"
               >
                 Continuer quand même
