@@ -396,7 +396,7 @@ export default function AnalysisPage() {
                             )}
                           </div>
                           <div className="flex items-center gap-2">
-                            {prompt.success_rate !== null && (
+                            {prompt.success_rate !== null && prompt.success_rate !== undefined && (
                               <span className={`font-medium ${
                                 prompt.success_rate >= 70 ? 'text-green-600' : 
                                 prompt.success_rate >= 50 ? 'text-yellow-600' : 'text-red-600'
@@ -467,7 +467,7 @@ export default function AnalysisPage() {
                             )}
                           </div>
                           <div className="flex items-center gap-2">
-                            {config.success_rate !== null && (
+                            {config.success_rate !== null && config.success_rate !== undefined && (
                               <span className={`font-medium ${
                                 config.success_rate >= 70 ? 'text-green-600' : 
                                 config.success_rate >= 50 ? 'text-yellow-600' : 'text-red-600'
