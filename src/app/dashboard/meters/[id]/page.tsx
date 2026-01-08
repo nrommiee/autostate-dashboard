@@ -44,7 +44,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { 
   ArrowLeft, Save, Loader2, Check, Trash2, CheckCircle, XCircle, AlertCircle,
-  Target, MoreHorizontal, RotateCcw, Eye, Upload, Play, Edit3, X
+  Target, MoreHorizontal, RotateCcw, Eye, Upload, Play, Edit3, X, BarChart3
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 
@@ -494,7 +494,18 @@ export default function MeterModelDetailPage() {
       {/* Versions du modèle */}
       <div className="grid md:grid-cols-2 gap-6 mb-6">
         <Card className="p-4">
-          <h3 className="font-semibold mb-3">Versions du modèle</h3>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-semibold">Versions du modèle</h3>
+            {versions.length > 0 && (
+              <Button 
+                variant="outline" 
+                size="sm"
+                onClick={() => router.push(`/dashboard/meters/${modelId}/versions`)}
+              >
+                <BarChart3 className="h-4 w-4 mr-1" /> Analyser
+              </Button>
+            )}
+          </div>
           {versions.length <= 1 ? (
             <div className={`p-3 rounded-lg ${versions.length === 1 ? 'bg-green-50 border border-green-200' : 'bg-gray-50'}`}>
               {versions.length === 1 ? (
