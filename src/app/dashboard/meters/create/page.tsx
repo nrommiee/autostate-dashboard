@@ -427,9 +427,21 @@ export default function CreateMeterModelPage() {
   }
 
   const handlePhotoMouseUp = () => {
+    // Only finish repositioning if we actually drew something (dragStart was set)
+    if (dragStart) {
+      setDragStart(null)
+      // Check if zone has a valid size before finishing
+      const zone = zones.find(z => z.id === repositioningZoneId)
+      if (zone?.position && zone.position.w > 0.01 && zone.position.h > 0.01) {
+        setRepositioningZoneId(null)
+        setSelectedZoneType(null)
+      }
+    }
+  }
+
+  const handlePhotoMouseLeave = () => {
+    // Only stop drag, don't cancel repositioning mode
     setDragStart(null)
-    setRepositioningZoneId(null)
-    setSelectedZoneType(null)
   }
 
   // Generate prompt with zones
@@ -828,7 +840,7 @@ RÈGLES DE LECTURE:
                       onMouseDown={handlePhotoMouseDown}
                       onMouseMove={handlePhotoMouseMove}
                       onMouseUp={handlePhotoMouseUp}
-                      onMouseLeave={handlePhotoMouseUp}
+                      onMouseLeave={handlePhotoMouseLeave}
                     >
                       <img src={photoUrl} alt="Compteur" className="w-full rounded-lg" draggable={false} />
                       
@@ -846,25 +858,39 @@ RÈGLES DE LECTURE:
                   {/* Shape selector - visible when adding/modifying zone */}
                   {repositioningZoneId && (
                     <div className="mt-3 p-3 bg-teal-50 rounded-lg border border-teal-200">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="text-xs font-medium text-teal-700">Forme :</span>
-                        {ZONE_SHAPES.map(shape => (
-                          <Button
-                            key={shape.value}
-                            variant={selectedShape === shape.value ? 'default' : 'outline'}
-                            size="sm"
-                            className={`h-8 gap-1 ${selectedShape === shape.value ? 'bg-teal-600' : ''}`}
-                            onClick={() => {
-                              setSelectedShape(shape.value as any)
-                              if (repositioningZoneId) {
-                                updateZone(repositioningZoneId, { shape: shape.value as any })
-                              }
-                            }}
-                          >
-                            <shape.icon className="h-3 w-3" />
-                            <span className="text-xs">{shape.label}</span>
-                          </Button>
-                        ))}
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-medium text-teal-700">Forme :</span>
+                          {ZONE_SHAPES.map(shape => (
+                            <Button
+                              key={shape.value}
+                              variant={selectedShape === shape.value ? 'default' : 'outline'}
+                              size="sm"
+                              className={`h-8 gap-1 ${selectedShape === shape.value ? 'bg-teal-600' : ''}`}
+                              onClick={() => {
+                                setSelectedShape(shape.value as any)
+                                if (repositioningZoneId) {
+                                  updateZone(repositioningZoneId, { shape: shape.value as any })
+                                }
+                              }}
+                            >
+                              <shape.icon className="h-3 w-3" />
+                              <span className="text-xs">{shape.label}</span>
+                            </Button>
+                          ))}
+                        </div>
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          className="h-7 text-xs text-gray-500"
+                          onClick={() => {
+                            setRepositioningZoneId(null)
+                            setSelectedZoneType(null)
+                            setDragStart(null)
+                          }}
+                        >
+                          Annuler
+                        </Button>
                       </div>
                       <p className="text-xs text-teal-600">Cliquez et glissez sur la photo pour dessiner la zone</p>
                     </div>
