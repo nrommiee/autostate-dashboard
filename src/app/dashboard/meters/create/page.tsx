@@ -33,7 +33,7 @@ import {
 import { 
   ArrowLeft, ArrowRight, Loader2, Save, CheckCircle, Upload, 
   Sparkles, X, Trash2, Plus, Check, 
-  AlertTriangle, Move, Eye, EyeOff, ZoomIn
+  AlertTriangle, Move, Eye, EyeOff, ZoomIn, ExternalLink
 } from 'lucide-react'
 
 // Types
@@ -100,6 +100,14 @@ interface Zone {
   decimalDigits: number
 }
 
+interface DuplicateMatch {
+  id: string
+  name: string
+  manufacturer: string | null
+  meter_type: string
+  photo: string
+}
+
 const STEPS = [
   { id: 1, label: 'Photo & Informations', icon: '📷' },
   { id: 2, label: 'Index & Zones', icon: '🎯' },
@@ -142,6 +150,13 @@ export default function CreateMeterModelPage() {
   const [showImageLightbox, setShowImageLightbox] = useState(false)
   const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null)
 
+  // Duplicate check
+  const [checkingDuplicate, setCheckingDuplicate] = useState(false)
+  const [showDuplicateModal, setShowDuplicateModal] = useState(false)
+  const [duplicateMatch, setDuplicateMatch] = useState<DuplicateMatch | null>(null)
+  const [duplicateConfidence, setDuplicateConfidence] = useState(0)
+  const [duplicateReason, setDuplicateReason] = useState('')
+
   // Validation error
   const [validationError, setValidationError] = useState<string | null>(null)
 
@@ -182,6 +197,37 @@ export default function CreateMeterModelPage() {
     setShowImageLightbox(true)
   }
 
+  // Check duplicate
+  const checkDuplicate = async (base64: string, detectedName: string, detectedManufacturer: string, detectedType: string) => {
+    setCheckingDuplicate(true)
+    try {
+      const response = await fetch('/api/check-duplicate-meter', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          photo_base64: base64,
+          detected_name: detectedName,
+          detected_manufacturer: detectedManufacturer,
+          detected_type: detectedType
+        })
+      })
+
+      const result = await response.json()
+      
+      if (result.isDuplicate && result.matchedModel) {
+        setDuplicateMatch(result.matchedModel)
+        setDuplicateConfidence(result.confidence)
+        setDuplicateReason(result.reason || '')
+        setShowDuplicateModal(true)
+      }
+    } catch (err) {
+      console.error('Duplicate check error:', err)
+      // Silently fail - continue with creation
+    } finally {
+      setCheckingDuplicate(false)
+    }
+  }
+
   // Analysis
   const analyzePhoto = async () => {
     if (!photoFile) return
@@ -200,16 +246,28 @@ export default function CreateMeterModelPage() {
       const result = await response.json()
       if (!response.ok) throw new Error(result.error || 'Erreur analyse')
 
-      if (result.name) setName(result.name)
-      if (result.manufacturer) setManufacturer(result.manufacturer)
+      let detectedName = ''
+      let detectedManufacturer = ''
+      let detectedType = ''
+
+      if (result.name) {
+        setName(result.name)
+        detectedName = result.name
+      }
+      if (result.manufacturer) {
+        setManufacturer(result.manufacturer)
+        detectedManufacturer = result.manufacturer
+      }
       if (result.meterType) {
         const known = METER_TYPES.find(t => t.value === result.meterType)
         if (known) {
           setMeterType(result.meterType)
           setUnit(known.unit)
+          detectedType = result.meterType
         } else {
           setMeterType('other')
           setCustomMeterType(result.meterType)
+          detectedType = result.meterType
         }
       }
       if (result.displayType) {
@@ -258,6 +316,9 @@ export default function CreateMeterModelPage() {
       setJustAnalyzed(true)
       setNeedsAnalysis(false)
       setTimeout(() => setJustAnalyzed(false), 2000)
+
+      // Check for duplicates AFTER analysis
+      await checkDuplicate(base64, detectedName, detectedManufacturer, detectedType)
 
     } catch (err: any) {
       setError(err.message || 'Erreur analyse')
@@ -586,14 +647,42 @@ RÈGLES DE LECTURE:`
                         </div>
                       </div>
                       {needsAnalysis ? (
-                        <Button onClick={analyzePhoto} disabled={analyzing} className="w-full gap-2 bg-teal-600 hover:bg-teal-700">
-                          {analyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                          {analyzing ? 'Analyse en cours...' : 'Analyser cette photo'}
+                        <Button onClick={analyzePhoto} disabled={analyzing || checkingDuplicate} className="w-full gap-2 bg-teal-600 hover:bg-teal-700">
+                          {analyzing ? (
+                            <>
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              Analyse en cours...
+                            </>
+                          ) : checkingDuplicate ? (
+                            <>
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              Vérification doublons...
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="h-4 w-4" />
+                              Analyser cette photo
+                            </>
+                          )}
                         </Button>
                       ) : (
-                        <Button onClick={analyzePhoto} disabled={analyzing} variant="outline" className="w-full gap-2">
-                          {analyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                          {analyzing ? 'Analyse en cours...' : 'Réanalyser la photo'}
+                        <Button onClick={analyzePhoto} disabled={analyzing || checkingDuplicate} variant="outline" className="w-full gap-2">
+                          {analyzing ? (
+                            <>
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              Analyse en cours...
+                            </>
+                          ) : checkingDuplicate ? (
+                            <>
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              Vérification doublons...
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="h-4 w-4" />
+                              Réanalyser la photo
+                            </>
+                          )}
                         </Button>
                       )}
                     </div>
@@ -1019,6 +1108,96 @@ RÈGLES DE LECTURE:`
                 </Button>
               </div>
             )}
+          </DialogContent>
+        </Dialog>
+
+        {/* Modal Duplicate Detection */}
+        <Dialog open={showDuplicateModal} onOpenChange={setShowDuplicateModal}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-orange-600">
+                <AlertTriangle className="h-5 w-5" />
+                Modèle similaire détecté
+              </DialogTitle>
+              <DialogDescription>
+                Ce compteur semble correspondre à un modèle existant dans votre base de données.
+              </DialogDescription>
+            </DialogHeader>
+            
+            <div className="grid grid-cols-2 gap-4 py-4">
+              {/* Photo uploadée */}
+              <div className="text-center">
+                <p className="text-sm font-medium text-gray-700 mb-2">Votre photo</p>
+                <div className="border rounded-lg p-2 bg-gray-50">
+                  {photoUrl && (
+                    <img 
+                      src={photoUrl} 
+                      alt="Nouveau compteur" 
+                      className="w-full h-48 object-contain rounded"
+                    />
+                  )}
+                </div>
+                <p className="text-sm text-gray-500 mt-2">{name || 'Nouveau modèle'}</p>
+              </div>
+              
+              {/* Photo existante */}
+              <div className="text-center">
+                <p className="text-sm font-medium text-gray-700 mb-2">Modèle existant</p>
+                <div className="border rounded-lg p-2 bg-orange-50 border-orange-200">
+                  {duplicateMatch?.photo && (
+                    <img 
+                      src={duplicateMatch.photo} 
+                      alt="Modèle existant" 
+                      className="w-full h-48 object-contain rounded"
+                    />
+                  )}
+                </div>
+                <p className="text-sm text-gray-900 font-medium mt-2">
+                  {duplicateMatch?.name}
+                </p>
+                <p className="text-xs text-gray-500">
+                  {duplicateMatch?.manufacturer} • {METER_TYPES.find(t => t.value === duplicateMatch?.meter_type)?.label || duplicateMatch?.meter_type}
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 text-center">
+              <p className="text-sm text-orange-800">
+                <strong>Confiance : {duplicateConfidence}%</strong>
+                {duplicateReason && <span className="block text-xs mt-1">{duplicateReason}</span>}
+              </p>
+            </div>
+
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowDuplicateModal(false)
+                  if (duplicateMatch?.id) {
+                    router.push(`/dashboard/meters/${duplicateMatch.id}`)
+                  }
+                }}
+                className="gap-2"
+              >
+                <ExternalLink className="h-4 w-4" />
+                Voir le modèle existant
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowDuplicateModal(false)
+                  removePhoto()
+                }}
+              >
+                Annuler
+              </Button>
+              <Button
+                onClick={() => setShowDuplicateModal(false)}
+                className="bg-orange-600 hover:bg-orange-700"
+              >
+                Continuer quand même
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
       </div>
