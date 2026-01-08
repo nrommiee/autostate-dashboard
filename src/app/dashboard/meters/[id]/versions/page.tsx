@@ -409,7 +409,7 @@ export default function ModelVersionsPage() {
                 <XAxis dataKey="name" />
                 <YAxis domain={[0, 100]} unit="%" />
                 <Tooltip 
-                  formatter={(value: number, name: string) => [
+                  formatter={(value: any, name: string) => [
                     name === 'taux' ? `${value}%` : value,
                     name === 'taux' ? 'Réussite' : name === 'confiance' ? 'Confiance' : 'Tests'
                   ]}
@@ -457,7 +457,7 @@ export default function ModelVersionsPage() {
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="name" />
                 <YAxis domain={[0, 100]} unit="%" />
-                <Tooltip formatter={(value: number) => [`${value}%`, 'Confiance']} />
+                <Tooltip formatter={(value: any) => [`${value}%`, 'Confiance']} />
                 <Bar dataKey="confiance" fill="#06b6d4" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
