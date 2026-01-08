@@ -1,16 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
-import { createClient } from '@supabase/supabase-js'
+import { createAdminClient } from '@/lib/supabase'
 import { logApiUsage, createTimer } from '@/lib/api-usage'
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!
 })
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_KEY!
-)
 
 export async function POST(request: NextRequest) {
   const timer = createTimer()
@@ -30,6 +25,7 @@ export async function POST(request: NextRequest) {
     // Si modelId fourni, récupérer les infos du modèle
     let modelInfo = modelData
     if (modelId && !modelData) {
+      const supabase = createAdminClient()
       const { data: model } = await supabase
         .from('meter_models')
         .select('*')
