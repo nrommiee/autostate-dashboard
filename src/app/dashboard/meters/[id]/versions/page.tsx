@@ -666,9 +666,9 @@ export default function ModelVersionsPage() {
               {selectedVersion?.is_active && <Badge className="ml-2 bg-purple-600">Active</Badge>}
             </DialogTitle>
             <DialogDescription>
-              Config image: {selectedVersion?.image_config.grayscale ? 'N&B' : 'Couleur'}
-              {selectedVersion?.image_config.contrast !== 0 && ` • Contraste: ${selectedVersion.image_config.contrast > 0 ? '+' : ''}${selectedVersion.image_config.contrast}%`}
-              {selectedVersion?.image_config.brightness !== 0 && ` • Luminosité: ${selectedVersion.image_config.brightness > 0 ? '+' : ''}${selectedVersion.image_config.brightness}%`}
+              Config image: {selectedVersion?.image_config?.grayscale ? 'N&B' : 'Couleur'}
+              {selectedVersion?.image_config?.contrast !== 0 && ` • Contraste: ${(selectedVersion?.image_config?.contrast || 0) > 0 ? '+' : ''}${selectedVersion?.image_config?.contrast}%`}
+              {selectedVersion?.image_config?.brightness !== 0 && ` • Luminosité: ${(selectedVersion?.image_config?.brightness || 0) > 0 ? '+' : ''}${selectedVersion?.image_config?.brightness}%`}
             </DialogDescription>
           </DialogHeader>
           <div className="bg-gray-50 rounded-lg border p-4 max-h-96 overflow-y-auto">
