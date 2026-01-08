@@ -1235,9 +1235,46 @@ RÈGLES DE LECTURE:`
 }
 
 async function fileToBase64(file: File): Promise<string> { 
+  // Compress image if too large (max 1MB)
+  const maxSize = 1 * 1024 * 1024 // 1MB
+  
+  if (file.size > maxSize) {
+    const compressed = await compressImage(file, 0.7, 1200)
+    return compressed
+  }
+  
   return new Promise((resolve) => { 
     const reader = new FileReader()
     reader.onloadend = () => resolve((reader.result as string).split(',')[1])
     reader.readAsDataURL(file) 
   }) 
+}
+
+async function compressImage(file: File, quality: number = 0.7, maxWidth: number = 1200): Promise<string> {
+  return new Promise((resolve) => {
+    const canvas = document.createElement('canvas')
+    const ctx = canvas.getContext('2d')
+    const img = new Image()
+    
+    img.onload = () => {
+      // Calculate new dimensions
+      let width = img.width
+      let height = img.height
+      
+      if (width > maxWidth) {
+        height = (height * maxWidth) / width
+        width = maxWidth
+      }
+      
+      canvas.width = width
+      canvas.height = height
+      
+      // Draw and compress
+      ctx?.drawImage(img, 0, 0, width, height)
+      const dataUrl = canvas.toDataURL('image/jpeg', quality)
+      resolve(dataUrl.split(',')[1])
+    }
+    
+    img.src = URL.createObjectURL(file)
+  })
 }
