@@ -51,21 +51,18 @@ interface MeterModel {
 
 interface TestRecord {
   id: string
-  model_id: string
-  photo_url: string
-  success?: boolean
-  is_validated?: boolean
-  is_rejected?: boolean
+  meter_model_id: string
+  photo_url: string | null
+  status: 'pending' | 'validated' | 'corrected' | 'rejected'
+  extracted_data: Record<string, { value: string; confidence: number }> | null
+  corrected_data: Record<string, string> | null
   confidence: number
-  extracted_serial: string | null
-  extracted_reading: string | null
-  correct_serial: string | null
-  correct_reading: string | null
-  image_config: Record<string, any> | null
-  image_config_label: string | null
-  version_number: number | null
-  is_active: boolean
+  tokens_input: number
+  tokens_output: number
+  image_config_used: Record<string, any> | null
+  recognition_version_id: string | null
   created_at: string
+  expires_at: string | null
 }
 
 interface PromptVersion {
@@ -131,11 +128,11 @@ export default function MeterModelAnalysisPage() {
       
       if (modelData) setModel(modelData)
 
-      // Load tests
+      // Load tests from labs_experiments (the actual tests table)
       const { data: testsData } = await supabase
-        .from('meter_model_tests')
+        .from('labs_experiments')
         .select('*')
-        .eq('model_id', modelId)
+        .eq('meter_model_id', modelId)
         .order('created_at', { ascending: false })
       
       if (testsData) {
@@ -177,22 +174,31 @@ export default function MeterModelAnalysisPage() {
   // ============================================
 
   function calculateVersionStats(tests: TestRecord[]): VersionRecommendation[] {
-    // Group tests by image_config_label
+    // Group tests by image_config_used (convert to label)
     const groups: Record<string, TestRecord[]> = {}
     
     tests.forEach(test => {
-      const label = test.image_config_label || 'Sans traitement'
+      const config = test.image_config_used
+      let label = 'Sans traitement'
+      if (config) {
+        const parts = []
+        if (config.grayscale) parts.push('N&B')
+        else parts.push('Couleur')
+        if (config.contrast) parts.push(`C:${config.contrast > 0 ? '+' : ''}${config.contrast}%`)
+        if (config.sharpness) parts.push(`N:${config.sharpness}%`)
+        label = parts.join(' ')
+      }
       if (!groups[label]) groups[label] = []
       groups[label].push(test)
     })
 
     return Object.entries(groups).map(([label, groupTests]) => {
-      // Use success OR is_validated (for compatibility)
-      const successful = groupTests.filter(t => t.success ?? t.is_validated).length
+      // Use status to determine success
+      const successful = groupTests.filter(t => t.status === 'validated' || t.status === 'corrected').length
       const successRate = (successful / groupTests.length) * 100
       
       // Calculate consistency (standard deviation of success rate)
-      const successValues: number[] = groupTests.map(t => (t.success ?? t.is_validated) ? 1 : 0)
+      const successValues: number[] = groupTests.map(t => (t.status === 'validated' || t.status === 'corrected') ? 1 : 0)
       const mean = successValues.reduce((a: number, b: number) => a + b, 0) / successValues.length
       const variance = successValues.reduce((sum: number, val: number) => sum + Math.pow(val - mean, 2), 0) / successValues.length
       const stdDev = Math.sqrt(variance)
@@ -583,23 +589,33 @@ export default function MeterModelAnalysisPage() {
           ) : (
             <div className="space-y-2">
               {tests.map((test, index) => {
-                const isSuccess = test.success ?? test.is_validated
+                const isSuccess = test.status === 'validated' || test.status === 'corrected'
+                const config = test.image_config_used
+                let configLabel = 'Sans traitement'
+                if (config) {
+                  const parts = []
+                  if (config.grayscale) parts.push('N&B')
+                  else parts.push('Couleur')
+                  if (config.contrast) parts.push(`C:${config.contrast > 0 ? '+' : ''}${config.contrast}%`)
+                  label = parts.join(' ')
+                  configLabel = parts.join(' ')
+                }
+                // Extract reading from extracted_data
+                const extractedReading = test.extracted_data?.reading?.value || test.extracted_data?.index?.value || null
+                const extractedSerial = test.extracted_data?.serialNumber?.value || test.extracted_data?.serial?.value || null
+                const correctedReading = test.corrected_data?.reading || test.corrected_data?.index || null
+                
                 return (
                 <div 
                   key={test.id}
                   className={`p-4 rounded-lg border transition-colors ${
-                    test.is_active 
-                      ? 'bg-purple-50 border-purple-300' 
-                      : isSuccess 
-                        ? 'bg-green-50/50 border-green-200 hover:bg-green-50' 
-                        : 'bg-red-50/50 border-red-200 hover:bg-red-50'
+                    isSuccess 
+                      ? 'bg-green-50/50 border-green-200 hover:bg-green-50' 
+                      : 'bg-red-50/50 border-red-200 hover:bg-red-50'
                   }`}
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      {test.is_active && (
-                        <Star className="h-5 w-5 text-yellow-500 fill-yellow-500" />
-                      )}
                       {isSuccess ? (
                         <CheckCircle className="h-5 w-5 text-green-600" />
                       ) : (
@@ -610,19 +626,29 @@ export default function MeterModelAnalysisPage() {
                           <span className="font-medium">
                             Test #{tests.length - index}
                           </span>
-                          {test.is_active && (
-                            <Badge className="bg-purple-600 text-xs">ACTIF</Badge>
-                          )}
+                          <Badge variant="outline" className={`text-xs ${
+                            test.status === 'validated' ? 'bg-green-50 text-green-700' :
+                            test.status === 'corrected' ? 'bg-blue-50 text-blue-700' :
+                            test.status === 'rejected' ? 'bg-red-50 text-red-700' :
+                            'bg-gray-50'
+                          }`}>
+                            {test.status === 'validated' ? 'Validé' :
+                             test.status === 'corrected' ? 'Corrigé' :
+                             test.status === 'rejected' ? 'Rejeté' : 'En attente'}
+                          </Badge>
                           <Badge variant="outline" className="text-xs">
-                            {test.image_config_label || 'Sans traitement'}
+                            {configLabel}
                           </Badge>
                         </div>
                         <div className="text-sm text-gray-500 mt-1">
-                          {test.extracted_reading && (
-                            <span className="font-mono">Index: {test.extracted_reading}</span>
+                          {extractedSerial && (
+                            <span className="font-mono mr-3">N°: {extractedSerial}</span>
                           )}
-                          {test.correct_reading && (
-                            <span className="text-green-600 ml-2">→ {test.correct_reading}</span>
+                          {extractedReading && (
+                            <span className="font-mono">Index: {extractedReading}</span>
+                          )}
+                          {correctedReading && (
+                            <span className="text-green-600 ml-2">→ {correctedReading}</span>
                           )}
                           <span className="ml-3">Confiance: {Math.round((test.confidence || 0) * 100)}%</span>
                         </div>
@@ -644,38 +670,6 @@ export default function MeterModelAnalysisPage() {
                         </TooltipTrigger>
                         <TooltipContent>Voir détails</TooltipContent>
                       </Tooltip>
-                      {isSuccess && !test.is_active && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => activateTest(test)}
-                          disabled={activating === test.id}
-                        >
-                          {activating === test.id ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <>
-                              <Check className="h-4 w-4 mr-1" />
-                              Activer
-                            </>
-                          )}
-                        </Button>
-                      )}
-                      {test.is_active && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="text-gray-500"
-                          onClick={deactivateTest}
-                          disabled={activating === test.id}
-                        >
-                          {activating === test.id ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            'Désactiver'
-                          )}
-                        </Button>
-                      )}
                     </div>
                   </div>
                 </div>
@@ -715,11 +709,14 @@ export default function MeterModelAnalysisPage() {
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 Détail du test
-                {(showTestDetailModal?.success ?? showTestDetailModal?.is_validated) ? (
-                  <Badge className="bg-green-600">Validé</Badge>
-                ) : (
-                  <Badge className="bg-red-600">Rejeté</Badge>
-                )}
+                <Badge className={
+                  showTestDetailModal?.status === 'validated' ? 'bg-green-600' :
+                  showTestDetailModal?.status === 'corrected' ? 'bg-blue-600' :
+                  'bg-red-600'
+                }>
+                  {showTestDetailModal?.status === 'validated' ? 'Validé' :
+                   showTestDetailModal?.status === 'corrected' ? 'Corrigé' : 'Rejeté'}
+                </Badge>
               </DialogTitle>
             </DialogHeader>
             {showTestDetailModal && (
@@ -734,7 +731,12 @@ export default function MeterModelAnalysisPage() {
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <p className="text-xs text-gray-500">Traitement image</p>
-                    <p className="font-medium">{showTestDetailModal.image_config_label || 'Sans traitement'}</p>
+                    <p className="font-medium">
+                      {showTestDetailModal.image_config_used 
+                        ? (showTestDetailModal.image_config_used.grayscale ? 'N&B' : 'Couleur') +
+                          (showTestDetailModal.image_config_used.contrast ? ` C:${showTestDetailModal.image_config_used.contrast}%` : '')
+                        : 'Sans traitement'}
+                    </p>
                   </div>
                   <div>
                     <p className="text-xs text-gray-500">Confiance</p>
@@ -742,30 +744,42 @@ export default function MeterModelAnalysisPage() {
                   </div>
                   <div>
                     <p className="text-xs text-gray-500">N° série extrait</p>
-                    <p className="font-mono">{showTestDetailModal.extracted_serial || '-'}</p>
+                    <p className="font-mono">
+                      {showTestDetailModal.extracted_data?.serialNumber?.value || 
+                       showTestDetailModal.extracted_data?.serial?.value || '-'}
+                    </p>
                   </div>
                   <div>
                     <p className="text-xs text-gray-500">Index extrait</p>
-                    <p className="font-mono">{showTestDetailModal.extracted_reading || '-'}</p>
+                    <p className="font-mono">
+                      {showTestDetailModal.extracted_data?.reading?.value || 
+                       showTestDetailModal.extracted_data?.index?.value || '-'}
+                    </p>
                   </div>
-                  {showTestDetailModal.correct_reading && (
+                  {showTestDetailModal.corrected_data && (
                     <>
                       <div>
                         <p className="text-xs text-gray-500">Correction N° série</p>
-                        <p className="font-mono text-green-600">{showTestDetailModal.correct_serial || '-'}</p>
+                        <p className="font-mono text-green-600">
+                          {showTestDetailModal.corrected_data.serialNumber || 
+                           showTestDetailModal.corrected_data.serial || '-'}
+                        </p>
                       </div>
                       <div>
                         <p className="text-xs text-gray-500">Correction Index</p>
-                        <p className="font-mono text-green-600">{showTestDetailModal.correct_reading}</p>
+                        <p className="font-mono text-green-600">
+                          {showTestDetailModal.corrected_data.reading || 
+                           showTestDetailModal.corrected_data.index || '-'}
+                        </p>
                       </div>
                     </>
                   )}
                 </div>
-                {showTestDetailModal.image_config && (
+                {showTestDetailModal.image_config_used && (
                   <div>
                     <p className="text-xs text-gray-500 mb-1">Config image utilisée</p>
                     <pre className="text-xs bg-gray-50 p-2 rounded font-mono">
-                      {JSON.stringify(showTestDetailModal.image_config, null, 2)}
+                      {JSON.stringify(showTestDetailModal.image_config_used, null, 2)}
                     </pre>
                   </div>
                 )}
