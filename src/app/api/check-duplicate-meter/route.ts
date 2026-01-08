@@ -1,6 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createClient } from '@supabase/supabase-js'
+import sharp from 'sharp'
+
+// Compress image to max 800px and JPEG quality 70
+async function compressImage(base64: string): Promise<string> {
+  try {
+    const buffer = Buffer.from(base64, 'base64')
+    
+    const compressed = await sharp(buffer)
+      .resize(800, 800, { fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: 70 })
+      .toBuffer()
+    
+    return compressed.toString('base64')
+  } catch (err) {
+    console.error('Compression error:', err)
+    // Return original if compression fails
+    return base64
+  }
+}
 
 export async function POST(request: NextRequest) {
   console.log('=== CHECK DUPLICATE METER START ===')
@@ -10,48 +29,29 @@ export async function POST(request: NextRequest) {
     let body
     try {
       body = await request.json()
-      console.log('Body parsed, keys:', Object.keys(body))
     } catch (e) {
-      console.error('JSON parse error:', e)
       return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
     }
 
     const { photo_base64, detected_name, detected_manufacturer, detected_type } = body
 
     if (!photo_base64) {
-      console.log('No photo provided')
       return NextResponse.json({ error: 'Photo requise' }, { status: 400 })
     }
-    
-    console.log('Photo length:', photo_base64.length)
-    console.log('Detected:', { detected_name, detected_manufacturer, detected_type })
 
     // 2. Check env vars
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY
     const anthropicKey = process.env.ANTHROPIC_API_KEY
     
-    console.log('Env vars present:', { 
-      supabaseUrl: !!supabaseUrl, 
-      supabaseKey: !!supabaseKey,
-      anthropicKey: !!anthropicKey
-    })
-    
-    if (!supabaseUrl || !supabaseKey) {
+    if (!supabaseUrl || !supabaseKey || !anthropicKey) {
       return NextResponse.json({ 
-        error: 'Missing Supabase config',
+        error: 'Missing config',
         isDuplicate: false 
       }, { status: 500 })
     }
 
-    if (!anthropicKey) {
-      return NextResponse.json({ 
-        error: 'Missing Anthropic config',
-        isDuplicate: false 
-      }, { status: 500 })
-    }
-
-    // 3. Get existing models
+    // 3. Get ALL existing models
     const supabase = createClient(supabaseUrl, supabaseKey)
     
     const { data: models, error: dbError } = await supabase
@@ -61,13 +61,10 @@ export async function POST(request: NextRequest) {
     if (dbError) {
       console.error('DB error:', dbError)
       return NextResponse.json({ 
-        error: 'Database error', 
-        details: dbError.message,
+        error: 'Database error',
         isDuplicate: false 
       }, { status: 500 })
     }
-
-    console.log('Models found:', models?.length || 0)
 
     // Filter models with photos
     const modelsWithPhotos = (models || []).filter(m => 
@@ -80,26 +77,24 @@ export async function POST(request: NextRequest) {
     console.log('Models with photos:', modelsWithPhotos.length)
 
     if (modelsWithPhotos.length === 0) {
-      console.log('No models to compare, returning not duplicate')
       return NextResponse.json({ 
         isDuplicate: false, 
         matchedModel: null,
         confidence: 0,
-        reason: 'Aucun modèle existant avec photo'
+        reason: 'Aucun modèle existant'
       })
     }
 
-    // 4. Prepare images - LIMIT TO 3 models to stay under token/size limits
-    const modelsToCompare = modelsWithPhotos.slice(0, 3)
-    const modelImages: { model: typeof modelsToCompare[0], base64: string }[] = []
+    // 4. Compress input photo
+    console.log('Compressing input photo...')
+    const compressedInput = await compressImage(photo_base64)
+    console.log(`Input: ${photo_base64.length} -> ${compressedInput.length} bytes`)
+
+    // 5. Load and compress ALL model images
+    const modelImages: { model: typeof modelsWithPhotos[0], base64: string }[] = []
     
-    // Max size for each image: ~1MB in base64 (to stay well under 5MB total)
-    const MAX_BASE64_LENGTH = 1_000_000
-    
-    for (const model of modelsToCompare) {
+    for (const model of modelsWithPhotos) {
       const photoUrl = model.reference_photos[0]
-      console.log(`Processing model ${model.name}`)
-      
       if (!photoUrl) continue
       
       try {
@@ -116,147 +111,126 @@ export async function POST(request: NextRequest) {
         }
         
         if (base64) {
-          // Skip images that are too large
-          if (base64.length > MAX_BASE64_LENGTH) {
-            console.log(`Skipping ${model.name} - image too large: ${base64.length} bytes`)
-            continue
-          }
-          
-          modelImages.push({ model, base64 })
-          console.log(`Added model ${model.name} (${base64.length} bytes)`)
+          // Compress the image
+          const compressed = await compressImage(base64)
+          console.log(`${model.name}: ${base64.length} -> ${compressed.length} bytes`)
+          modelImages.push({ model, base64: compressed })
         }
       } catch (imgErr) {
-        console.error(`Error loading image for ${model.name}:`, imgErr)
+        console.error(`Error loading ${model.name}:`, imgErr)
       }
     }
 
-    console.log('Model images loaded:', modelImages.length)
+    console.log('Total models loaded:', modelImages.length)
 
     if (modelImages.length === 0) {
       return NextResponse.json({ 
         isDuplicate: false, 
         matchedModel: null,
         confidence: 0,
-        reason: 'Impossible de charger les images existantes'
+        reason: 'Impossible de charger les images'
       })
     }
 
-    // Also check if input photo is too large
-    let inputPhoto = photo_base64
-    if (inputPhoto.length > MAX_BASE64_LENGTH) {
-      console.log(`Input photo too large: ${inputPhoto.length}, truncating not possible - skip comparison`)
-      // Can't compare, just return not duplicate
-      return NextResponse.json({ 
-        isDuplicate: false, 
-        matchedModel: null,
-        confidence: 0,
-        reason: 'Photo trop grande pour comparaison'
-      })
-    }
-
-    // 5. Call Claude Vision
+    // 6. Call Claude Vision - compare with ALL models
+    // But we need to batch if too many (Claude has limits)
+    // Let's do batches of 5 models max per request
+    const BATCH_SIZE = 5
     const anthropic = new Anthropic({ apiKey: anthropicKey })
-
-    const content: any[] = [
-      {
-        type: 'text',
-        text: `Compare la NOUVELLE PHOTO avec les ${modelImages.length} modèles existants.
-
-NOUVELLE PHOTO - Nom détecté: "${detected_name || 'N/A'}", Fabricant: "${detected_manufacturer || 'N/A'}"`
-      },
-      {
-        type: 'image',
-        source: { type: 'base64', media_type: 'image/jpeg', data: inputPhoto }
-      }
-    ]
-
-    for (let i = 0; i < modelImages.length; i++) {
-      const { model, base64 } = modelImages[i]
-      content.push({
-        type: 'text',
-        text: `\nMODÈLE ${i + 1}: "${model.name}" (${model.manufacturer || 'N/A'})`
-      })
-      content.push({
-        type: 'image',
-        source: { type: 'base64', media_type: 'image/jpeg', data: base64 }
-      })
-    }
-
-    content.push({
-      type: 'text',
-      text: `
-
-Est-ce que la NOUVELLE PHOTO montre le même compteur qu'un des modèles existants ?
-
-Réponds en JSON:
-{"isDuplicate": true/false, "matchedModelIndex": 1-${modelImages.length} ou null, "confidence": 0-100, "reason": "explication"}
-
-Si c'est le même modèle exact (même marque, même design), isDuplicate=true.
-JSON:`
-    })
-
-    console.log('Calling Claude with', modelImages.length, 'comparison images...')
     
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 300,
-      messages: [{ role: 'user', content }]
-    })
-
-    const textContent = response.content.find(c => c.type === 'text')
-    if (!textContent || textContent.type !== 'text') {
-      console.log('No text response from Claude')
-      return NextResponse.json({ isDuplicate: false, matchedModel: null, confidence: 0 })
-    }
-
-    console.log('Claude response:', textContent.text)
-
-    // 6. Parse response
-    let result
-    try {
-      const jsonMatch = textContent.text.match(/\{[\s\S]*\}/)
-      result = jsonMatch ? JSON.parse(jsonMatch[0]) : null
-    } catch (e) {
-      console.error('JSON parse error')
-      return NextResponse.json({ isDuplicate: false, matchedModel: null, confidence: 0 })
-    }
-
-    if (!result) {
-      return NextResponse.json({ isDuplicate: false, matchedModel: null, confidence: 0 })
-    }
-
-    console.log('Parsed result:', result)
-
-    // 7. Return result
-    if (result.isDuplicate && result.matchedModelIndex >= 1 && result.matchedModelIndex <= modelImages.length) {
-      const matched = modelImages[result.matchedModelIndex - 1].model
-      console.log('DUPLICATE FOUND:', matched.name)
+    for (let batchStart = 0; batchStart < modelImages.length; batchStart += BATCH_SIZE) {
+      const batch = modelImages.slice(batchStart, batchStart + BATCH_SIZE)
+      console.log(`Checking batch ${batchStart / BATCH_SIZE + 1}: models ${batchStart + 1}-${batchStart + batch.length}`)
       
-      return NextResponse.json({
-        isDuplicate: true,
-        matchedModel: {
-          id: matched.id,
-          name: matched.name,
-          manufacturer: matched.manufacturer,
-          meter_type: matched.meter_type,
-          photo: matched.reference_photos[0]
+      const content: any[] = [
+        {
+          type: 'text',
+          text: `Compare la NOUVELLE PHOTO avec les ${batch.length} modèles ci-dessous.
+
+NOUVELLE PHOTO - Nom: "${detected_name || 'N/A'}", Fabricant: "${detected_manufacturer || 'N/A'}"`
         },
-        confidence: result.confidence || 80,
-        reason: result.reason || 'Même modèle détecté'
+        {
+          type: 'image',
+          source: { type: 'base64', media_type: 'image/jpeg', data: compressedInput }
+        }
+      ]
+
+      for (let i = 0; i < batch.length; i++) {
+        const { model, base64 } = batch[i]
+        content.push({
+          type: 'text',
+          text: `\nMODÈLE ${i + 1}: "${model.name}" (${model.manufacturer || 'N/A'})`
+        })
+        content.push({
+          type: 'image',
+          source: { type: 'base64', media_type: 'image/jpeg', data: base64 }
+        })
+      }
+
+      content.push({
+        type: 'text',
+        text: `
+
+Est-ce que la NOUVELLE PHOTO montre le MÊME compteur (même modèle exact) qu'un des modèles ci-dessus ?
+
+Réponds UNIQUEMENT en JSON:
+{"isDuplicate": true/false, "matchedModelIndex": 1-${batch.length} ou null, "confidence": 0-100, "reason": "explication courte"}
+
+isDuplicate=true SEULEMENT si c'est exactement le même modèle de compteur.
+JSON:`
       })
+
+      const response = await anthropic.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 200,
+        messages: [{ role: 'user', content }]
+      })
+
+      const textContent = response.content.find(c => c.type === 'text')
+      if (!textContent || textContent.type !== 'text') continue
+
+      console.log('Response:', textContent.text)
+
+      // Parse response
+      let result
+      try {
+        const jsonMatch = textContent.text.match(/\{[\s\S]*\}/)
+        result = jsonMatch ? JSON.parse(jsonMatch[0]) : null
+      } catch (e) {
+        continue
+      }
+
+      // If duplicate found in this batch, return immediately
+      if (result?.isDuplicate && result.matchedModelIndex >= 1 && result.matchedModelIndex <= batch.length) {
+        const matched = batch[result.matchedModelIndex - 1].model
+        console.log('DUPLICATE FOUND:', matched.name)
+        
+        return NextResponse.json({
+          isDuplicate: true,
+          matchedModel: {
+            id: matched.id,
+            name: matched.name,
+            manufacturer: matched.manufacturer,
+            meter_type: matched.meter_type,
+            photo: matched.reference_photos[0]
+          },
+          confidence: result.confidence || 80,
+          reason: result.reason || 'Même modèle détecté'
+        })
+      }
     }
 
-    console.log('No duplicate found')
+    // No duplicate found in any batch
+    console.log('No duplicate found after checking all models')
     return NextResponse.json({
       isDuplicate: false,
       matchedModel: null,
-      confidence: result.confidence || 0,
-      reason: result.reason || ''
+      confidence: 0,
+      reason: 'Aucun doublon trouvé'
     })
 
   } catch (error: any) {
-    console.error('=== CHECK DUPLICATE ERROR ===')
-    console.error('Error:', error.message)
+    console.error('Check duplicate error:', error.message)
     
     return NextResponse.json({ 
       error: error.message || 'Unknown error',
