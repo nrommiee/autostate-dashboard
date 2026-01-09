@@ -611,7 +611,7 @@ export default function ExperimentsLabPage() {
 function ConfigEditor({ config, onSave, onCancel }: { config: ExperimentConfig | null; onSave: () => Promise<void>; onCancel: () => void }) {
   const [name, setName] = useState(config?.name || '')
   const [description, setDescription] = useState(config?.description || '')
-  const [configType, setConfigType] = useState(config?.config_type || 'prompt')
+  const [configType, setConfigType] = useState<string>(config?.config_type || 'prompt')
   const [configData, setConfigData] = useState(JSON.stringify(config?.config_data || {}, null, 2))
   const [isBaseline, setIsBaseline] = useState(config?.is_baseline || false)
   const [saving, setSaving] = useState(false)
