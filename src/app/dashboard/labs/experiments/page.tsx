@@ -541,7 +541,7 @@ function FolderDetail({ folderId, folders, onBack, onDelete, onDeletePhotos, onU
   const handleMovePhoto = async (pid: string, tid: string) => { await onMovePhotos([pid], tid); setPhotos(photos.filter(p => p.id !== pid)); onRefresh() }
   const toggleSelect = (id: string) => setSelectedPhotos(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
   const selectAll = () => setSelectedPhotos(selectedPhotos.size === photos.length ? new Set() : new Set(photos.map(p => p.id)))
-  const deleteSelected = () => { if (selectedPhotos.size > 0) { onDeletePhotos([...selectedPhotos]); setSelectedPhotos(new Set()); setSelectionMode(false) } }
+  const deleteSelected = () => { if (selectedPhotos.size > 0) { onDeletePhotos(Array.from(selectedPhotos)); setSelectedPhotos(new Set()); setSelectionMode(false) } }
   const cancelSelection = () => { setSelectedPhotos(new Set()); setSelectionMode(false) }
 
   if (loading) return <div className="flex justify-center py-12"><Loader2 className="h-8 w-8 animate-spin" /></div>
