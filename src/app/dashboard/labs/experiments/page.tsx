@@ -49,7 +49,7 @@ import {
   Trash2, MoreVertical, ChevronRight, Loader2, AlertTriangle,
   Play, Eye, RefreshCw, Plus, Flame, Droplets, Bolt,
   Check, Sparkles, ArrowRight, XCircle, MoveRight,
-  ExternalLink, Pencil, Image
+  ExternalLink, Pencil, Image, X, Filter
 } from 'lucide-react'
 
 // ============================================
@@ -222,6 +222,10 @@ export default function ExperimentsPage() {
   // UI State
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null)
   const [selectedTest, setSelectedTest] = useState<Test | null>(null)
+  
+  // Filtres dossiers
+  const [filterType, setFilterType] = useState<string>('all')
+  const [filterStatus, setFilterStatus] = useState<string>('all')
 
   // Modals
   const [showConfigModal, setShowConfigModal] = useState(false)
@@ -282,7 +286,7 @@ export default function ExperimentsPage() {
   }
 
   // ============================================
-  // UPLOAD HANDLERS
+  // UPLOAD HANDLERS - Photo par photo avec progress réel
   // ============================================
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -296,12 +300,13 @@ export default function ExperimentsPage() {
     }
 
     setUploading(true)
-    setUploadProgress({ step: 'Compression', current: 0, total: files.length })
+    const totalFiles = files.length
 
     try {
+      // Étape 1: Compression
       const compressedFiles: File[] = []
       for (let i = 0; i < files.length; i++) {
-        setUploadProgress({ step: 'Compression', current: i + 1, total: files.length })
+        setUploadProgress({ step: 'Compression', current: i + 1, total: totalFiles })
         try {
           const compressed = await compressImage(files[i])
           compressedFiles.push(compressed)
@@ -310,29 +315,37 @@ export default function ExperimentsPage() {
         }
       }
 
-      setUploadProgress({ step: 'Upload et analyse IA', current: 1, total: 1 })
+      // Étape 2: Upload photo par photo avec analyse IA
+      let successCount = 0
+      let errorCount = 0
 
-      const formData = new FormData()
-      for (const file of compressedFiles) {
-        formData.append('files', file)
+      for (let i = 0; i < compressedFiles.length; i++) {
+        setUploadProgress({ step: 'Upload + Analyse IA', current: i + 1, total: totalFiles })
+        
+        const formData = new FormData()
+        formData.append('files', compressedFiles[i])
+        formData.append('auto_cluster', 'true')
+
+        try {
+          const res = await fetch('/api/labs/experiments/photos', {
+            method: 'POST',
+            body: formData
+          })
+          
+          if (res.ok) {
+            const data = await res.json()
+            successCount += data.success_count || 0
+            errorCount += data.error_count || 0
+          } else {
+            errorCount++
+          }
+        } catch {
+          errorCount++
+        }
       }
-      formData.append('auto_cluster', 'true')
 
-      const res = await fetch('/api/labs/experiments/photos', {
-        method: 'POST',
-        body: formData
-      })
-      
-      if (!res.ok) {
-        const data = await res.json()
-        alert(data.message || `Erreur: ${res.status}`)
-        return
-      }
-
-      const data = await res.json()
-      
-      if (data.error_count > 0) {
-        alert(`${data.success_count} photos importées, ${data.error_count} erreurs`)
+      if (errorCount > 0) {
+        alert(`${successCount} photos importées, ${errorCount} erreurs`)
       }
 
       await loadData()
@@ -442,6 +455,30 @@ export default function ExperimentsPage() {
 
   const selectedFolder = folders.find(f => f.id === selectedFolderId) || null
   const unclassifiedCount = folders.find(f => f.is_unclassified)?.photo_count || 0
+  
+  // Filtrer les dossiers (exclure "Non classé" du comptage normal)
+  const regularFolders = folders.filter(f => !f.is_unclassified)
+  const unclassifiedFolder = folders.find(f => f.is_unclassified)
+  
+  const filteredFolders = regularFolders.filter(f => {
+    if (filterType !== 'all' && f.detected_type !== filterType) return false
+    if (filterStatus !== 'all' && f.status !== filterStatus) return false
+    return true
+  })
+  
+  const hasActiveFilters = filterType !== 'all' || filterStatus !== 'all'
+  
+  // Stats pour filtres
+  const typeStats = {
+    gas: regularFolders.filter(f => f.detected_type === 'gas').length,
+    water: regularFolders.filter(f => f.detected_type === 'water').length,
+    electricity: regularFolders.filter(f => f.detected_type === 'electricity').length,
+  }
+  const statusStats = {
+    draft: regularFolders.filter(f => f.status === 'draft').length,
+    ready: regularFolders.filter(f => f.status === 'ready').length,
+    validated: regularFolders.filter(f => f.status === 'validated').length,
+  }
 
   // ============================================
   // RENDER
@@ -484,11 +521,6 @@ export default function ExperimentsPage() {
           <TabsTrigger value="folders" className="flex items-center gap-2">
             <FolderOpen className="h-4 w-4" />
             Dossiers
-            {unclassifiedCount > 0 && (
-              <Badge variant="destructive" className="ml-1 h-5 px-1.5 text-xs">
-                {unclassifiedCount}
-              </Badge>
-            )}
           </TabsTrigger>
           <TabsTrigger value="configs" className="flex items-center gap-2">
             <Settings2 className="h-4 w-4" />
@@ -551,7 +583,7 @@ export default function ExperimentsPage() {
                   <FolderOpen className="h-5 w-5 text-gray-600" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold">{folders.filter(f => !f.is_unclassified).length}</p>
+                  <p className="text-2xl font-bold">{regularFolders.length}</p>
                   <p className="text-xs text-muted-foreground">Dossiers</p>
                 </div>
               </div>
@@ -573,7 +605,7 @@ export default function ExperimentsPage() {
                   <Check className="h-5 w-5 text-green-600" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold">{folders.filter(f => f.status === 'ready' && !f.is_unclassified).length}</p>
+                  <p className="text-2xl font-bold">{regularFolders.filter(f => f.status === 'ready').length}</p>
                   <p className="text-xs text-muted-foreground">Prêts pour test</p>
                 </div>
               </div>
@@ -584,7 +616,7 @@ export default function ExperimentsPage() {
                   <CheckCircle2 className="h-5 w-5 text-teal-600" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold">{folders.filter(f => f.status === 'promoted').length}</p>
+                  <p className="text-2xl font-bold">{regularFolders.filter(f => f.status === 'promoted').length}</p>
                   <p className="text-xs text-muted-foreground">Promus</p>
                 </div>
               </div>
@@ -595,52 +627,193 @@ export default function ExperimentsPage() {
         {/* TAB: DOSSIERS */}
         <TabsContent value="folders" className="space-y-4">
           {selectedFolder ? (
-            <FolderDetail 
-              key={selectedFolder.id + '-' + selectedFolder.photo_count}
-              folderId={selectedFolder.id}
-              folders={folders.filter(f => !f.is_unclassified)}
-              onBack={() => setSelectedFolderId(null)}
-              onDelete={(id, name) => setDeleteAlert({ type: 'folder', id, name })}
-              onUpdateFolder={handleUpdateFolder}
-              onMovePhotos={handleMovePhotos}
-              onDeletePhoto={(id) => setDeleteAlert({ type: 'photo', id })}
-              onRunTest={handleRunTest}
-              onPromote={handlePromote}
-              onRefresh={loadData}
-            />
+            <>
+              {/* Breadcrumb */}
+              <div className="flex items-center gap-2 text-sm">
+                <button 
+                  onClick={() => setActiveTab('import')}
+                  className="text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Experiments
+                </button>
+                <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                <button 
+                  onClick={() => setSelectedFolderId(null)}
+                  className="text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Dossiers
+                </button>
+                <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                <span className="font-medium">{selectedFolder.name}</span>
+              </div>
+              
+              <FolderDetail 
+                key={selectedFolder.id + '-' + selectedFolder.photo_count}
+                folderId={selectedFolder.id}
+                folders={regularFolders}
+                onBack={() => setSelectedFolderId(null)}
+                onDelete={(id, name) => setDeleteAlert({ type: 'folder', id, name })}
+                onUpdateFolder={handleUpdateFolder}
+                onMovePhotos={handleMovePhotos}
+                onDeletePhoto={(id) => setDeleteAlert({ type: 'photo', id })}
+                onRunTest={handleRunTest}
+                onPromote={handlePromote}
+                onRefresh={loadData}
+              />
+            </>
           ) : (
             <>
+              {/* Header avec filtres */}
               <div className="flex items-center justify-between">
-                <p className="text-muted-foreground">{folders.length} dossier(s)</p>
+                <p className="text-muted-foreground">
+                  {hasActiveFilters 
+                    ? `${filteredFolders.length} dossier(s) filtré(s) sur ${regularFolders.length}`
+                    : `${regularFolders.length} dossier(s)`
+                  }
+                </p>
                 <Button size="sm" onClick={() => setShowNewFolderModal(true)}>
                   <Plus className="h-4 w-4 mr-2" />
                   Nouveau dossier
                 </Button>
               </div>
 
-              {folders.length === 0 ? (
+              {/* Filtres */}
+              <Card className="p-4">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Filter className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm text-muted-foreground mr-2">Filtres:</span>
+                  
+                  {/* Filtre par type */}
+                  <Button
+                    variant={filterType === 'all' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setFilterType('all')}
+                  >
+                    Tous ({regularFolders.length})
+                  </Button>
+                  <Button
+                    variant={filterType === 'gas' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setFilterType('gas')}
+                    className={filterType !== 'gas' ? 'text-orange-600' : ''}
+                  >
+                    🔥 Gaz ({typeStats.gas})
+                  </Button>
+                  <Button
+                    variant={filterType === 'water' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setFilterType('water')}
+                    className={filterType !== 'water' ? 'text-blue-600' : ''}
+                  >
+                    💧 Eau ({typeStats.water})
+                  </Button>
+                  <Button
+                    variant={filterType === 'electricity' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setFilterType('electricity')}
+                    className={filterType !== 'electricity' ? 'text-yellow-600' : ''}
+                  >
+                    ⚡ Élec ({typeStats.electricity})
+                  </Button>
+
+                  <div className="w-px h-6 bg-gray-200 mx-2" />
+
+                  {/* Filtre par status */}
+                  <Button
+                    variant={filterStatus === 'draft' ? 'secondary' : 'ghost'}
+                    size="sm"
+                    onClick={() => setFilterStatus(filterStatus === 'draft' ? 'all' : 'draft')}
+                  >
+                    Brouillon ({statusStats.draft})
+                  </Button>
+                  <Button
+                    variant={filterStatus === 'ready' ? 'secondary' : 'ghost'}
+                    size="sm"
+                    onClick={() => setFilterStatus(filterStatus === 'ready' ? 'all' : 'ready')}
+                  >
+                    Prêt ({statusStats.ready})
+                  </Button>
+                  <Button
+                    variant={filterStatus === 'validated' ? 'secondary' : 'ghost'}
+                    size="sm"
+                    onClick={() => setFilterStatus(filterStatus === 'validated' ? 'all' : 'validated')}
+                  >
+                    Validé ({statusStats.validated})
+                  </Button>
+
+                  {hasActiveFilters && (
+                    <>
+                      <div className="w-px h-6 bg-gray-200 mx-2" />
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => { setFilterType('all'); setFilterStatus('all') }}
+                        className="text-red-600"
+                      >
+                        <X className="h-4 w-4 mr-1" />
+                        Réinitialiser
+                      </Button>
+                    </>
+                  )}
+                </div>
+              </Card>
+
+              {/* Dossier "Non classé" en premier si non vide */}
+              {unclassifiedFolder && unclassifiedFolder.photo_count > 0 && (
+                <Card 
+                  className="p-4 border-orange-200 bg-orange-50/50 cursor-pointer hover:shadow-md transition-shadow"
+                  onClick={() => setSelectedFolderId(unclassifiedFolder.id)}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-orange-100 rounded-lg flex items-center justify-center">
+                        <AlertTriangle className="h-5 w-5 text-orange-600" />
+                      </div>
+                      <div>
+                        <h3 className="font-semibold text-orange-800">Non classé</h3>
+                        <p className="text-sm text-orange-600">{unclassifiedFolder.photo_count} photo(s) à trier</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <Badge className="bg-orange-100 text-orange-700">Pot commun</Badge>
+                      <ChevronRight className="h-5 w-5 text-orange-400" />
+                    </div>
+                  </div>
+                </Card>
+              )}
+
+              {/* Liste des dossiers filtrés */}
+              {filteredFolders.length === 0 ? (
                 <Card className="p-12 text-center">
                   <FolderOpen className="h-12 w-12 mx-auto mb-4 text-gray-300" />
-                  <p className="text-lg font-medium text-gray-600 mb-2">Aucun dossier</p>
-                  <p className="text-sm text-muted-foreground">Importez des photos pour créer des dossiers</p>
+                  <p className="text-lg font-medium text-gray-600 mb-2">
+                    {hasActiveFilters ? 'Aucun dossier ne correspond aux filtres' : 'Aucun dossier'}
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    {hasActiveFilters ? 'Modifiez les filtres ou' : 'Importez des photos pour créer des dossiers'}
+                  </p>
+                  {hasActiveFilters && (
+                    <Button 
+                      variant="outline" 
+                      className="mt-4"
+                      onClick={() => { setFilterType('all'); setFilterStatus('all') }}
+                    >
+                      Réinitialiser les filtres
+                    </Button>
+                  )}
                 </Card>
               ) : (
                 <div className="space-y-3">
-                  {folders.map(folder => (
+                  {filteredFolders.map(folder => (
                     <Card 
                       key={folder.id}
-                      className={`p-4 hover:shadow-md transition-shadow cursor-pointer
-                        ${folder.is_unclassified ? 'border-orange-200 bg-orange-50/50' : ''}`}
+                      className="p-4 hover:shadow-md transition-shadow cursor-pointer"
                       onClick={() => setSelectedFolderId(folder.id)}
                     >
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-4">
-                          <div className={`w-12 h-12 rounded-lg flex items-center justify-center
-                            ${folder.is_unclassified ? 'bg-orange-100' : 'bg-gray-100'}`}>
-                            {folder.is_unclassified 
-                              ? <AlertTriangle className="h-5 w-5 text-orange-600" />
-                              : (TYPE_ICONS[folder.detected_type] || TYPE_ICONS.unknown)
-                            }
+                          <div className="w-12 h-12 bg-gray-100 rounded-lg flex items-center justify-center">
+                            {TYPE_ICONS[folder.detected_type] || TYPE_ICONS.unknown}
                           </div>
                           <div>
                             <h3 className="font-semibold">{folder.name}</h3>
@@ -651,8 +824,7 @@ export default function ExperimentsPage() {
                         </div>
                         
                         <div className="flex items-center gap-4">
-                          {/* Progress bar - PAS pour Non classé */}
-                          {!folder.is_unclassified && folder.status === 'draft' && folder.photo_count < 5 && (
+                          {folder.status === 'draft' && folder.photo_count < 5 && (
                             <div className="w-24">
                               <Progress value={(folder.photo_count / 5) * 100} className="h-2" />
                               <p className="text-xs text-muted-foreground text-center mt-1">
@@ -661,13 +833,11 @@ export default function ExperimentsPage() {
                             </div>
                           )}
                           
-                          {/* Badge status */}
-                          <Badge className={folder.is_unclassified ? 'bg-orange-100 text-orange-700' : STATUS_COLORS[folder.status]}>
-                            {folder.is_unclassified ? 'Pot commun' : STATUS_LABELS[folder.status]}
+                          <Badge className={STATUS_COLORS[folder.status]}>
+                            {STATUS_LABELS[folder.status]}
                           </Badge>
                           
-                          {/* Bouton Tester - PAS pour Non classé */}
-                          {!folder.is_unclassified && folder.status === 'ready' && (
+                          {folder.status === 'ready' && (
                             <Button size="sm" onClick={(e) => { e.stopPropagation(); handleRunTest(folder.id) }}>
                               <Play className="h-4 w-4 mr-1" />
                               Tester
@@ -848,13 +1018,13 @@ export default function ExperimentsPage() {
               </div>
             </div>
             
-            {folders.filter(f => f.status === 'promoted').length === 0 ? (
+            {regularFolders.filter(f => f.status === 'promoted').length === 0 ? (
               <div className="text-center py-8">
                 <p className="text-muted-foreground">Aucun modèle promu</p>
               </div>
             ) : (
               <div className="space-y-3">
-                {folders.filter(f => f.status === 'promoted').map(folder => (
+                {regularFolders.filter(f => f.status === 'promoted').map(folder => (
                   <div key={folder.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                     <div className="flex items-center gap-3">
                       {TYPE_ICONS[folder.detected_type]}
@@ -1059,8 +1229,6 @@ function FolderDetail({
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" onClick={onBack}>← Retour</Button>
-          
           {editing && !isUnclassified ? (
             <div className="flex items-center gap-2">
               <Select value={editType} onValueChange={setEditType}>
@@ -1150,7 +1318,7 @@ function FolderDetail({
             <div>
               <p className="font-medium text-orange-800">Photos à classer</p>
               <p className="text-sm text-orange-600">
-                Déplacez ces photos vers les dossiers appropriés en utilisant le bouton de déplacement sur chaque photo.
+                Déplacez ces photos vers les dossiers appropriés en utilisant le bouton ➡️ sur chaque photo.
               </p>
             </div>
           </div>
