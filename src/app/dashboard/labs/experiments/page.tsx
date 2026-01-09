@@ -165,6 +165,70 @@ const STATUS_LABELS: Record<string, string> = {
 }
 
 // ============================================
+// IMAGE COMPRESSION UTILITY
+// ============================================
+
+const MAX_IMAGE_SIZE = 1200 // Max width/height in pixels
+const JPEG_QUALITY = 0.8 // 80% quality
+
+async function compressImage(file: File): Promise<File> {
+  return new Promise((resolve, reject) => {
+    // If file is small enough, return as-is
+    if (file.size < 500 * 1024) { // Less than 500KB
+      resolve(file)
+      return
+    }
+
+    const img = new Image()
+    const canvas = document.createElement('canvas')
+    const ctx = canvas.getContext('2d')
+
+    img.onload = () => {
+      let { width, height } = img
+
+      // Calculate new dimensions
+      if (width > height) {
+        if (width > MAX_IMAGE_SIZE) {
+          height = Math.round((height * MAX_IMAGE_SIZE) / width)
+          width = MAX_IMAGE_SIZE
+        }
+      } else {
+        if (height > MAX_IMAGE_SIZE) {
+          width = Math.round((width * MAX_IMAGE_SIZE) / height)
+          height = MAX_IMAGE_SIZE
+        }
+      }
+
+      canvas.width = width
+      canvas.height = height
+
+      // Draw and compress
+      ctx?.drawImage(img, 0, 0, width, height)
+
+      canvas.toBlob(
+        (blob) => {
+          if (blob) {
+            const compressedFile = new File([blob], file.name, {
+              type: 'image/jpeg',
+              lastModified: Date.now(),
+            })
+            console.log(`Compressed ${file.name}: ${(file.size / 1024).toFixed(0)}KB -> ${(compressedFile.size / 1024).toFixed(0)}KB`)
+            resolve(compressedFile)
+          } else {
+            reject(new Error('Compression failed'))
+          }
+        },
+        'image/jpeg',
+        JPEG_QUALITY
+      )
+    }
+
+    img.onerror = () => reject(new Error('Failed to load image'))
+    img.src = URL.createObjectURL(file)
+  })
+}
+
+// ============================================
 // COMPOSANT PRINCIPAL
 // ============================================
 
@@ -193,6 +257,7 @@ export default function ExperimentsPage() {
   // Upload
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState('')
 
   // ============================================
   // DATA LOADING
@@ -235,7 +300,7 @@ export default function ExperimentsPage() {
   }
 
   // ============================================
-  // UPLOAD HANDLERS
+  // UPLOAD HANDLERS (with compression)
   // ============================================
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -243,28 +308,58 @@ export default function ExperimentsPage() {
     if (!files || files.length === 0) return
 
     setUploading(true)
-
-    const formData = new FormData()
-    for (let i = 0; i < files.length; i++) {
-      formData.append('files', files[i])
-    }
-    formData.append('auto_cluster', 'true')
+    setUploadProgress('Compression des images...')
 
     try {
+      // Compress all images first
+      const compressedFiles: File[] = []
+      for (let i = 0; i < files.length; i++) {
+        setUploadProgress(`Compression ${i + 1}/${files.length}...`)
+        try {
+          const compressed = await compressImage(files[i])
+          compressedFiles.push(compressed)
+        } catch (err) {
+          console.error('Compression error for', files[i].name, err)
+          compressedFiles.push(files[i]) // Use original if compression fails
+        }
+      }
+
+      setUploadProgress('Upload en cours...')
+
+      // Upload compressed files
+      const formData = new FormData()
+      for (const file of compressedFiles) {
+        formData.append('files', file)
+      }
+      formData.append('auto_cluster', 'true')
+
       const res = await fetch('/api/labs/experiments/photos', {
         method: 'POST',
         body: formData
       })
-      const data = await res.json()
       
-      if (data.uploaded) {
+      if (!res.ok) {
+        const errorText = await res.text()
+        console.error('Upload failed:', res.status, errorText)
+        alert(`Erreur upload: ${res.status}`)
+        return
+      }
+
+      const data = await res.json()
+      console.log('Upload response:', data)
+      
+      if (data.uploaded && data.uploaded.length > 0) {
         await loadData()
         setActiveTab('folders')
+      } else if (data.errors && data.errors.length > 0) {
+        alert(`Erreurs: ${data.errors.map((e: {file: string, error: string}) => e.error).join(', ')}`)
       }
     } catch (error) {
       console.error('Upload error:', error)
+      alert('Erreur lors de l\'upload')
     } finally {
       setUploading(false)
+      setUploadProgress('')
       if (fileInputRef.current) {
         fileInputRef.current.value = ''
       }
@@ -437,7 +532,7 @@ export default function ExperimentsPage() {
               {uploading ? (
                 <div className="space-y-4">
                   <Loader2 className="h-12 w-12 mx-auto text-teal-600 animate-spin" />
-                  <p className="text-lg font-medium">Import en cours...</p>
+                  <p className="text-lg font-medium">{uploadProgress || 'Upload en cours...'}</p>
                 </div>
               ) : (
                 <>
@@ -445,7 +540,7 @@ export default function ExperimentsPage() {
                   <p className="text-lg font-medium mb-2">Glissez vos photos ici</p>
                   <p className="text-sm text-muted-foreground mb-4">ou cliquez pour sélectionner</p>
                   <p className="text-xs text-muted-foreground">
-                    Les photos seront automatiquement triées par compteur similaire
+                    Les images seront automatiquement compressées (max 1200px, ~300KB)
                   </p>
                 </>
               )}
@@ -915,7 +1010,6 @@ function FolderDetail({
   onDeleteFolder,
   onRunTest,
   onPromote,
-  onRefresh
 }: {
   folder: Folder
   folders: Folder[]
