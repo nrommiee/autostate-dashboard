@@ -87,7 +87,6 @@ Réponds UNIQUEMENT en JSON:
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0])
       
-      // Créer signature unique
       const mfr = (parsed.manufacturer || 'unknown').toLowerCase().replace(/[^a-z0-9]/g, '_')
       const mdl = (parsed.model || 'unknown').toLowerCase().replace(/[^a-z0-9]/g, '_')
       const signature = `${parsed.type || 'unknown'}_${mfr}_${mdl}`
@@ -113,7 +112,6 @@ Réponds UNIQUEMENT en JSON:
   }
 }
 
-// Générer un nom de dossier propre
 function generateFolderName(manufacturer: string | null, model: string | null, meterType: string): string {
   if (manufacturer && model) {
     return `${manufacturer} ${model}`
@@ -124,7 +122,6 @@ function generateFolderName(manufacturer: string | null, model: string | null, m
   if (model) {
     return model
   }
-  // Fallback avec type
   const typeLabels: Record<string, string> = {
     gas: 'Compteur gaz',
     water: 'Compteur eau',
@@ -134,7 +131,6 @@ function generateFolderName(manufacturer: string | null, model: string | null, m
   return `${typeLabels[meterType] || 'Compteur'} - ${new Date().toLocaleDateString('fr-FR')}`
 }
 
-// Trouver ou créer un dossier
 async function findOrCreateFolder(
   signature: string,
   meterType: string,
@@ -142,15 +138,12 @@ async function findOrCreateFolder(
   model: string | null,
   confidence: number
 ): Promise<string> {
-  // Si fabricant OU modèle manquant → "Non classé"
   const isFullyIdentified = manufacturer && model && confidence >= 80
   
   if (!isFullyIdentified) {
-    // Chercher le dossier "Non classé" existant
     const { data: unclassifiedFolder } = await supabase
       .from('experiment_folders')
       .select('id')
-      .eq('name', 'Non classé')
       .eq('is_unclassified', true)
       .single()
 
@@ -158,7 +151,6 @@ async function findOrCreateFolder(
       return unclassifiedFolder.id
     }
 
-    // Créer le dossier "Non classé"
     const { data: newUnclassified, error } = await supabase
       .from('experiment_folders')
       .insert({
@@ -166,20 +158,16 @@ async function findOrCreateFolder(
         status: 'draft',
         detected_type: 'unknown',
         is_unclassified: true,
-        cluster_signature: 'unclassified'
+        cluster_signature: 'unclassified',
+        photos_since_last_test: 0
       })
       .select()
       .single()
 
-    if (error) {
-      console.error('Error creating unclassified folder:', error)
-      throw error
-    }
-
+    if (error) throw error
     return newUnclassified.id
   }
 
-  // Fabricant ET modèle trouvés - chercher dossier existant avec même signature
   const { data: existingFolder } = await supabase
     .from('experiment_folders')
     .select('id')
@@ -191,7 +179,6 @@ async function findOrCreateFolder(
     return existingFolder.id
   }
 
-  // Créer nouveau dossier
   const folderName = generateFolderName(manufacturer, model, meterType)
 
   const { data: newFolder, error } = await supabase
@@ -201,17 +188,44 @@ async function findOrCreateFolder(
       status: 'draft',
       detected_type: meterType,
       cluster_signature: signature,
-      is_unclassified: false
+      is_unclassified: false,
+      photos_since_last_test: 0
     })
     .select()
     .single()
 
-  if (error) {
-    console.error('Folder creation error:', error)
-    throw error
+  if (error) throw error
+  return newFolder.id
+}
+
+// Mettre à jour le status du dossier après ajout/suppression de photos
+async function updateFolderStatus(folderId: string) {
+  const { data: folder } = await supabase
+    .from('experiment_folders')
+    .select('status, is_unclassified, experiment_photos(id)')
+    .eq('id', folderId)
+    .single()
+
+  if (!folder || folder.is_unclassified) return
+
+  const photoCount = folder.experiment_photos?.length || 0
+  let newStatus = folder.status
+
+  // Si draft et >= 5 photos, passer à ready
+  if (folder.status === 'draft' && photoCount >= 5) {
+    newStatus = 'ready'
+  }
+  // Si ready/validated/promoted et < 5 photos, repasser à draft
+  else if (['ready', 'validated', 'promoted'].includes(folder.status) && photoCount < 5) {
+    newStatus = 'draft'
   }
 
-  return newFolder.id
+  if (newStatus !== folder.status) {
+    await supabase
+      .from('experiment_folders')
+      .update({ status: newStatus })
+      .eq('id', folderId)
+  }
 }
 
 // GET - Liste des photos
@@ -245,14 +259,11 @@ export async function GET(request: NextRequest) {
     if (status) {
       query = query.eq('status', status)
     }
-    
-    // Limite si pas "all"
     if (!all) {
       query = query.limit(200)
     }
 
     const { data, error } = await query
-
     if (error) throw error
 
     return NextResponse.json({ photos: data }, { headers: corsHeaders })
@@ -262,7 +273,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST - Upload photos avec clustering intelligent
+// POST - Upload photos
 export async function POST(request: NextRequest) {
   console.log('POST /api/labs/experiments/photos - Start')
   
@@ -280,11 +291,10 @@ export async function POST(request: NextRequest) {
     const autoCluster = formData.get('auto_cluster') !== 'false'
     const skipAnalysis = formData.get('skip_analysis') === 'true'
 
-    // Limite de 20 photos
     if (files.length > 20) {
       return NextResponse.json({ 
         error: 'Limite dépassée',
-        message: 'Maximum 20 photos par upload. Veuillez réduire votre sélection.'
+        message: 'Maximum 20 photos par upload.'
       }, { status: 400, headers: corsHeaders })
     }
 
@@ -294,17 +304,9 @@ export async function POST(request: NextRequest) {
 
     const uploadedPhotos = []
     const errors = []
-    const analysisResults: { 
-      file: string
-      manufacturer: string | null
-      model: string | null
-      confidence: number
-      folder: string 
-    }[] = []
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i]
-      console.log(`Processing file ${i + 1}/${files.length}:`, file.name)
       
       try {
         const arrayBuffer = await file.arrayBuffer()
@@ -312,7 +314,6 @@ export async function POST(request: NextRequest) {
         const imageBase64 = buffer.toString('base64')
         const imageHash = hashBuffer(arrayBuffer)
 
-        // Vérifier doublon
         const { data: existing } = await supabase
           .from('experiment_photos')
           .select('id, folder_id')
@@ -324,7 +325,6 @@ export async function POST(request: NextRequest) {
           continue
         }
 
-        // Upload Storage
         const cleanFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_')
         const fileName = `experiment-photos/${Date.now()}-${Math.random().toString(36).substring(7)}-${cleanFileName}`
         
@@ -336,7 +336,6 @@ export async function POST(request: NextRequest) {
           })
 
         if (uploadError) {
-          console.error('Storage upload error:', uploadError)
           errors.push({ file: file.name, error: uploadError.message })
           continue
         }
@@ -345,14 +344,11 @@ export async function POST(request: NextRequest) {
           .from('meter-photos')
           .getPublicUrl(fileName)
 
-        // Déterminer folder_id
         let targetFolderId = folderId
         let analysis = null
 
         if (!targetFolderId && autoCluster && !skipAnalysis) {
-          console.log('Analyzing image with Claude Vision...')
           analysis = await analyzePhotoForClustering(imageBase64)
-          console.log('Analysis:', analysis)
           
           targetFolderId = await findOrCreateFolder(
             analysis.signature,
@@ -361,16 +357,7 @@ export async function POST(request: NextRequest) {
             analysis.model,
             analysis.confidence
           )
-          
-          analysisResults.push({
-            file: file.name,
-            manufacturer: analysis.manufacturer,
-            model: analysis.model,
-            confidence: analysis.confidence,
-            folder: targetFolderId
-          })
         } else if (!targetFolderId) {
-          // Sans analyse, mettre dans "Non classé"
           const { data: unclassifiedFolder } = await supabase
             .from('experiment_folders')
             .select('id')
@@ -394,7 +381,6 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        // Créer entrée photo
         const { data: photo, error: dbError } = await supabase
           .from('experiment_photos')
           .insert({
@@ -411,14 +397,17 @@ export async function POST(request: NextRequest) {
           .single()
 
         if (dbError) {
-          console.error('DB insert error:', dbError)
           errors.push({ file: file.name, error: dbError.message })
           continue
         }
 
+        // Mettre à jour le status du dossier
+        if (targetFolderId) {
+          await updateFolderStatus(targetFolderId)
+        }
+
         uploadedPhotos.push(photo)
       } catch (err) {
-        console.error('Upload error for file:', file.name, err)
         errors.push({ file: file.name, error: String(err) })
       }
     }
@@ -426,7 +415,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       uploaded: uploadedPhotos,
       errors,
-      analysis: analysisResults,
       total: files.length,
       success_count: uploadedPhotos.length,
       error_count: errors.length
@@ -482,6 +470,14 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: 'photo_ids array is required' }, { status: 400, headers: corsHeaders })
     }
 
+    // Récupérer les dossiers source pour mise à jour du status
+    const { data: photos } = await supabase
+      .from('experiment_photos')
+      .select('folder_id')
+      .in('id', photo_ids)
+    
+    const sourceFolderIds = [...new Set(photos?.map(p => p.folder_id).filter(Boolean) || [])]
+
     const updates: Record<string, unknown> = {}
     
     if (target_folder_id) {
@@ -503,6 +499,14 @@ export async function PATCH(request: NextRequest) {
 
     if (error) throw error
 
+    // Mettre à jour le status des dossiers source et cible
+    for (const folderId of sourceFolderIds) {
+      await updateFolderStatus(folderId)
+    }
+    if (target_folder_id && !sourceFolderIds.includes(target_folder_id)) {
+      await updateFolderStatus(target_folder_id)
+    }
+
     return NextResponse.json({ updated: data?.length || 0, photos: data }, { headers: corsHeaders })
   } catch (error) {
     console.error('Error updating photos:', error)
@@ -510,41 +514,59 @@ export async function PATCH(request: NextRequest) {
   }
 }
 
-// DELETE - Supprimer une photo
+// DELETE - Supprimer une ou plusieurs photos
 export async function DELETE(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const id = searchParams.get('id')
+    const ids = searchParams.get('ids') // Pour suppression batch: ids=id1,id2,id3
 
-    if (!id) {
-      return NextResponse.json({ error: 'id is required' }, { status: 400, headers: corsHeaders })
+    const photoIds = ids ? ids.split(',') : id ? [id] : []
+
+    if (photoIds.length === 0) {
+      return NextResponse.json({ error: 'id or ids is required' }, { status: 400, headers: corsHeaders })
     }
 
-    const { data: photo } = await supabase
+    // Récupérer les photos pour supprimer du storage et mettre à jour les dossiers
+    const { data: photos } = await supabase
       .from('experiment_photos')
-      .select('image_url')
-      .eq('id', id)
-      .single()
+      .select('id, image_url, folder_id')
+      .in('id', photoIds)
 
+    if (!photos || photos.length === 0) {
+      return NextResponse.json({ error: 'Photos not found' }, { status: 404, headers: corsHeaders })
+    }
+
+    const folderIds = [...new Set(photos.map(p => p.folder_id).filter(Boolean))]
+
+    // Supprimer de la DB
     const { error } = await supabase
       .from('experiment_photos')
       .delete()
-      .eq('id', id)
+      .in('id', photoIds)
 
     if (error) throw error
 
-    if (photo?.image_url) {
-      try {
-        const path = photo.image_url.split('/meter-photos/')[1]
-        if (path) {
-          await supabase.storage.from('meter-photos').remove([path])
+    // Supprimer du storage
+    for (const photo of photos) {
+      if (photo.image_url) {
+        try {
+          const path = photo.image_url.split('/meter-photos/')[1]
+          if (path) {
+            await supabase.storage.from('meter-photos').remove([path])
+          }
+        } catch (e) {
+          console.warn('Failed to delete from storage:', e)
         }
-      } catch (e) {
-        console.warn('Failed to delete from storage:', e)
       }
     }
 
-    return NextResponse.json({ success: true }, { headers: corsHeaders })
+    // Mettre à jour le status des dossiers
+    for (const folderId of folderIds) {
+      await updateFolderStatus(folderId)
+    }
+
+    return NextResponse.json({ success: true, deleted: photoIds.length }, { headers: corsHeaders })
   } catch (error) {
     console.error('Error deleting photo:', error)
     return NextResponse.json({ error: 'Failed to delete photo' }, { status: 500, headers: corsHeaders })
