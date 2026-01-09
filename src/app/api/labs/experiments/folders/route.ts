@@ -22,13 +22,12 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url)
     const id = searchParams.get('id')
     const withPhotos = searchParams.get('with_photos') === 'true'
-    const status = searchParams.get('status')
 
     if (id) {
       // Récupérer un dossier spécifique avec ses photos
       const { data, error } = await supabase
         .from('experiment_folders')
-        .select(`*, experiment_photos(*)`)
+        .select(`*, experiment_photos!experiment_photos_folder_id_fkey(*)`)
         .eq('id', id)
         .single()
 
@@ -40,10 +39,10 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ folder: data }, { headers: corsHeaders })
     }
 
-    // Liste des dossiers - requête simple
+    // Liste des dossiers - spécifier la relation via folder_id
     const { data, error } = await supabase
       .from('experiment_folders')
-      .select(withPhotos ? `*, experiment_photos(*)` : `*`)
+      .select(withPhotos ? `*, experiment_photos!experiment_photos_folder_id_fkey(*)` : `*`)
       .order('created_at', { ascending: false })
 
     if (error) {
@@ -123,7 +122,7 @@ export async function PUT(request: NextRequest) {
       // Vérifier le nombre de photos
       const { data: folder } = await supabase
         .from('experiment_folders')
-        .select('status, is_unclassified, experiment_photos(id)')
+        .select('status, is_unclassified, experiment_photos!experiment_photos_folder_id_fkey(id)')
         .eq('id', id)
         .single()
       
