@@ -6,97 +6,155 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
-// GET - Liste des configs ou une config spécifique
+// GET - Récupérer les configs (hiérarchie complète)
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
-    const id = searchParams.get('id')
-    const type = searchParams.get('type')
-    const activeOnly = searchParams.get('active') !== 'false'
+    const level = searchParams.get('level') // 'universal', 'type', 'model', 'all'
+    const typeId = searchParams.get('type_id')
+    const modelId = searchParams.get('model_id')
 
-    if (id) {
-      // Requête pour un seul élément
+    if (level === 'universal' || !level) {
       const { data, error } = await supabase
-        .from('experiment_configs')
+        .from('experiment_config_universal')
         .select('*')
-        .eq('id', id)
         .single()
+      
+      if (error && error.code !== 'PGRST116') throw error
+      
+      if (level === 'universal') {
+        return NextResponse.json({ universal: data })
+      }
+    }
 
+    if (level === 'type' || !level) {
+      let query = supabase.from('experiment_config_type').select('*')
+      if (typeId) {
+        query = query.eq('id', typeId)
+      }
+      const { data, error } = await query.order('meter_type')
+      
       if (error) throw error
-      return NextResponse.json({ configs: [data] })
+      
+      if (level === 'type') {
+        return NextResponse.json({ types: data })
+      }
     }
 
-    // Requête pour liste
-    let query = supabase
-      .from('experiment_configs')
-      .select('*')
-      .order('created_at', { ascending: false })
-
-    if (type) {
-      query = query.eq('config_type', type)
+    if (level === 'model' || !level) {
+      let query = supabase
+        .from('experiment_config_model')
+        .select('*, experiment_config_type(meter_type, name)')
+      
+      if (modelId) {
+        query = query.eq('id', modelId)
+      }
+      if (typeId) {
+        query = query.eq('type_config_id', typeId)
+      }
+      
+      const { data, error } = await query.order('name')
+      
+      if (error) throw error
+      
+      if (level === 'model') {
+        return NextResponse.json({ models: data })
+      }
     }
-    if (activeOnly) {
-      query = query.eq('is_active', true)
-    }
 
-    const { data, error } = await query
+    // Si 'all' ou pas de level, retourner tout
+    const [universalRes, typesRes, modelsRes] = await Promise.all([
+      supabase.from('experiment_config_universal').select('*').single(),
+      supabase.from('experiment_config_type').select('*').order('meter_type'),
+      supabase.from('experiment_config_model').select('*, experiment_config_type(meter_type, name)').order('name')
+    ])
 
-    if (error) throw error
-
-    return NextResponse.json({ configs: data })
+    return NextResponse.json({
+      universal: universalRes.data,
+      types: typesRes.data || [],
+      models: modelsRes.data || []
+    })
   } catch (error) {
     console.error('Error fetching configs:', error)
     return NextResponse.json({ error: 'Failed to fetch configs' }, { status: 500 })
   }
 }
 
-// POST - Créer une nouvelle config
+// POST - Créer une config
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { name, description, config_type, config_data, is_baseline } = body
+    const { level, ...data } = body
 
-    if (!name || !config_type) {
-      return NextResponse.json(
-        { error: 'name and config_type are required' },
-        { status: 400 }
-      )
+    if (!level) {
+      return NextResponse.json({ error: 'level is required (universal, type, model)' }, { status: 400 })
     }
 
-    // Valider le type
-    const validTypes = ['prompt', 'preprocessing', 'pipeline', 'full']
-    if (!validTypes.includes(config_type)) {
-      return NextResponse.json(
-        { error: `config_type must be one of: ${validTypes.join(', ')}` },
-        { status: 400 }
-      )
+    let result
+    
+    if (level === 'universal') {
+      // Update plutôt que insert (une seule ligne)
+      const { data: updated, error } = await supabase
+        .from('experiment_config_universal')
+        .update({
+          base_prompt: data.base_prompt,
+          preprocessing: data.preprocessing,
+          min_confidence: data.min_confidence,
+          multi_pass_enabled: data.multi_pass_enabled,
+          multi_pass_count: data.multi_pass_count,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', data.id)
+        .select()
+        .single()
+      
+      if (error) throw error
+      result = updated
+    }
+    
+    else if (level === 'type') {
+      const { data: inserted, error } = await supabase
+        .from('experiment_config_type')
+        .upsert({
+          meter_type: data.meter_type,
+          name: data.name,
+          additional_prompt: data.additional_prompt,
+          preprocessing_override: data.preprocessing_override,
+          reading_format_regex: data.reading_format_regex,
+          typical_unit: data.typical_unit,
+          decimal_places: data.decimal_places,
+          updated_at: new Date().toISOString()
+        }, { onConflict: 'meter_type' })
+        .select()
+        .single()
+      
+      if (error) throw error
+      result = inserted
+    }
+    
+    else if (level === 'model') {
+      const { data: inserted, error } = await supabase
+        .from('experiment_config_model')
+        .insert({
+          type_config_id: data.type_config_id,
+          meter_model_id: data.meter_model_id,
+          name: data.name,
+          manufacturer: data.manufacturer,
+          model_reference: data.model_reference,
+          specific_prompt: data.specific_prompt,
+          preprocessing_override: data.preprocessing_override,
+          extraction_zones: data.extraction_zones,
+          visual_characteristics: data.visual_characteristics,
+          reading_format_regex: data.reading_format_regex
+        })
+        .select()
+        .single()
+      
+      if (error) throw error
+      result = inserted
     }
 
-    // Si c'est une baseline, désactiver les autres baselines du même type
-    if (is_baseline) {
-      await supabase
-        .from('experiment_configs')
-        .update({ is_baseline: false })
-        .eq('config_type', config_type)
-        .eq('is_baseline', true)
-    }
-
-    const { data, error } = await supabase
-      .from('experiment_configs')
-      .insert({
-        name,
-        description,
-        config_type,
-        config_data: config_data || {},
-        is_baseline: is_baseline || false,
-        is_active: true
-      })
-      .select()
-      .single()
-
-    if (error) throw error
-
-    return NextResponse.json({ config: data })
+    return NextResponse.json({ config: result })
   } catch (error) {
     console.error('Error creating config:', error)
     return NextResponse.json({ error: 'Failed to create config' }, { status: 500 })
@@ -107,34 +165,30 @@ export async function POST(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   try {
     const body = await request.json()
-    const { id, ...updates } = body
+    const { level, id, ...updates } = body
 
-    if (!id) {
-      return NextResponse.json({ error: 'id is required' }, { status: 400 })
+    if (!level || !id) {
+      return NextResponse.json({ error: 'level and id are required' }, { status: 400 })
     }
 
-    // Si on active is_baseline, désactiver les autres
-    if (updates.is_baseline) {
-      const { data: current } = await supabase
-        .from('experiment_configs')
-        .select('config_type')
-        .eq('id', id)
-        .single()
+    const tableName = level === 'universal' 
+      ? 'experiment_config_universal'
+      : level === 'type'
+        ? 'experiment_config_type'
+        : 'experiment_config_model'
 
-      if (current) {
-        await supabase
-          .from('experiment_configs')
-          .update({ is_baseline: false })
-          .eq('config_type', current.config_type)
-          .eq('is_baseline', true)
-          .neq('id', id)
-      }
-    }
+    // Incrémenter version
+    const { data: current } = await supabase
+      .from(tableName)
+      .select('version')
+      .eq('id', id)
+      .single()
 
     const { data, error } = await supabase
-      .from('experiment_configs')
+      .from(tableName)
       .update({
         ...updates,
+        version: (current?.version || 0) + 1,
         updated_at: new Date().toISOString()
       })
       .eq('id', id)
@@ -150,34 +204,31 @@ export async function PUT(request: NextRequest) {
   }
 }
 
-// DELETE - Supprimer une config (soft delete via is_active)
+// DELETE - Supprimer une config model (pas universal ni type)
 export async function DELETE(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const id = searchParams.get('id')
-    const hard = searchParams.get('hard') === 'true'
+    const level = searchParams.get('level')
 
     if (!id) {
       return NextResponse.json({ error: 'id is required' }, { status: 400 })
     }
 
-    if (hard) {
-      // Suppression définitive
-      const { error } = await supabase
-        .from('experiment_configs')
-        .delete()
-        .eq('id', id)
-
-      if (error) throw error
-    } else {
-      // Soft delete
-      const { error } = await supabase
-        .from('experiment_configs')
-        .update({ is_active: false })
-        .eq('id', id)
-
-      if (error) throw error
+    if (level === 'universal') {
+      return NextResponse.json({ error: 'Cannot delete universal config' }, { status: 400 })
     }
+
+    if (level === 'type') {
+      return NextResponse.json({ error: 'Cannot delete type config' }, { status: 400 })
+    }
+
+    const { error } = await supabase
+      .from('experiment_config_model')
+      .delete()
+      .eq('id', id)
+
+    if (error) throw error
 
     return NextResponse.json({ success: true })
   } catch (error) {
