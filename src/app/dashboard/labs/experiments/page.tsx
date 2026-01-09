@@ -40,6 +40,7 @@ interface Folder {
 interface Photo {
   id: string; folder_id: string; image_url: string; thumbnail_url: string | null
   original_filename: string | null; detected_type: string; ai_confidence: number | null; status: string
+  created_at?: string
 }
 interface ConfigUniversal { id: string; name: string; base_prompt: string; min_confidence: number; version: number }
 interface ConfigType { id: string; meter_type: string; name: string; additional_prompt: string | null; typical_unit: string }
@@ -109,6 +110,8 @@ export default function ExperimentsPage() {
   const [filterType, setFilterType] = useState('all')
   const [filterStatus, setFilterStatus] = useState('all')
   const [filterBrand, setFilterBrand] = useState('all')
+  const [currentPage, setCurrentPage] = useState(1)
+  const ITEMS_PER_PAGE = 10
   const [showConfigModal, setShowConfigModal] = useState(false)
   const [configModalLevel, setConfigModalLevel] = useState<'universal' | 'type' | 'model'>('universal')
   const [selectedConfigType, setSelectedConfigType] = useState<ConfigType | null>(null)
@@ -219,6 +222,14 @@ export default function ExperimentsPage() {
     (filterStatus === 'all' || f.status === filterStatus) &&
     (filterBrand === 'all' || extractBrand(f.name) === filterBrand)
   )
+  
+  // Pagination
+  const totalPages = Math.ceil(filteredFolders.length / ITEMS_PER_PAGE)
+  const paginatedFolders = filteredFolders.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE)
+  
+  // Reset page when filters change
+  useEffect(() => { setCurrentPage(1) }, [filterType, filterStatus, filterBrand])
+  
   const hasActiveFilters = filterType !== 'all' || filterStatus !== 'all' || filterBrand !== 'all'
   const typeStats = { gas: regularFolders.filter(f => f.detected_type === 'gas').length, water: regularFolders.filter(f => f.detected_type === 'water').length, electricity: regularFolders.filter(f => f.detected_type === 'electricity').length }
   const statusStats = { draft: regularFolders.filter(f => f.status === 'draft').length, ready: regularFolders.filter(f => f.status === 'ready').length, validated: regularFolders.filter(f => f.status === 'validated').length, promoted: regularFolders.filter(f => f.status === 'promoted').length }
@@ -332,7 +343,7 @@ export default function ExperimentsPage() {
                   ))}
                   <div className="w-px h-6 bg-gray-200 mx-2" />
                   {[{ k: 'draft', l: `Brouillon (${statusStats.draft})` }, { k: 'ready', l: `Prêt (${statusStats.ready})` }, { k: 'validated', l: `Validé (${statusStats.validated})` }, { k: 'promoted', l: `Promu (${statusStats.promoted})` }].map(f => (
-                    <Button key={f.k} variant={filterStatus === f.k ? 'secondary' : 'ghost'} size="sm" onClick={() => setFilterStatus(filterStatus === f.k ? 'all' : f.k)}>{f.l}</Button>
+                    <Button key={f.k} variant={filterStatus === f.k ? 'secondary' : 'ghost'} size="sm" onClick={() => setFilterStatus(f.k)}>{f.l}</Button>
                   ))}
                   {brands.length > 0 && (
                     <>
@@ -371,39 +382,53 @@ export default function ExperimentsPage() {
                   {hasActiveFilters && <Button variant="outline" className="mt-4" onClick={() => { setFilterType('all'); setFilterStatus('all') }}>Réinitialiser</Button>}
                 </Card>
               ) : (
-                <div className="space-y-3">
-                  {filteredFolders.map(folder => (
-                    <Card key={folder.id} className="p-4 hover:shadow-md cursor-pointer" onClick={() => setSelectedFolderId(folder.id)}>
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-4">
-                          <div className="w-12 h-12 bg-gray-100 rounded-lg flex items-center justify-center overflow-hidden">
-                            {folder.reference_photo?.image_url ? <img src={folder.reference_photo.thumbnail_url || folder.reference_photo.image_url} alt="" className="w-full h-full object-cover" /> : TYPE_ICONS[folder.detected_type]}
-                          </div>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <h3 className="font-semibold">{folder.name}</h3>
-                              {folder.photos_since_last_test !== undefined && folder.photos_since_last_test > 0 && ['validated', 'promoted'].includes(folder.status) && (
-                                <Badge variant="outline" className="bg-orange-50 text-orange-600 border-orange-200"><ImagePlus className="h-3 w-3 mr-1" />+{folder.photos_since_last_test}</Badge>
-                              )}
+                <>
+                  <div className="space-y-3">
+                    {paginatedFolders.map(folder => (
+                      <Card key={folder.id} className="p-4 hover:shadow-md cursor-pointer" onClick={() => setSelectedFolderId(folder.id)}>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 bg-gray-100 rounded-lg flex items-center justify-center overflow-hidden">
+                              {folder.reference_photo?.image_url ? <img src={folder.reference_photo.thumbnail_url || folder.reference_photo.image_url} alt="" className="w-full h-full object-cover" /> : TYPE_ICONS[folder.detected_type]}
                             </div>
-                            <p className="text-sm text-muted-foreground">{folder.photo_count} photo{folder.photo_count > 1 ? 's' : ''}</p>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <h3 className="font-semibold">{folder.name}</h3>
+                                {folder.photos_since_last_test !== undefined && folder.photos_since_last_test > 0 && ['validated', 'promoted'].includes(folder.status) && (
+                                  <Badge variant="outline" className="bg-orange-50 text-orange-600 border-orange-200"><ImagePlus className="h-3 w-3 mr-1" />+{folder.photos_since_last_test}</Badge>
+                                )}
+                              </div>
+                              <p className="text-sm text-muted-foreground">{folder.photo_count} photo{folder.photo_count > 1 ? 's' : ''}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-4">
+                            {folder.status === 'draft' && folder.photo_count < 5 && <div className="w-24"><Progress value={(folder.photo_count / 5) * 100} className="h-2" /><p className="text-xs text-muted-foreground text-center mt-1">{5 - folder.photo_count} manquante(s)</p></div>}
+                            <Badge className={STATUS_COLORS[folder.status]}>{STATUS_LABELS[folder.status]}</Badge>
+                            {folder.status === 'ready' && (
+                              <Button size="sm" onClick={(e) => { e.stopPropagation(); handleRunTest(folder.id) }}><Play className="h-4 w-4 mr-1" />Tester</Button>
+                            )}
+                            {folder.status !== 'ready' && folder.photos_since_last_test !== undefined && folder.photos_since_last_test > 0 && ['validated', 'promoted'].includes(folder.status) && (
+                              <Button size="sm" variant="outline" className="border-orange-300 text-orange-600 hover:bg-orange-50" onClick={(e) => { e.stopPropagation(); handleRunTest(folder.id) }}><Play className="h-4 w-4 mr-1" />Relancer</Button>
+                            )}
+                            <ChevronRight className="h-5 w-5 text-gray-400" />
                           </div>
                         </div>
-                        <div className="flex items-center gap-4">
-                          {folder.status === 'draft' && folder.photo_count < 5 && <div className="w-24"><Progress value={(folder.photo_count / 5) * 100} className="h-2" /><p className="text-xs text-muted-foreground text-center mt-1">{5 - folder.photo_count} manquante(s)</p></div>}
-                          <Badge className={STATUS_COLORS[folder.status]}>{STATUS_LABELS[folder.status]}</Badge>
-                          {folder.status === 'ready' && (
-                            <Button size="sm" onClick={(e) => { e.stopPropagation(); handleRunTest(folder.id) }}><Play className="h-4 w-4 mr-1" />Tester</Button>
-                          )}
-                          {folder.status !== 'ready' && folder.photos_since_last_test !== undefined && folder.photos_since_last_test > 0 && ['validated', 'promoted'].includes(folder.status) && (
-                            <Button size="sm" variant="outline" className="border-orange-300 text-orange-600 hover:bg-orange-50" onClick={(e) => { e.stopPropagation(); handleRunTest(folder.id) }}><Play className="h-4 w-4 mr-1" />Relancer</Button>
-                          )}
-                          <ChevronRight className="h-5 w-5 text-gray-400" />
-                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                  {/* Pagination */}
+                  {totalPages > 1 && (
+                    <div className="flex items-center justify-center gap-2 mt-6">
+                      <Button variant="outline" size="sm" onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}>Précédent</Button>
+                      <div className="flex items-center gap-1">
+                        {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
+                          <Button key={page} variant={currentPage === page ? 'default' : 'ghost'} size="sm" className="w-8 h-8 p-0" onClick={() => setCurrentPage(page)}>{page}</Button>
+                        ))}
                       </div>
-                    </Card>
-                  ))}
-                </div>
+                      <Button variant="outline" size="sm" onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages}>Suivant</Button>
+                    </div>
+                  )}
+                </>
               )}
             </>
           )}
@@ -555,6 +580,7 @@ function FolderDetail({ folderId, folders, onBack, onDelete, onDeletePhotos, onU
   const [editType, setEditType] = useState('')
   const [selectionMode, setSelectionMode] = useState(false)
   const [selectedPhotos, setSelectedPhotos] = useState<Set<string>>(new Set())
+  const [deleting, setDeleting] = useState(false)
 
   useEffect(() => {
     (async () => {
@@ -570,13 +596,30 @@ function FolderDetail({ folderId, folders, onBack, onDelete, onDeletePhotos, onU
   const handleMovePhoto = async (pid: string, tid: string) => { await onMovePhotos([pid], tid); setPhotos(photos.filter(p => p.id !== pid)); onRefresh() }
   const toggleSelect = (id: string) => setSelectedPhotos(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
   const selectAll = () => setSelectedPhotos(selectedPhotos.size === photos.length ? new Set() : new Set(photos.map(p => p.id)))
-  const deleteSelected = () => { if (selectedPhotos.size > 0) { onDeletePhotos(Array.from(selectedPhotos)); setSelectedPhotos(new Set()); setSelectionMode(false) } }
+  const deleteSelected = async () => { 
+    if (selectedPhotos.size > 0) { 
+      setDeleting(true)
+      await onDeletePhotos(Array.from(selectedPhotos))
+      setSelectedPhotos(new Set())
+      setSelectionMode(false)
+      setDeleting(false)
+    } 
+  }
   const cancelSelection = () => { setSelectedPhotos(new Set()); setSelectionMode(false) }
 
   if (loading) return <div className="flex justify-center py-12"><Loader2 className="h-8 w-8 animate-spin" /></div>
   if (!folder) return null
 
   const isUnclassified = folder.is_unclassified
+  
+  // Nombre de nouvelles photos depuis le dernier test
+  const newPhotosCount = folder.photos_since_last_test || 0
+  const hasNewPhotos = newPhotosCount > 0 && ['validated', 'promoted'].includes(folder.status)
+  
+  // Pour les dossiers validés/promus avec nouvelles photos, on sépare visuellement
+  // Note: On ne peut pas identifier exactement quelles photos sont "nouvelles" sans created_at
+  // Donc on affiche juste un message informatif
+  
   const referencePhoto = photos.find(p => p.id === folder.reference_photo_id) || photos[0]
   const otherPhotos = referencePhoto ? photos.filter(p => p.id !== referencePhoto.id) : photos
 
@@ -628,16 +671,37 @@ function FolderDetail({ folderId, folders, onBack, onDelete, onDeletePhotos, onU
         <div className="flex items-center gap-2">
           {selectionMode ? (
             <>
-              <Button variant="outline" size="sm" onClick={selectAll}>{selectedPhotos.size === photos.length ? 'Désélectionner tout' : 'Tout sélectionner'}</Button>
+              <Button variant="outline" size="sm" onClick={selectAll} disabled={deleting}>{selectedPhotos.size === photos.length ? 'Désélectionner tout' : 'Tout sélectionner'}</Button>
               <span className="text-sm text-muted-foreground">{selectedPhotos.size} sélectionnée(s)</span>
-              <Button variant="destructive" size="sm" onClick={deleteSelected} disabled={selectedPhotos.size === 0}><Trash2 className="h-4 w-4 mr-1" />Supprimer</Button>
-              <Button variant="outline" size="sm" onClick={cancelSelection}>Annuler</Button>
+              <Button variant="destructive" size="sm" onClick={deleteSelected} disabled={selectedPhotos.size === 0 || deleting}>
+                {deleting ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Trash2 className="h-4 w-4 mr-1" />}
+                {deleting ? 'Suppression...' : 'Supprimer'}
+              </Button>
+              <Button variant="outline" size="sm" onClick={cancelSelection} disabled={deleting}>Annuler</Button>
             </>
           ) : (
             photos.length > 0 && <Button variant="outline" size="sm" onClick={() => setSelectionMode(true)}>Sélectionner</Button>
           )}
         </div>
       </div>
+
+      {/* Message nouvelles photos */}
+      {!isUnclassified && hasNewPhotos && (
+        <Card className="p-4 border-orange-200 bg-orange-50/50">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <ImagePlus className="h-5 w-5 text-orange-600" />
+              <div>
+                <p className="font-medium text-orange-800">{newPhotosCount} nouvelle(s) photo(s) ajoutée(s) depuis le dernier test</p>
+                <p className="text-sm text-orange-600">Relancez un test pour valider ces nouvelles photos</p>
+              </div>
+            </div>
+            <Button variant="outline" className="border-orange-300 text-orange-600 hover:bg-orange-100" onClick={() => onRunTest(folder.id)}>
+              <Play className="h-4 w-4 mr-2" />Relancer le test
+            </Button>
+          </div>
+        </Card>
+      )}
 
       {/* Photos grid with reference */}
       {photos.length === 0 ? (
