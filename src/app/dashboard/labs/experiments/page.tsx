@@ -108,6 +108,7 @@ export default function ExperimentsPage() {
   const [selectedTest, setSelectedTest] = useState<Test | null>(null)
   const [filterType, setFilterType] = useState('all')
   const [filterStatus, setFilterStatus] = useState('all')
+  const [filterBrand, setFilterBrand] = useState('all')
   const [showConfigModal, setShowConfigModal] = useState(false)
   const [configModalLevel, setConfigModalLevel] = useState<'universal' | 'type' | 'model'>('universal')
   const [selectedConfigType, setSelectedConfigType] = useState<ConfigType | null>(null)
@@ -208,8 +209,17 @@ export default function ExperimentsPage() {
   const selectedFolder = folders.find(f => f.id === selectedFolderId) || null
   const regularFolders = folders.filter(f => !f.is_unclassified)
   const unclassifiedFolder = folders.find(f => f.is_unclassified)
-  const filteredFolders = regularFolders.filter(f => (filterType === 'all' || f.detected_type === filterType) && (filterStatus === 'all' || f.status === filterStatus))
-  const hasActiveFilters = filterType !== 'all' || filterStatus !== 'all'
+  
+  // Extraire la marque (premier mot du nom)
+  const extractBrand = (name: string) => name.split(' ')[0].toUpperCase()
+  const brands = Array.from(new Set(regularFolders.map(f => extractBrand(f.name)))).sort()
+  
+  const filteredFolders = regularFolders.filter(f => 
+    (filterType === 'all' || f.detected_type === filterType) && 
+    (filterStatus === 'all' || f.status === filterStatus) &&
+    (filterBrand === 'all' || extractBrand(f.name) === filterBrand)
+  )
+  const hasActiveFilters = filterType !== 'all' || filterStatus !== 'all' || filterBrand !== 'all'
   const typeStats = { gas: regularFolders.filter(f => f.detected_type === 'gas').length, water: regularFolders.filter(f => f.detected_type === 'water').length, electricity: regularFolders.filter(f => f.detected_type === 'electricity').length }
   const statusStats = { draft: regularFolders.filter(f => f.status === 'draft').length, ready: regularFolders.filter(f => f.status === 'ready').length, validated: regularFolders.filter(f => f.status === 'validated').length }
 
@@ -324,7 +334,23 @@ export default function ExperimentsPage() {
                   {[{ k: 'draft', l: `Brouillon (${statusStats.draft})` }, { k: 'ready', l: `Prêt (${statusStats.ready})` }, { k: 'validated', l: `Validé (${statusStats.validated})` }].map(f => (
                     <Button key={f.k} variant={filterStatus === f.k ? 'secondary' : 'ghost'} size="sm" onClick={() => setFilterStatus(filterStatus === f.k ? 'all' : f.k)}>{f.l}</Button>
                   ))}
-                  {hasActiveFilters && <><div className="w-px h-6 bg-gray-200 mx-2" /><Button variant="ghost" size="sm" onClick={() => { setFilterType('all'); setFilterStatus('all') }} className="text-red-600"><X className="h-4 w-4 mr-1" />Réinitialiser</Button></>}
+                  {brands.length > 0 && (
+                    <>
+                      <div className="w-px h-6 bg-gray-200 mx-2" />
+                      <Select value={filterBrand} onValueChange={setFilterBrand}>
+                        <SelectTrigger className="w-[150px] h-8">
+                          <SelectValue placeholder="Marque" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Toutes marques</SelectItem>
+                          {brands.map(brand => (
+                            <SelectItem key={brand} value={brand}>{brand}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </>
+                  )}
+                  {hasActiveFilters && <><div className="w-px h-6 bg-gray-200 mx-2" /><Button variant="ghost" size="sm" onClick={() => { setFilterType('all'); setFilterStatus('all'); setFilterBrand('all') }} className="text-red-600"><X className="h-4 w-4 mr-1" />Réinitialiser</Button></>}
                 </div>
               </Card>
               {unclassifiedFolder && unclassifiedFolder.photo_count > 0 && (
@@ -356,7 +382,7 @@ export default function ExperimentsPage() {
                           <div>
                             <div className="flex items-center gap-2">
                               <h3 className="font-semibold">{folder.name}</h3>
-                              {folder.photos_since_last_test && folder.photos_since_last_test > 0 && ['validated', 'promoted'].includes(folder.status) && (
+                              {folder.photos_since_last_test !== undefined && folder.photos_since_last_test > 0 && ['validated', 'promoted'].includes(folder.status) && (
                                 <Badge variant="outline" className="bg-orange-50 text-orange-600 border-orange-200"><ImagePlus className="h-3 w-3 mr-1" />+{folder.photos_since_last_test}</Badge>
                               )}
                             </div>
