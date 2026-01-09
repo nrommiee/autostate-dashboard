@@ -17,10 +17,21 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import {
   Tabs,
   TabsContent,
@@ -38,64 +49,22 @@ import {
   Trash2, MoreVertical, ChevronRight, Loader2, AlertTriangle,
   Play, Eye, RefreshCw, Plus, Flame, Droplets, Bolt,
   Check, Sparkles, ArrowRight, XCircle, MoveRight,
-  ExternalLink, Pencil
+  ExternalLink, Pencil, Image
 } from 'lucide-react'
 
 // ============================================
 // TYPES
 // ============================================
 
-interface ConfigUniversal {
-  id: string
-  name: string
-  base_prompt: string
-  preprocessing: {
-    brightness: number
-    contrast: number
-    sharpness: number
-    denoise: string | null
-    binarization: string | null
-  }
-  min_confidence: number
-  multi_pass_enabled: boolean
-  multi_pass_count: number
-  version: number
-}
-
-interface ConfigType {
-  id: string
-  meter_type: 'gas' | 'water' | 'electricity'
-  name: string
-  additional_prompt: string | null
-  preprocessing_override: Record<string, unknown> | null
-  typical_unit: string
-  decimal_places: number
-}
-
-interface ConfigModel {
-  id: string
-  type_config_id: string | null
-  meter_model_id: string | null
-  name: string
-  manufacturer: string | null
-  specific_prompt: string | null
-  preprocessing_override: Record<string, unknown> | null
-  accuracy_rate: number | null
-  is_promoted: boolean
-  experiment_config_type?: ConfigType
-}
-
 interface Folder {
   id: string
   name: string
   description: string | null
-  linked_meter_model_id: string | null
-  config_model_id: string | null
   detected_type: string
-  status: 'draft' | 'ready' | 'testing' | 'validated' | 'promoted'
+  status: string
   photo_count: number
   min_photos_required: number
-  meter_models?: { id: string; name: string; manufacturer: string }
+  is_unclassified?: boolean
   experiment_photos?: Photo[]
 }
 
@@ -105,8 +74,36 @@ interface Photo {
   image_url: string
   thumbnail_url: string | null
   original_filename: string | null
-  ground_truth: Record<string, unknown> | null
-  status: 'pending' | 'tested' | 'validated' | 'reference'
+  detected_type: string
+  ai_confidence: number | null
+  status: string
+}
+
+interface ConfigUniversal {
+  id: string
+  name: string
+  base_prompt: string
+  min_confidence: number
+  version: number
+}
+
+interface ConfigType {
+  id: string
+  meter_type: string
+  name: string
+  additional_prompt: string | null
+  typical_unit: string
+}
+
+interface ConfigModel {
+  id: string
+  name: string
+  manufacturer: string | null
+  is_promoted: boolean
+  accuracy_rate: number | null
+  type_config_id: string | null
+  specific_prompt: string | null
+  experiment_config_type?: ConfigType
 }
 
 interface Test {
@@ -120,17 +117,14 @@ interface Test {
   avg_confidence: number | null
   avg_processing_time_ms: number | null
   total_cost_usd: number | null
-  status: 'pending' | 'running' | 'completed' | 'failed'
-  created_at: string
+  status: string
   experiment_folders?: { id: string; name: string }
-  experiment_config_model?: { id: string; name: string }
   experiment_test_results?: TestResult[]
 }
 
 interface TestResult {
   id: string
   photo_id: string
-  expected_result: Record<string, unknown> | null
   actual_result: Record<string, unknown>
   confidence_score: number
   is_correct: boolean | null
@@ -165,11 +159,8 @@ const STATUS_LABELS: Record<string, string> = {
 }
 
 // ============================================
-// IMAGE COMPRESSION UTILITY
+// IMAGE COMPRESSION
 // ============================================
-
-const MAX_IMAGE_SIZE = 1200
-const JPEG_QUALITY = 0.8
 
 async function compressImage(file: File): Promise<File> {
   return new Promise((resolve, reject) => {
@@ -177,47 +168,34 @@ async function compressImage(file: File): Promise<File> {
       resolve(file)
       return
     }
-
-    const img = new Image()
+    const img = new window.Image()
     const canvas = document.createElement('canvas')
     const ctx = canvas.getContext('2d')
-
     img.onload = () => {
       let { width, height } = img
-
-      if (width > height) {
-        if (width > MAX_IMAGE_SIZE) {
-          height = Math.round((height * MAX_IMAGE_SIZE) / width)
-          width = MAX_IMAGE_SIZE
-        }
-      } else {
-        if (height > MAX_IMAGE_SIZE) {
-          width = Math.round((width * MAX_IMAGE_SIZE) / height)
-          height = MAX_IMAGE_SIZE
-        }
+      const MAX_SIZE = 1200
+      if (width > height && width > MAX_SIZE) {
+        height = Math.round((height * MAX_SIZE) / width)
+        width = MAX_SIZE
+      } else if (height > MAX_SIZE) {
+        width = Math.round((width * MAX_SIZE) / height)
+        height = MAX_SIZE
       }
-
       canvas.width = width
       canvas.height = height
       ctx?.drawImage(img, 0, 0, width, height)
-
       canvas.toBlob(
         (blob) => {
           if (blob) {
-            const compressedFile = new File([blob], file.name, {
-              type: 'image/jpeg',
-              lastModified: Date.now(),
-            })
-            resolve(compressedFile)
+            resolve(new File([blob], file.name, { type: 'image/jpeg', lastModified: Date.now() }))
           } else {
             reject(new Error('Compression failed'))
           }
         },
         'image/jpeg',
-        JPEG_QUALITY
+        0.8
       )
     }
-
     img.onerror = () => reject(new Error('Failed to load image'))
     img.src = URL.createObjectURL(file)
   })
@@ -244,15 +222,23 @@ export default function ExperimentsPage() {
   // UI State
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null)
   const [selectedTest, setSelectedTest] = useState<Test | null>(null)
+
+  // Modals
   const [showConfigModal, setShowConfigModal] = useState(false)
   const [configModalLevel, setConfigModalLevel] = useState<'universal' | 'type' | 'model'>('universal')
   const [selectedConfigType, setSelectedConfigType] = useState<ConfigType | null>(null)
   const [selectedConfigModel, setSelectedConfigModel] = useState<ConfigModel | null>(null)
+  const [showNewFolderModal, setShowNewFolderModal] = useState(false)
+  const [newFolderName, setNewFolderName] = useState('')
+  const [newFolderType, setNewFolderType] = useState('unknown')
+
+  // Alerts
+  const [deleteAlert, setDeleteAlert] = useState<{ type: 'photo' | 'folder'; id: string; name?: string } | null>(null)
 
   // Upload
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
-  const [uploadProgress, setUploadProgress] = useState('')
+  const [uploadProgress, setUploadProgress] = useState({ step: '', current: 0, total: 0 })
 
   // ============================================
   // DATA LOADING
@@ -302,13 +288,20 @@ export default function ExperimentsPage() {
     const files = e.target.files
     if (!files || files.length === 0) return
 
+    if (files.length > 20) {
+      setDeleteAlert(null)
+      alert('Maximum 20 photos par upload. Veuillez réduire votre sélection.')
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      return
+    }
+
     setUploading(true)
-    setUploadProgress('Compression des images...')
+    setUploadProgress({ step: 'Compression', current: 0, total: files.length })
 
     try {
       const compressedFiles: File[] = []
       for (let i = 0; i < files.length; i++) {
-        setUploadProgress(`Compression ${i + 1}/${files.length}...`)
+        setUploadProgress({ step: 'Compression', current: i + 1, total: files.length })
         try {
           const compressed = await compressImage(files[i])
           compressedFiles.push(compressed)
@@ -317,7 +310,7 @@ export default function ExperimentsPage() {
         }
       }
 
-      setUploadProgress('Analyse et upload...')
+      setUploadProgress({ step: 'Analyse IA', current: 0, total: compressedFiles.length })
 
       const formData = new FormData()
       for (const file of compressedFiles) {
@@ -331,29 +324,26 @@ export default function ExperimentsPage() {
       })
       
       if (!res.ok) {
-        const errorText = await res.text()
-        console.error('Upload failed:', res.status, errorText)
-        alert(`Erreur upload: ${res.status}`)
+        const data = await res.json()
+        alert(data.message || `Erreur: ${res.status}`)
         return
       }
 
       const data = await res.json()
       
-      if (data.uploaded && data.uploaded.length > 0) {
-        await loadData()
-        setActiveTab('folders')
-      } else if (data.errors && data.errors.length > 0) {
-        alert(`Erreurs: ${data.errors.map((e: {file: string, error: string}) => e.error).join(', ')}`)
+      if (data.error_count > 0) {
+        alert(`${data.success_count} photos importées, ${data.error_count} erreurs`)
       }
+
+      await loadData()
+      setActiveTab('folders')
     } catch (error) {
       console.error('Upload error:', error)
       alert('Erreur lors de l\'upload')
     } finally {
       setUploading(false)
-      setUploadProgress('')
-      if (fileInputRef.current) {
-        fileInputRef.current.value = ''
-      }
+      setUploadProgress({ step: '', current: 0, total: 0 })
+      if (fileInputRef.current) fileInputRef.current.value = ''
     }
   }
 
@@ -362,24 +352,39 @@ export default function ExperimentsPage() {
   // ============================================
 
   const handleDeletePhoto = async (photoId: string) => {
-    if (!confirm('Supprimer cette photo ?')) return
     await fetch(`/api/labs/experiments/photos?id=${photoId}`, { method: 'DELETE' })
-    await loadData()
-  }
-
-  const handleMovePhoto = async (photoId: string, targetFolderId: string) => {
-    await fetch('/api/labs/experiments/photos', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ photo_ids: [photoId], target_folder_id: targetFolderId })
-    })
+    setDeleteAlert(null)
     await loadData()
   }
 
   const handleDeleteFolder = async (folderId: string) => {
-    if (!confirm('Supprimer ce dossier et toutes ses photos ?')) return
     await fetch(`/api/labs/experiments/folders?id=${folderId}`, { method: 'DELETE' })
+    setDeleteAlert(null)
     setSelectedFolderId(null)
+    await loadData()
+  }
+
+  const handleMovePhotos = async (photoIds: string[], targetFolderId: string) => {
+    await fetch('/api/labs/experiments/photos', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ photo_ids: photoIds, target_folder_id: targetFolderId })
+    })
+    await loadData()
+  }
+
+  const handleCreateFolder = async () => {
+    if (!newFolderName.trim()) return
+    
+    await fetch('/api/labs/experiments/folders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: newFolderName, detected_type: newFolderType })
+    })
+    
+    setShowNewFolderModal(false)
+    setNewFolderName('')
+    setNewFolderType('unknown')
     await loadData()
   }
 
@@ -392,47 +397,30 @@ export default function ExperimentsPage() {
     await loadData()
   }
 
-  const handleRunTest = async (folderId: string, configModelId?: string) => {
-    try {
-      const res = await fetch('/api/labs/experiments/tests', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          folder_id: folderId,
-          config_model_id: configModelId,
-          use_universal_only: !configModelId,
-          run_immediately: true
-        })
-      })
-      const data = await res.json()
-      
-      if (data.test) {
-        await loadData()
-        setActiveTab('tests')
-        setSelectedTest(data.test)
-      }
-    } catch (error) {
-      console.error('Test error:', error)
+  const handleRunTest = async (folderId: string) => {
+    const res = await fetch('/api/labs/experiments/tests', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folder_id: folderId, run_immediately: true })
+    })
+    const data = await res.json()
+    if (data.test) {
+      await loadData()
+      setActiveTab('tests')
+      setSelectedTest(data.test)
     }
   }
 
   const handlePromote = async (folderId: string) => {
-    if (!confirm('Promouvoir ce dossier vers les Modèles ?')) return
-    
-    try {
-      const res = await fetch('/api/labs/experiments/promote', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folder_id: folderId })
-      })
-      const data = await res.json()
-      
-      if (data.meter_model) {
-        await loadData()
-        alert(`Modèle ${data.action === 'created' ? 'créé' : 'mis à jour'}: ${data.meter_model.name}`)
-      }
-    } catch (error) {
-      console.error('Promote error:', error)
+    const res = await fetch('/api/labs/experiments/promote', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folder_id: folderId })
+    })
+    const data = await res.json()
+    if (data.meter_model) {
+      await loadData()
+      alert(`Modèle ${data.action === 'created' ? 'créé' : 'mis à jour'}: ${data.meter_model.name}`)
     }
   }
 
@@ -446,6 +434,7 @@ export default function ExperimentsPage() {
   }
 
   const selectedFolder = folders.find(f => f.id === selectedFolderId) || null
+  const unclassifiedCount = folders.find(f => f.is_unclassified)?.photo_count || 0
 
   // ============================================
   // RENDER
@@ -488,9 +477,9 @@ export default function ExperimentsPage() {
           <TabsTrigger value="folders" className="flex items-center gap-2">
             <FolderOpen className="h-4 w-4" />
             Dossiers
-            {folders.filter(f => f.status === 'ready').length > 0 && (
-              <Badge variant="secondary" className="ml-1 h-5 w-5 p-0 justify-center text-xs">
-                {folders.filter(f => f.status === 'ready').length}
+            {unclassifiedCount > 0 && (
+              <Badge variant="destructive" className="ml-1 h-5 px-1.5 text-xs">
+                {unclassifiedCount}
               </Badge>
             )}
           </TabsTrigger>
@@ -508,9 +497,7 @@ export default function ExperimentsPage() {
           </TabsTrigger>
         </TabsList>
 
-        {/* ============================================ */}
         {/* TAB: IMPORT */}
-        {/* ============================================ */}
         <TabsContent value="import" className="space-y-6">
           <Card className="p-8">
             <input
@@ -530,22 +517,26 @@ export default function ExperimentsPage() {
               {uploading ? (
                 <div className="space-y-4">
                   <Loader2 className="h-12 w-12 mx-auto text-teal-600 animate-spin" />
-                  <p className="text-lg font-medium">{uploadProgress || 'Upload en cours...'}</p>
+                  <p className="text-lg font-medium">
+                    {uploadProgress.step} {uploadProgress.current}/{uploadProgress.total}
+                  </p>
+                  <Progress value={(uploadProgress.current / uploadProgress.total) * 100} className="max-w-xs mx-auto" />
                 </div>
               ) : (
                 <>
                   <Upload className="h-12 w-12 mx-auto text-gray-400 mb-4" />
                   <p className="text-lg font-medium mb-2">Glissez vos photos ici</p>
-                  <p className="text-sm text-muted-foreground mb-4">ou cliquez pour sélectionner</p>
-                  <p className="text-xs text-muted-foreground">
-                    🤖 Les photos seront analysées par IA et regroupées automatiquement par compteur
-                  </p>
+                  <p className="text-sm text-muted-foreground mb-4">ou cliquez pour sélectionner (max 20 photos)</p>
+                  <div className="flex items-center justify-center gap-4 text-xs text-muted-foreground">
+                    <span>🤖 Analyse IA automatique</span>
+                    <span>📁 Classement intelligent</span>
+                  </div>
                 </>
               )}
             </div>
           </Card>
 
-          {/* Stats rapides */}
+          {/* Stats */}
           <div className="grid grid-cols-4 gap-4">
             <Card className="p-4">
               <div className="flex items-center gap-3">
@@ -553,8 +544,19 @@ export default function ExperimentsPage() {
                   <FolderOpen className="h-5 w-5 text-gray-600" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold">{folders.length}</p>
+                  <p className="text-2xl font-bold">{folders.filter(f => !f.is_unclassified).length}</p>
                   <p className="text-xs text-muted-foreground">Dossiers</p>
+                </div>
+              </div>
+            </Card>
+            <Card className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-orange-100 rounded-lg flex items-center justify-center">
+                  <AlertTriangle className="h-5 w-5 text-orange-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold">{unclassifiedCount}</p>
+                  <p className="text-xs text-muted-foreground">Non classées</p>
                 </div>
               </div>
             </Card>
@@ -564,19 +566,8 @@ export default function ExperimentsPage() {
                   <Check className="h-5 w-5 text-green-600" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold">{folders.filter(f => f.status === 'ready').length}</p>
+                  <p className="text-2xl font-bold">{folders.filter(f => f.status === 'ready' && !f.is_unclassified).length}</p>
                   <p className="text-xs text-muted-foreground">Prêts pour test</p>
-                </div>
-              </div>
-            </Card>
-            <Card className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
-                  <FlaskConical className="h-5 w-5 text-purple-600" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">{tests.length}</p>
-                  <p className="text-xs text-muted-foreground">Tests</p>
                 </div>
               </div>
             </Card>
@@ -586,7 +577,7 @@ export default function ExperimentsPage() {
                   <CheckCircle2 className="h-5 w-5 text-teal-600" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold">{configs.models.filter(m => m.is_promoted).length}</p>
+                  <p className="text-2xl font-bold">{folders.filter(f => f.status === 'promoted').length}</p>
                   <p className="text-xs text-muted-foreground">Promus</p>
                 </div>
               </div>
@@ -594,63 +585,56 @@ export default function ExperimentsPage() {
           </div>
         </TabsContent>
 
-        {/* ============================================ */}
         {/* TAB: DOSSIERS */}
-        {/* ============================================ */}
-        <TabsContent value="folders" className="space-y-6">
+        <TabsContent value="folders" className="space-y-4">
           {selectedFolder ? (
             <FolderDetail 
               folderId={selectedFolder.id}
-              folders={folders}
+              folders={folders.filter(f => !f.is_unclassified)}
               onBack={() => setSelectedFolderId(null)}
-              onDeletePhoto={handleDeletePhoto}
-              onMovePhoto={handleMovePhoto}
-              onDeleteFolder={handleDeleteFolder}
+              onDelete={(id, name) => setDeleteAlert({ type: 'folder', id, name })}
               onUpdateFolder={handleUpdateFolder}
+              onMovePhotos={handleMovePhotos}
+              onDeletePhoto={(id) => setDeleteAlert({ type: 'photo', id })}
               onRunTest={handleRunTest}
               onPromote={handlePromote}
-              onRefresh={loadData}
             />
           ) : (
             <>
               <div className="flex items-center justify-between">
                 <p className="text-muted-foreground">{folders.length} dossier(s)</p>
+                <Button size="sm" onClick={() => setShowNewFolderModal(true)}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Nouveau dossier
+                </Button>
               </div>
 
               {folders.length === 0 ? (
                 <Card className="p-12 text-center">
                   <FolderOpen className="h-12 w-12 mx-auto mb-4 text-gray-300" />
                   <p className="text-lg font-medium text-gray-600 mb-2">Aucun dossier</p>
-                  <p className="text-sm text-muted-foreground mb-4">
-                    Importez des photos pour créer automatiquement des dossiers
-                  </p>
-                  <Button onClick={() => setActiveTab('import')}>
-                    <Upload className="h-4 w-4 mr-2" />
-                    Importer des photos
-                  </Button>
+                  <p className="text-sm text-muted-foreground">Importez des photos pour créer des dossiers</p>
                 </Card>
               ) : (
-                <div className="grid gap-4">
+                <div className="space-y-3">
                   {folders.map(folder => (
                     <Card 
-                      key={folder.id} 
-                      className="p-4 hover:shadow-md transition-shadow cursor-pointer"
+                      key={folder.id}
+                      className={`p-4 hover:shadow-md transition-shadow cursor-pointer
+                        ${folder.is_unclassified ? 'border-orange-200 bg-orange-50/50' : ''}`}
                       onClick={() => setSelectedFolderId(folder.id)}
                     >
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-4">
-                          <div className="w-12 h-12 bg-gray-100 rounded-lg flex items-center justify-center">
-                            {TYPE_ICONS[folder.detected_type] || TYPE_ICONS.unknown}
+                          <div className={`w-12 h-12 rounded-lg flex items-center justify-center
+                            ${folder.is_unclassified ? 'bg-orange-100' : 'bg-gray-100'}`}>
+                            {folder.is_unclassified 
+                              ? <AlertTriangle className="h-5 w-5 text-orange-600" />
+                              : (TYPE_ICONS[folder.detected_type] || TYPE_ICONS.unknown)
+                            }
                           </div>
                           <div>
-                            <div className="flex items-center gap-2">
-                              <h3 className="font-semibold">{folder.name}</h3>
-                              {folder.linked_meter_model_id && (
-                                <Badge variant="outline" className="text-xs">
-                                  🔗 {folder.meter_models?.name}
-                                </Badge>
-                              )}
-                            </div>
+                            <h3 className="font-semibold">{folder.name}</h3>
                             <p className="text-sm text-muted-foreground">
                               {folder.photo_count} photo{folder.photo_count > 1 ? 's' : ''}
                             </p>
@@ -658,30 +642,24 @@ export default function ExperimentsPage() {
                         </div>
                         
                         <div className="flex items-center gap-4">
-                          {folder.status === 'draft' && (
-                            <div className="w-32">
-                              <Progress 
-                                value={(folder.photo_count / folder.min_photos_required) * 100} 
-                                className="h-2"
-                              />
-                              <p className="text-xs text-muted-foreground mt-1 text-center">
-                                {folder.min_photos_required - folder.photo_count} manquante(s)
+                          {/* Progress bar - PAS pour Non classé */}
+                          {!folder.is_unclassified && folder.status === 'draft' && folder.photo_count < 5 && (
+                            <div className="w-24">
+                              <Progress value={(folder.photo_count / 5) * 100} className="h-2" />
+                              <p className="text-xs text-muted-foreground text-center mt-1">
+                                {5 - folder.photo_count} manquante(s)
                               </p>
                             </div>
                           )}
                           
-                          <Badge className={STATUS_COLORS[folder.status]}>
-                            {STATUS_LABELS[folder.status]}
+                          {/* Badge status */}
+                          <Badge className={folder.is_unclassified ? 'bg-orange-100 text-orange-700' : STATUS_COLORS[folder.status]}>
+                            {folder.is_unclassified ? 'Pot commun' : STATUS_LABELS[folder.status]}
                           </Badge>
                           
-                          {folder.status === 'ready' && (
-                            <Button 
-                              size="sm"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                handleRunTest(folder.id)
-                              }}
-                            >
+                          {/* Bouton Tester - PAS pour Non classé */}
+                          {!folder.is_unclassified && folder.status === 'ready' && (
+                            <Button size="sm" onClick={(e) => { e.stopPropagation(); handleRunTest(folder.id) }}>
                               <Play className="h-4 w-4 mr-1" />
                               Tester
                             </Button>
@@ -698,30 +676,17 @@ export default function ExperimentsPage() {
           )}
         </TabsContent>
 
-        {/* ============================================ */}
         {/* TAB: CONFIGS */}
-        {/* ============================================ */}
         <TabsContent value="configs" className="space-y-6">
-          {/* Config Universelle */}
           <div>
-            <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
-              🌍 Configuration Universelle
-            </h3>
+            <h3 className="text-lg font-semibold mb-3">🌍 Configuration Universelle</h3>
             <Card className="p-4">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="font-medium">{configs.universal?.name || 'Configuration universelle'}</p>
-                  <p className="text-sm text-muted-foreground">
-                    Appliquée à tous les compteurs • Version {configs.universal?.version || 1}
-                  </p>
+                  <p className="text-sm text-muted-foreground">Version {configs.universal?.version || 1}</p>
                 </div>
-                <Button 
-                  variant="outline"
-                  onClick={() => {
-                    setConfigModalLevel('universal')
-                    setShowConfigModal(true)
-                  }}
-                >
+                <Button variant="outline" onClick={() => { setConfigModalLevel('universal'); setShowConfigModal(true) }}>
                   <Eye className="h-4 w-4 mr-2" />
                   Voir / Éditer
                 </Button>
@@ -729,61 +694,38 @@ export default function ExperimentsPage() {
             </Card>
           </div>
 
-          {/* Configs par Type */}
           <div>
-            <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
-              📦 Configurations par Type
-            </h3>
+            <h3 className="text-lg font-semibold mb-3">📦 Par Type</h3>
             <div className="grid md:grid-cols-3 gap-4">
               {configs.types.map(type => (
                 <Card key={type.id} className="p-4">
                   <div className="flex items-center gap-3 mb-3">
                     {TYPE_ICONS[type.meter_type]}
-                    <div>
-                      <p className="font-medium">{type.name}</p>
-                      <p className="text-xs text-muted-foreground">{type.typical_unit}</p>
-                    </div>
+                    <span className="font-medium">{type.name}</span>
                   </div>
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    className="w-full"
-                    onClick={() => {
-                      setSelectedConfigType(type)
-                      setConfigModalLevel('type')
-                      setShowConfigModal(true)
-                    }}
-                  >
+                  <Button variant="outline" size="sm" className="w-full" onClick={() => {
+                    setSelectedConfigType(type)
+                    setConfigModalLevel('type')
+                    setShowConfigModal(true)
+                  }}>
                     <Eye className="h-4 w-4 mr-2" />
-                    Voir / Éditer
+                    Éditer
                   </Button>
                 </Card>
               ))}
             </div>
           </div>
 
-          {/* Configs par Modèle */}
           <div>
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-lg font-semibold flex items-center gap-2">
-                🎯 Configurations par Modèle
-              </h3>
-              <Button 
-                size="sm"
-                onClick={() => {
-                  setSelectedConfigModel(null)
-                  setConfigModalLevel('model')
-                  setShowConfigModal(true)
-                }}
-              >
+              <h3 className="text-lg font-semibold">🎯 Par Modèle</h3>
+              <Button size="sm" onClick={() => { setSelectedConfigModel(null); setConfigModalLevel('model'); setShowConfigModal(true) }}>
                 <Plus className="h-4 w-4 mr-2" />
                 Nouvelle config
               </Button>
             </div>
-            
             {configs.models.length === 0 ? (
               <Card className="p-8 text-center">
-                <Settings2 className="h-10 w-10 mx-auto mb-3 text-gray-300" />
                 <p className="text-muted-foreground">Aucune config spécifique</p>
               </Card>
             ) : (
@@ -791,30 +733,15 @@ export default function ExperimentsPage() {
                 {configs.models.map(model => (
                   <Card key={model.id} className="p-4">
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        {model.experiment_config_type && TYPE_ICONS[model.experiment_config_type.meter_type]}
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <p className="font-medium">{model.name}</p>
-                            {model.is_promoted && (
-                              <Badge className="bg-teal-100 text-teal-700">Promu</Badge>
-                            )}
-                          </div>
-                          <p className="text-xs text-muted-foreground">
-                            {model.manufacturer || 'Fabricant inconnu'}
-                            {model.accuracy_rate && ` • ${formatPercent(model.accuracy_rate)}`}
-                          </p>
-                        </div>
+                      <div>
+                        <p className="font-medium">{model.name}</p>
+                        <p className="text-xs text-muted-foreground">{model.manufacturer || 'Fabricant inconnu'}</p>
                       </div>
-                      <Button 
-                        variant="outline" 
-                        size="sm"
-                        onClick={() => {
-                          setSelectedConfigModel(model)
-                          setConfigModalLevel('model')
-                          setShowConfigModal(true)
-                        }}
-                      >
+                      <Button variant="outline" size="sm" onClick={() => {
+                        setSelectedConfigModel(model)
+                        setConfigModalLevel('model')
+                        setShowConfigModal(true)
+                      }}>
                         <Eye className="h-4 w-4 mr-2" />
                         Éditer
                       </Button>
@@ -826,9 +753,7 @@ export default function ExperimentsPage() {
           </div>
         </TabsContent>
 
-        {/* ============================================ */}
         {/* TAB: TESTS */}
-        {/* ============================================ */}
         <TabsContent value="tests" className="space-y-6">
           {selectedTest ? (
             <TestDetail 
@@ -842,9 +767,7 @@ export default function ExperimentsPage() {
                 <Card className="p-12 text-center">
                   <FlaskConical className="h-12 w-12 mx-auto mb-4 text-gray-300" />
                   <p className="text-lg font-medium text-gray-600 mb-2">Aucun test</p>
-                  <p className="text-sm text-muted-foreground">
-                    Lancez un test depuis un dossier prêt
-                  </p>
+                  <p className="text-sm text-muted-foreground">Lancez un test depuis un dossier prêt</p>
                 </Card>
               ) : (
                 <div className="space-y-4">
@@ -858,21 +781,15 @@ export default function ExperimentsPage() {
                         <div className="flex items-center gap-4">
                           <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${
                             test.status === 'completed' 
-                              ? test.accuracy_rate && test.accuracy_rate >= 0.8 
-                                ? 'bg-green-100' 
-                                : 'bg-orange-100'
-                              : test.status === 'running'
-                                ? 'bg-blue-100'
-                                : 'bg-gray-100'
+                              ? test.accuracy_rate && test.accuracy_rate >= 0.8 ? 'bg-green-100' : 'bg-orange-100'
+                              : test.status === 'running' ? 'bg-blue-100' : 'bg-gray-100'
                           }`}>
                             {test.status === 'running' ? (
                               <Loader2 className="h-5 w-5 text-blue-600 animate-spin" />
                             ) : test.status === 'completed' ? (
-                              test.accuracy_rate && test.accuracy_rate >= 0.8 ? (
-                                <Check className="h-5 w-5 text-green-600" />
-                              ) : (
-                                <AlertTriangle className="h-5 w-5 text-orange-600" />
-                              )
+                              test.accuracy_rate && test.accuracy_rate >= 0.8 
+                                ? <Check className="h-5 w-5 text-green-600" />
+                                : <AlertTriangle className="h-5 w-5 text-orange-600" />
                             ) : (
                               <FlaskConical className="h-5 w-5 text-gray-600" />
                             )}
@@ -909,9 +826,7 @@ export default function ExperimentsPage() {
           )}
         </TabsContent>
 
-        {/* ============================================ */}
         {/* TAB: MODÈLES */}
-        {/* ============================================ */}
         <TabsContent value="models" className="space-y-6">
           <Card className="p-6">
             <div className="flex items-center gap-4 mb-4">
@@ -920,18 +835,13 @@ export default function ExperimentsPage() {
               </div>
               <div>
                 <h3 className="font-semibold">Modèles promus</h3>
-                <p className="text-sm text-muted-foreground">
-                  Les modèles validés sont disponibles dans Compteurs &gt; Modèles
-                </p>
+                <p className="text-sm text-muted-foreground">Disponibles dans Compteurs &gt; Modèles</p>
               </div>
             </div>
             
             {folders.filter(f => f.status === 'promoted').length === 0 ? (
               <div className="text-center py-8">
-                <p className="text-muted-foreground mb-4">Aucun modèle promu depuis Experiments</p>
-                <Button variant="outline" onClick={() => setActiveTab('folders')}>
-                  Voir les dossiers
-                </Button>
+                <p className="text-muted-foreground">Aucun modèle promu</p>
               </div>
             ) : (
               <div className="space-y-3">
@@ -939,17 +849,12 @@ export default function ExperimentsPage() {
                   <div key={folder.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                     <div className="flex items-center gap-3">
                       {TYPE_ICONS[folder.detected_type]}
-                      <div>
-                        <p className="font-medium">{folder.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          Lié à: {folder.meter_models?.name || 'Nouveau modèle'}
-                        </p>
-                      </div>
+                      <span className="font-medium">{folder.name}</span>
                     </div>
                     <Button variant="outline" size="sm" asChild>
                       <a href="/dashboard/meters">
                         <ExternalLink className="h-4 w-4 mr-2" />
-                        Voir dans Modèles
+                        Voir
                       </a>
                     </Button>
                   </div>
@@ -960,221 +865,265 @@ export default function ExperimentsPage() {
         </TabsContent>
       </Tabs>
 
-      {/* ============================================ */}
-      {/* MODAL: CONFIG EDITOR */}
-      {/* ============================================ */}
-      <Dialog open={showConfigModal} onOpenChange={setShowConfigModal}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+      {/* MODAL: Nouveau dossier */}
+      <Dialog open={showNewFolderModal} onOpenChange={setShowNewFolderModal}>
+        <DialogContent>
           <DialogHeader>
-            <DialogTitle>
-              {configModalLevel === 'universal' && '🌍 Configuration Universelle'}
-              {configModalLevel === 'type' && `📦 Configuration ${selectedConfigType?.name || 'Type'}`}
-              {configModalLevel === 'model' && `🎯 Configuration ${selectedConfigModel?.name || 'Nouveau modèle'}`}
-            </DialogTitle>
+            <DialogTitle>Nouveau dossier</DialogTitle>
+            <DialogDescription>Créez un dossier vide pour y classer des photos</DialogDescription>
           </DialogHeader>
-          
-          <ConfigEditor
-            level={configModalLevel}
-            universal={configs.universal}
-            type={selectedConfigType}
-            model={selectedConfigModel}
-            types={configs.types}
-            onSave={async () => {
-              await loadData()
-              setShowConfigModal(false)
-            }}
-            onCancel={() => setShowConfigModal(false)}
-          />
-        </DialogContent>
-      </Dialog>
-    </div>
-  )
-}
-
-// ============================================
-// COMPOSANT: FOLDER DETAIL (avec chargement photos)
-// ============================================
-
-function FolderDetail({ 
-  folderId,
-  folders,
-  onBack, 
-  onDeletePhoto, 
-  onMovePhoto,
-  onDeleteFolder,
-  onUpdateFolder,
-  onRunTest,
-  onPromote,
-  onRefresh
-}: {
-  folderId: string
-  folders: Folder[]
-  onBack: () => void
-  onDeletePhoto: (id: string) => void
-  onMovePhoto: (photoId: string, targetFolderId: string) => void
-  onDeleteFolder: (id: string) => void
-  onUpdateFolder: (folderId: string, updates: { name?: string; detected_type?: string }) => void
-  onRunTest: (folderId: string) => void
-  onPromote: (folderId: string) => void
-  onRefresh: () => void
-}) {
-  const [loading, setLoading] = useState(true)
-  const [folder, setFolder] = useState<Folder | null>(null)
-  const [photos, setPhotos] = useState<Photo[]>([])
-  const [editingName, setEditingName] = useState(false)
-  const [editedName, setEditedName] = useState('')
-  const [editedType, setEditedType] = useState('')
-
-  // Charger le dossier et ses photos
-  useEffect(() => {
-    const loadFolder = async () => {
-      setLoading(true)
-      try {
-        const res = await fetch(`/api/labs/experiments/folders?id=${folderId}`)
-        const data = await res.json()
-        if (data.folder) {
-          setFolder(data.folder)
-          setPhotos(data.folder.experiment_photos || [])
-          setEditedName(data.folder.name)
-          setEditedType(data.folder.detected_type)
-        }
-      } catch (error) {
-        console.error('Error loading folder:', error)
-      } finally {
-        setLoading(false)
-      }
-    }
-    loadFolder()
-  }, [folderId])
-
-  const handleSaveName = async () => {
-    if (!folder) return
-    await onUpdateFolder(folder.id, { name: editedName, detected_type: editedType })
-    setFolder({ ...folder, name: editedName, detected_type: editedType })
-    setEditingName(false)
-    onRefresh()
-  }
-
-  const handleDeletePhotoAndRefresh = async (photoId: string) => {
-    await onDeletePhoto(photoId)
-    setPhotos(photos.filter(p => p.id !== photoId))
-  }
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-8 w-8 animate-spin text-teal-600" />
-      </div>
-    )
-  }
-
-  if (!folder) {
-    return <div>Dossier non trouvé</div>
-  }
-
-  return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" onClick={onBack}>
-            ← Retour
-          </Button>
-          
-          {editingName ? (
-            <div className="flex items-center gap-3">
-              <Select value={editedType} onValueChange={setEditedType}>
-                <SelectTrigger className="w-32">
+          <div className="space-y-4">
+            <div>
+              <label className="text-sm font-medium mb-2 block">Nom du dossier</label>
+              <Input 
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                placeholder="Ex: ITRON G4"
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium mb-2 block">Type de compteur</label>
+              <Select value={newFolderType} onValueChange={setNewFolderType}>
+                <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="gas">🔥 Gaz</SelectItem>
                   <SelectItem value="water">💧 Eau</SelectItem>
                   <SelectItem value="electricity">⚡ Électricité</SelectItem>
-                  <SelectItem value="unknown">❓ Inconnu</SelectItem>
+                  <SelectItem value="unknown">❓ Non défini</SelectItem>
                 </SelectContent>
               </Select>
-              <Input 
-                value={editedName}
-                onChange={(e) => setEditedName(e.target.value)}
-                className="w-64"
-              />
-              <Button size="sm" onClick={handleSaveName}>
-                <Check className="h-4 w-4" />
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => setEditingName(false)}>
-                <XCircle className="h-4 w-4" />
-              </Button>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowNewFolderModal(false)}>Annuler</Button>
+            <Button onClick={handleCreateFolder} disabled={!newFolderName.trim()}>Créer</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL: Config Editor */}
+      <Dialog open={showConfigModal} onOpenChange={setShowConfigModal}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              {configModalLevel === 'universal' && '🌍 Configuration Universelle'}
+              {configModalLevel === 'type' && `📦 ${selectedConfigType?.name}`}
+              {configModalLevel === 'model' && `🎯 ${selectedConfigModel?.name || 'Nouveau modèle'}`}
+            </DialogTitle>
+          </DialogHeader>
+          <ConfigEditor
+            level={configModalLevel}
+            universal={configs.universal}
+            type={selectedConfigType}
+            model={selectedConfigModel}
+            types={configs.types}
+            onSave={async () => { await loadData(); setShowConfigModal(false) }}
+            onCancel={() => setShowConfigModal(false)}
+          />
+        </DialogContent>
+      </Dialog>
+
+      {/* ALERT: Suppression */}
+      <AlertDialog open={!!deleteAlert} onOpenChange={(open) => !open && setDeleteAlert(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirmer la suppression</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteAlert?.type === 'photo' 
+                ? 'Cette photo sera définitivement supprimée.'
+                : `Le dossier "${deleteAlert?.name}" et toutes ses photos seront définitivement supprimés.`
+              }
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Annuler</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 hover:bg-red-700"
+              onClick={() => {
+                if (deleteAlert?.type === 'photo') {
+                  handleDeletePhoto(deleteAlert.id)
+                } else if (deleteAlert?.type === 'folder') {
+                  handleDeleteFolder(deleteAlert.id)
+                }
+              }}
+            >
+              Supprimer
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  )
+}
+
+// ============================================
+// COMPOSANT: FOLDER DETAIL
+// ============================================
+
+function FolderDetail({ 
+  folderId,
+  folders,
+  onBack, 
+  onDelete,
+  onUpdateFolder,
+  onMovePhotos,
+  onDeletePhoto,
+  onRunTest,
+  onPromote
+}: {
+  folderId: string
+  folders: Folder[]
+  onBack: () => void
+  onDelete: (id: string, name: string) => void
+  onUpdateFolder: (id: string, updates: { name?: string; detected_type?: string }) => void
+  onMovePhotos: (photoIds: string[], folderId: string) => void
+  onDeletePhoto: (id: string) => void
+  onRunTest: (id: string) => void
+  onPromote: (id: string) => void
+}) {
+  const [loading, setLoading] = useState(true)
+  const [folder, setFolder] = useState<Folder | null>(null)
+  const [photos, setPhotos] = useState<Photo[]>([])
+  const [editing, setEditing] = useState(false)
+  const [editName, setEditName] = useState('')
+  const [editType, setEditType] = useState('')
+
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true)
+      const res = await fetch(`/api/labs/experiments/folders?id=${folderId}`)
+      const data = await res.json()
+      if (data.folder) {
+        setFolder(data.folder)
+        setPhotos(data.folder.experiment_photos || [])
+        setEditName(data.folder.name)
+        setEditType(data.folder.detected_type)
+      }
+      setLoading(false)
+    }
+    load()
+  }, [folderId])
+
+  const handleSave = async () => {
+    if (!folder) return
+    await onUpdateFolder(folder.id, { name: editName, detected_type: editType })
+    setFolder({ ...folder, name: editName, detected_type: editType })
+    setEditing(false)
+  }
+
+  const handleMovePhoto = async (photoId: string, targetFolderId: string) => {
+    await onMovePhotos([photoId], targetFolderId)
+    setPhotos(photos.filter(p => p.id !== photoId))
+  }
+
+  if (loading) {
+    return <div className="flex justify-center py-12"><Loader2 className="h-8 w-8 animate-spin" /></div>
+  }
+
+  if (!folder) return null
+
+  const isUnclassified = folder.is_unclassified
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" onClick={onBack}>← Retour</Button>
+          
+          {editing && !isUnclassified ? (
+            <div className="flex items-center gap-2">
+              <Select value={editType} onValueChange={setEditType}>
+                <SelectTrigger className="w-28">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="gas">🔥 Gaz</SelectItem>
+                  <SelectItem value="water">💧 Eau</SelectItem>
+                  <SelectItem value="electricity">⚡ Élec</SelectItem>
+                  <SelectItem value="unknown">❓</SelectItem>
+                </SelectContent>
+              </Select>
+              <Input value={editName} onChange={(e) => setEditName(e.target.value)} className="w-64" />
+              <Button size="sm" onClick={handleSave}><Check className="h-4 w-4" /></Button>
+              <Button size="sm" variant="outline" onClick={() => setEditing(false)}><XCircle className="h-4 w-4" /></Button>
             </div>
           ) : (
             <div className="flex items-center gap-3">
-              {TYPE_ICONS[folder.detected_type]}
+              {isUnclassified 
+                ? <AlertTriangle className="h-5 w-5 text-orange-500" />
+                : TYPE_ICONS[folder.detected_type]
+              }
               <div>
                 <h2 className="text-xl font-bold">{folder.name}</h2>
-                <p className="text-sm text-muted-foreground">
-                  {folder.photo_count} photo{folder.photo_count > 1 ? 's' : ''}
-                </p>
+                <p className="text-sm text-muted-foreground">{photos.length} photo(s)</p>
               </div>
-              <Button 
-                variant="ghost" 
-                size="sm"
-                onClick={() => setEditingName(true)}
-              >
-                <Pencil className="h-4 w-4" />
-              </Button>
+              {!isUnclassified && (
+                <Button variant="ghost" size="sm" onClick={() => setEditing(true)}>
+                  <Pencil className="h-4 w-4" />
+                </Button>
+              )}
+              <Badge className={isUnclassified ? 'bg-orange-100 text-orange-700' : STATUS_COLORS[folder.status]}>
+                {isUnclassified ? 'Pot commun' : STATUS_LABELS[folder.status]}
+              </Badge>
             </div>
           )}
-          
-          <Badge className={STATUS_COLORS[folder.status]}>
-            {STATUS_LABELS[folder.status]}
-          </Badge>
         </div>
         
         <div className="flex items-center gap-2">
-          {folder.status === 'ready' && (
+          {!isUnclassified && folder.status === 'ready' && (
             <Button onClick={() => onRunTest(folder.id)}>
               <Play className="h-4 w-4 mr-2" />
               Lancer test
             </Button>
           )}
-          {folder.status === 'validated' && (
+          {!isUnclassified && folder.status === 'validated' && (
             <Button onClick={() => onPromote(folder.id)} className="bg-teal-600 hover:bg-teal-700">
               <ArrowRight className="h-4 w-4 mr-2" />
               Promouvoir
             </Button>
           )}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon">
-                <MoreVertical className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem 
-                onClick={() => onDeleteFolder(folder.id)}
-                className="text-red-600"
-              >
-                <Trash2 className="h-4 w-4 mr-2" />
-                Supprimer le dossier
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          {!isUnclassified && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="icon"><MoreVertical className="h-4 w-4" /></Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent>
+                <DropdownMenuItem className="text-red-600" onClick={() => onDelete(folder.id, folder.name)}>
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Supprimer
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
       </div>
 
-      {/* Progress si draft */}
-      {folder.status === 'draft' && (
+      {/* Progress si draft - PAS pour Non classé */}
+      {!isUnclassified && folder.status === 'draft' && photos.length < 5 && (
         <Card className="p-4 bg-orange-50 border-orange-200">
           <div className="flex items-center gap-4">
             <AlertTriangle className="h-5 w-5 text-orange-600" />
             <div className="flex-1">
-              <p className="font-medium text-orange-800">
-                {folder.min_photos_required - photos.length} photo(s) manquante(s)
+              <p className="font-medium text-orange-800">{5 - photos.length} photo(s) manquante(s)</p>
+              <Progress value={(photos.length / 5) * 100} className="h-2 mt-2" />
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* Info pour Non classé */}
+      {isUnclassified && (
+        <Card className="p-4 bg-orange-50 border-orange-200">
+          <div className="flex items-center gap-4">
+            <AlertTriangle className="h-5 w-5 text-orange-600" />
+            <div>
+              <p className="font-medium text-orange-800">Photos à classer</p>
+              <p className="text-sm text-orange-600">
+                Déplacez ces photos vers les dossiers appropriés en utilisant le bouton de déplacement sur chaque photo.
               </p>
-              <Progress 
-                value={(photos.length / folder.min_photos_required) * 100} 
-                className="h-2 mt-2"
-              />
             </div>
           </div>
         </Card>
@@ -1185,6 +1134,7 @@ function FolderDetail({
         <h3 className="font-semibold mb-3">Photos ({photos.length})</h3>
         {photos.length === 0 ? (
           <Card className="p-8 text-center">
+            <Image className="h-12 w-12 mx-auto mb-4 text-gray-300" />
             <p className="text-muted-foreground">Aucune photo dans ce dossier</p>
           </Card>
         ) : (
@@ -1193,7 +1143,7 @@ function FolderDetail({
               <div key={photo.id} className="relative group">
                 <div className="aspect-square bg-gray-100 rounded-lg overflow-hidden">
                   <img 
-                    src={photo.thumbnail_url || photo.image_url} 
+                    src={photo.thumbnail_url || photo.image_url}
                     alt={photo.original_filename || 'Photo'}
                     className="w-full h-full object-cover"
                   />
@@ -1209,34 +1159,23 @@ function FolderDetail({
                     </DropdownMenuTrigger>
                     <DropdownMenuContent>
                       {folders.filter(f => f.id !== folder.id).map(f => (
-                        <DropdownMenuItem 
-                          key={f.id}
-                          onClick={() => onMovePhoto(photo.id, f.id)}
-                        >
-                          Vers {f.name}
+                        <DropdownMenuItem key={f.id} onClick={() => handleMovePhoto(photo.id, f.id)}>
+                          {TYPE_ICONS[f.detected_type]}
+                          <span className="ml-2">{f.name}</span>
                         </DropdownMenuItem>
                       ))}
                     </DropdownMenuContent>
                   </DropdownMenu>
-                  <Button 
-                    size="sm" 
-                    variant="destructive"
-                    onClick={() => handleDeletePhotoAndRefresh(photo.id)}
-                  >
+                  <Button size="sm" variant="destructive" onClick={() => onDeletePhoto(photo.id)}>
                     <Trash2 className="h-4 w-4" />
                   </Button>
                 </div>
 
-                {/* Badge status */}
-                {photo.status !== 'pending' && (
-                  <Badge 
-                    className="absolute top-2 right-2 text-xs"
-                    variant={photo.status === 'validated' ? 'default' : 'secondary'}
-                  >
-                    {photo.status === 'tested' && 'Testé'}
-                    {photo.status === 'validated' && '✓'}
-                    {photo.status === 'reference' && '⭐'}
-                  </Badge>
+                {/* Badge confidence */}
+                {photo.ai_confidence !== null && (
+                  <div className="absolute bottom-1 right-1 bg-black/60 text-white text-xs px-1 rounded">
+                    {photo.ai_confidence}%
+                  </div>
                 )}
               </div>
             ))}
@@ -1294,27 +1233,16 @@ function TestDetail({
   }
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-8 w-8 animate-spin text-teal-600" />
-      </div>
-    )
+    return <div className="flex justify-center py-12"><Loader2 className="h-8 w-8 animate-spin" /></div>
   }
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" onClick={onBack}>
-            ← Retour
-          </Button>
-          <div>
-            <h2 className="text-xl font-bold">{test.name}</h2>
-            <p className="text-sm text-muted-foreground">
-              {test.total_photos} photos testées
-            </p>
-          </div>
+      <div className="flex items-center gap-4">
+        <Button variant="ghost" onClick={onBack}>← Retour</Button>
+        <div>
+          <h2 className="text-xl font-bold">{test.name}</h2>
+          <p className="text-sm text-muted-foreground">{test.total_photos} photos testées</p>
         </div>
       </div>
 
@@ -1367,28 +1295,14 @@ function TestDetail({
                       {(result.confidence_score * 100).toFixed(0)}%
                     </Badge>
                   </div>
-                  
-                  {result.expected_result && (
-                    <p className="text-sm text-muted-foreground">
-                      Attendu: {(result.expected_result as { reading?: string })?.reading}
-                    </p>
-                  )}
                 </div>
 
                 {result.is_correct === null && (
                   <div className="flex gap-2">
-                    <Button 
-                      size="sm" 
-                      variant="outline"
-                      onClick={() => handleMarkCorrect(result.id, true)}
-                    >
+                    <Button size="sm" variant="outline" onClick={() => handleMarkCorrect(result.id, true)}>
                       <Check className="h-4 w-4 text-green-600" />
                     </Button>
-                    <Button 
-                      size="sm" 
-                      variant="outline"
-                      onClick={() => handleMarkCorrect(result.id, false)}
-                    >
+                    <Button size="sm" variant="outline" onClick={() => handleMarkCorrect(result.id, false)}>
                       <XCircle className="h-4 w-4 text-red-600" />
                     </Button>
                   </div>
