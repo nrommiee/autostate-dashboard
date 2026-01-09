@@ -476,7 +476,7 @@ export async function PATCH(request: NextRequest) {
       .select('folder_id')
       .in('id', photo_ids)
     
-    const sourceFolderIds = [...new Set(photos?.map(p => p.folder_id).filter(Boolean) || [])]
+    const sourceFolderIds = Array.from(new Set(photos?.map(p => p.folder_id).filter(Boolean) || []))
 
     const updates: Record<string, unknown> = {}
     
@@ -537,7 +537,7 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'Photos not found' }, { status: 404, headers: corsHeaders })
     }
 
-    const folderIds = [...new Set(photos.map(p => p.folder_id).filter(Boolean))]
+    const folderIds = Array.from(new Set(photos.map(p => p.folder_id).filter(Boolean)))
 
     // Supprimer de la DB
     const { error } = await supabase
