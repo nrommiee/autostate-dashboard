@@ -40,7 +40,7 @@ interface Folder {
 interface Photo {
   id: string; folder_id: string; image_url: string; thumbnail_url: string | null
   original_filename: string | null; detected_type: string; ai_confidence: number | null; status: string
-  created_at?: string
+  created_at?: string; detected_brand?: string | null
 }
 interface ConfigUniversal { id: string; name: string; base_prompt: string; min_confidence: number; version: number }
 interface ConfigType { id: string; meter_type: string; name: string; additional_prompt: string | null; typical_unit: string }
@@ -597,14 +597,14 @@ function UnclassifiedSortingCenter({ folder, folders, onBack, onDeletePhotos, on
   const [photos, setPhotos] = useState<Photo[]>([])
   const [filterType, setFilterType] = useState<string | null>(null)
   const [filterBrand, setFilterBrand] = useState<string | null>(null)
-  const [dragOverType, setDragOverType] = useState<string | null>(null)
-  const [dragOverBrand, setDragOverBrand] = useState<string | null>(null)
+  const [selectionMode, setSelectionMode] = useState(false)
+  const [selectedPhotos, setSelectedPhotos] = useState<Set<string>>(new Set())
   const [dragOverFolder, setDragOverFolder] = useState<string | null>(null)
-  const [draggedPhotoId, setDraggedPhotoId] = useState<string | null>(null)
   const [showNewFolderModal, setShowNewFolderModal] = useState(false)
   const [newFolderName, setNewFolderName] = useState('')
   const [newFolderType, setNewFolderType] = useState('unknown')
-  const [pendingPhotoId, setPendingPhotoId] = useState<string | null>(null)
+  const [pendingPhotoIds, setPendingPhotoIds] = useState<string[]>([])
+  const [updating, setUpdating] = useState(false)
 
   // Charger les photos au montage
   useEffect(() => {
@@ -619,7 +619,7 @@ function UnclassifiedSortingCenter({ folder, folders, onBack, onDeletePhotos, on
 
   // Extraire marques depuis les dossiers existants
   const extractBrand = (name: string) => name.split(' ')[0].toUpperCase()
-  const brands = Array.from(new Set(
+  const knownBrands = Array.from(new Set(
     folders.filter(f => !f.is_unclassified && f.name.includes(' '))
            .map(f => extractBrand(f.name))
   )).sort()
@@ -627,69 +627,142 @@ function UnclassifiedSortingCenter({ folder, folders, onBack, onDeletePhotos, on
   // Dossiers réguliers (hors non classé)
   const regularFolders = folders.filter(f => !f.is_unclassified)
 
+  // Compteurs par type
+  const typeStats = {
+    gas: photos.filter(p => p.detected_type === 'gas').length,
+    water: photos.filter(p => p.detected_type === 'water').length,
+    electricity: photos.filter(p => p.detected_type === 'electricity').length,
+    unknown: photos.filter(p => !p.detected_type || p.detected_type === 'unknown').length,
+  }
+
+  // Compteurs par marque (depuis les photos)
+  const brandStats: Record<string, number> = {}
+  photos.forEach(p => {
+    const brand = p.detected_brand || '?'
+    brandStats[brand] = (brandStats[brand] || 0) + 1
+  })
+  const photoBrands = Object.keys(brandStats).sort((a, b) => a === '?' ? 1 : b === '?' ? -1 : a.localeCompare(b))
+
   // Filtrer les photos
   const filteredPhotos = photos.filter(p => {
     if (filterType && p.detected_type !== filterType) return false
+    if (filterBrand) {
+      if (filterBrand === '?' && p.detected_brand) return false
+      if (filterBrand !== '?' && p.detected_brand !== filterBrand) return false
+    }
     return true
   })
 
   // Filtrer les dossiers cibles selon les filtres actifs
   const targetFolders = regularFolders.filter(f => {
     if (filterType && f.detected_type !== filterType) return false
-    if (filterBrand && !f.name.toUpperCase().startsWith(filterBrand)) return false
+    if (filterBrand && filterBrand !== '?' && !f.name.toUpperCase().startsWith(filterBrand)) return false
     return true
   })
 
-  // Handlers drag & drop
-  const handleDragStart = (e: React.DragEvent, photoId: string) => {
-    setDraggedPhotoId(photoId)
-    e.dataTransfer.setData('text/plain', photoId)
-    e.dataTransfer.effectAllowed = 'move'
+  // Handlers sélection
+  const toggleSelect = (id: string) => {
+    setSelectedPhotos(prev => {
+      const n = new Set(prev)
+      n.has(id) ? n.delete(id) : n.add(id)
+      return n
+    })
+  }
+  const selectAll = () => {
+    if (selectedPhotos.size === filteredPhotos.length) {
+      setSelectedPhotos(new Set())
+    } else {
+      setSelectedPhotos(new Set(filteredPhotos.map(p => p.id)))
+    }
+  }
+  const cancelSelection = () => {
+    setSelectedPhotos(new Set())
+    setSelectionMode(false)
   }
 
-  const handleDragEnd = () => {
-    setDraggedPhotoId(null)
-    setDragOverType(null)
-    setDragOverBrand(null)
+  // Handler mise à jour type/marque
+  const handleUpdatePhotos = async (updates: { detected_type?: string; detected_brand?: string }) => {
+    if (selectedPhotos.size === 0) return
+    setUpdating(true)
+    const ids = Array.from(selectedPhotos)
+    await fetch('/api/labs/experiments/photos', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ photo_ids: ids, ...updates })
+    })
+    // Mettre à jour localement
+    setPhotos(photos.map(p => ids.includes(p.id) ? { ...p, ...updates } : p))
+    setUpdating(false)
+  }
+
+  // Handler suppression
+  const handleDeleteSelected = async () => {
+    if (selectedPhotos.size === 0) return
+    setUpdating(true)
+    const ids = Array.from(selectedPhotos)
+    await onDeletePhotos(ids)
+    setPhotos(photos.filter(p => !ids.includes(p.id)))
+    setSelectedPhotos(new Set())
+    setSelectionMode(false)
+    setUpdating(false)
+  }
+
+  // Handler déplacement vers dossier
+  const handleMoveToFolder = async (folderId: string) => {
+    const ids = Array.from(selectedPhotos)
+    if (ids.length === 0) return
+    setUpdating(true)
+    await onMovePhotos(ids, folderId)
+    setPhotos(photos.filter(p => !ids.includes(p.id)))
+    setSelectedPhotos(new Set())
+    setSelectionMode(false)
     setDragOverFolder(null)
-  }
-
-  const handleDropOnType = (type: string) => {
-    setFilterType(type)
-    setDragOverType(null)
-  }
-
-  const handleDropOnBrand = (brand: string) => {
-    setFilterBrand(brand)
-    setDragOverBrand(null)
-  }
-
-  const handleDropOnFolder = async (folderId: string, photoId: string) => {
-    await onMovePhotos([photoId], folderId)
-    setPhotos(photos.filter(p => p.id !== photoId))
-    setDragOverFolder(null)
+    setUpdating(false)
     onRefresh()
   }
 
-  const handleDropOnNewFolder = (photoId: string) => {
-    setPendingPhotoId(photoId)
-    // Pré-remplir avec les filtres actifs
+  // Handler drag & drop
+  const handleDragStart = (e: React.DragEvent) => {
+    const ids = Array.from(selectedPhotos)
+    e.dataTransfer.setData('text/plain', ids.join(','))
+    e.dataTransfer.effectAllowed = 'move'
+  }
+
+  const handleDropOnFolder = async (folderId: string, data: string) => {
+    const ids = data.split(',').filter(Boolean)
+    if (ids.length === 0) return
+    setUpdating(true)
+    await onMovePhotos(ids, folderId)
+    setPhotos(photos.filter(p => !ids.includes(p.id)))
+    setSelectedPhotos(new Set())
+    setDragOverFolder(null)
+    setUpdating(false)
+    onRefresh()
+  }
+
+  const handleDropOnNewFolder = (data: string) => {
+    const ids = data.split(',').filter(Boolean)
+    if (ids.length === 0) return
+    setPendingPhotoIds(ids)
     setNewFolderType(filterType || 'unknown')
-    setNewFolderName(filterBrand ? `${filterBrand} ` : '')
+    setNewFolderName(filterBrand && filterBrand !== '?' ? `${filterBrand} ` : '')
     setShowNewFolderModal(true)
     setDragOverFolder(null)
   }
 
   const handleCreateFolder = async () => {
     if (!newFolderName.trim()) return
+    setUpdating(true)
     const newFolderId = await onCreateFolder(newFolderName.trim(), newFolderType)
-    if (newFolderId && pendingPhotoId) {
-      await onMovePhotos([pendingPhotoId], newFolderId)
-      setPhotos(photos.filter(p => p.id !== pendingPhotoId))
+    if (newFolderId && pendingPhotoIds.length > 0) {
+      await onMovePhotos(pendingPhotoIds, newFolderId)
+      setPhotos(photos.filter(p => !pendingPhotoIds.includes(p.id)))
     }
     setShowNewFolderModal(false)
     setNewFolderName('')
-    setPendingPhotoId(null)
+    setPendingPhotoIds([])
+    setSelectedPhotos(new Set())
+    setUpdating(false)
     onRefresh()
   }
 
@@ -726,7 +799,7 @@ function UnclassifiedSortingCenter({ folder, folders, onBack, onDeletePhotos, on
           <AlertTriangle className="h-5 w-5 text-orange-600" />
           <div>
             <p className="font-medium text-orange-800">Photos à classer</p>
-            <p className="text-sm text-orange-600">Glissez une photo sur un filtre (type/marque) pour affiner, puis sur un dossier pour la classer.</p>
+            <p className="text-sm text-orange-600">Sélectionnez des photos, assignez type/marque, puis glissez vers un dossier cible.</p>
           </div>
         </div>
       </Card>
@@ -737,27 +810,26 @@ function UnclassifiedSortingCenter({ folder, folders, onBack, onDeletePhotos, on
           {/* Types */}
           <div>
             <p className="text-sm font-medium text-muted-foreground mb-2">TYPE</p>
-            <div className="space-y-2">
+            <div className="space-y-1">
               {[
-                { key: 'gas', label: 'Gaz', icon: <Flame className="h-4 w-4 text-orange-500" /> },
-                { key: 'water', label: 'Eau', icon: <Droplets className="h-4 w-4 text-blue-500" /> },
-                { key: 'electricity', label: 'Électricité', icon: <Bolt className="h-4 w-4 text-yellow-500" /> },
-              ].map(t => (
+                { key: 'gas', label: 'Gaz', icon: <Flame className="h-4 w-4 text-orange-500" />, count: typeStats.gas },
+                { key: 'water', label: 'Eau', icon: <Droplets className="h-4 w-4 text-blue-500" />, count: typeStats.water },
+                { key: 'electricity', label: 'Électricité', icon: <Bolt className="h-4 w-4 text-yellow-500" />, count: typeStats.electricity },
+                { key: 'unknown', label: 'Inconnu', icon: <AlertTriangle className="h-4 w-4 text-gray-400" />, count: typeStats.unknown },
+              ].filter(t => t.count > 0).map(t => (
                 <div
                   key={t.key}
-                  className={`p-3 rounded-lg border-2 border-dashed transition-all cursor-pointer ${
-                    dragOverType === t.key ? 'border-teal-500 bg-teal-50' :
-                    filterType === t.key ? 'border-teal-500 bg-teal-50 border-solid' :
-                    'border-gray-200 hover:border-gray-300'
+                  className={`p-2 rounded-lg cursor-pointer transition-all ${
+                    filterType === t.key ? 'bg-teal-100 border border-teal-500' : 'hover:bg-gray-100'
                   }`}
-                  onDragOver={(e) => { e.preventDefault(); setDragOverType(t.key) }}
-                  onDragLeave={() => setDragOverType(null)}
-                  onDrop={(e) => { e.preventDefault(); handleDropOnType(t.key) }}
                   onClick={() => setFilterType(filterType === t.key ? null : t.key)}
                 >
-                  <div className="flex items-center gap-2">
-                    {t.icon}
-                    <span className="text-sm font-medium">{t.label}</span>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      {t.icon}
+                      <span className="text-sm">{t.label}</span>
+                    </div>
+                    <span className="text-xs text-muted-foreground">({t.count})</span>
                   </div>
                 </div>
               ))}
@@ -765,59 +837,101 @@ function UnclassifiedSortingCenter({ folder, folders, onBack, onDeletePhotos, on
           </div>
 
           {/* Marques */}
-          {brands.length > 0 && (
-            <div>
-              <p className="text-sm font-medium text-muted-foreground mb-2">MARQUE</p>
-              <div className="space-y-2 max-h-64 overflow-y-auto">
-                {brands.map(brand => (
-                  <div
-                    key={brand}
-                    className={`p-3 rounded-lg border-2 border-dashed transition-all cursor-pointer ${
-                      dragOverBrand === brand ? 'border-teal-500 bg-teal-50' :
-                      filterBrand === brand ? 'border-teal-500 bg-teal-50 border-solid' :
-                      'border-gray-200 hover:border-gray-300'
-                    }`}
-                    onDragOver={(e) => { e.preventDefault(); setDragOverBrand(brand) }}
-                    onDragLeave={() => setDragOverBrand(null)}
-                    onDrop={(e) => { e.preventDefault(); handleDropOnBrand(brand) }}
-                    onClick={() => setFilterBrand(filterBrand === brand ? null : brand)}
-                  >
-                    <span className="text-sm font-medium">{brand}</span>
+          <div>
+            <p className="text-sm font-medium text-muted-foreground mb-2">MARQUE</p>
+            <div className="space-y-1 max-h-48 overflow-y-auto">
+              {photoBrands.map(brand => (
+                <div
+                  key={brand}
+                  className={`p-2 rounded-lg cursor-pointer transition-all ${
+                    filterBrand === brand ? 'bg-teal-100 border border-teal-500' : 'hover:bg-gray-100'
+                  }`}
+                  onClick={() => setFilterBrand(filterBrand === brand ? null : brand)}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm">{brand === '?' ? 'Non assigné' : brand}</span>
+                    <span className="text-xs text-muted-foreground">({brandStats[brand]})</span>
                   </div>
-                ))}
-              </div>
+                </div>
+              ))}
             </div>
-          )}
+          </div>
         </div>
 
         {/* Zone principale */}
-        <div className="flex-1 space-y-6">
-          {/* Filtres actifs */}
-          {hasFilters && (
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-sm text-muted-foreground">Filtres actifs:</span>
-              {filterType && (
-                <Badge variant="secondary" className="gap-1">
-                  {TYPE_ICONS[filterType]}
-                  {filterType === 'gas' ? 'Gaz' : filterType === 'water' ? 'Eau' : 'Électricité'}
-                  <X className="h-3 w-3 cursor-pointer ml-1" onClick={() => setFilterType(null)} />
-                </Badge>
+        <div className="flex-1 space-y-4">
+          {/* Toolbar */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              {hasFilters && (
+                <>
+                  <span className="text-sm text-muted-foreground">Filtres:</span>
+                  {filterType && (
+                    <Badge variant="secondary" className="gap-1">
+                      {TYPE_ICONS[filterType]}
+                      {filterType === 'gas' ? 'Gaz' : filterType === 'water' ? 'Eau' : filterType === 'electricity' ? 'Électricité' : 'Inconnu'}
+                      <X className="h-3 w-3 cursor-pointer ml-1" onClick={() => setFilterType(null)} />
+                    </Badge>
+                  )}
+                  {filterBrand && (
+                    <Badge variant="secondary" className="gap-1">
+                      {filterBrand === '?' ? 'Non assigné' : filterBrand}
+                      <X className="h-3 w-3 cursor-pointer ml-1" onClick={() => setFilterBrand(null)} />
+                    </Badge>
+                  )}
+                  <Button variant="ghost" size="sm" onClick={clearFilters} className="text-red-600 h-7">
+                    <X className="h-3 w-3 mr-1" />Réinitialiser
+                  </Button>
+                </>
               )}
-              {filterBrand && (
-                <Badge variant="secondary" className="gap-1">
-                  {filterBrand}
-                  <X className="h-3 w-3 cursor-pointer ml-1" onClick={() => setFilterBrand(null)} />
-                </Badge>
-              )}
-              <Button variant="ghost" size="sm" onClick={clearFilters} className="text-red-600">
-                <X className="h-4 w-4 mr-1" />Réinitialiser
-              </Button>
             </div>
+            <div>
+              {selectionMode ? (
+                <Button variant="outline" size="sm" onClick={cancelSelection}>Annuler</Button>
+              ) : (
+                <Button variant="outline" size="sm" onClick={() => setSelectionMode(true)}>Sélectionner</Button>
+              )}
+            </div>
+          </div>
+
+          {/* Barre d'actions (si sélection) */}
+          {selectionMode && selectedPhotos.size > 0 && (
+            <Card className="p-3 bg-teal-50 border-teal-200">
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="text-sm font-medium">{selectedPhotos.size} sélectionnée(s)</span>
+                <div className="w-px h-6 bg-teal-200" />
+                <Select onValueChange={(v) => handleUpdatePhotos({ detected_type: v })} disabled={updating}>
+                  <SelectTrigger className="w-32 h-8"><SelectValue placeholder="Type" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="gas">🔥 Gaz</SelectItem>
+                    <SelectItem value="water">💧 Eau</SelectItem>
+                    <SelectItem value="electricity">⚡ Élec</SelectItem>
+                    <SelectItem value="unknown">❓ Inconnu</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select onValueChange={(v) => handleUpdatePhotos({ detected_brand: v === '__clear__' ? '' : v })} disabled={updating}>
+                  <SelectTrigger className="w-36 h-8"><SelectValue placeholder="Marque" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__clear__">❌ Retirer marque</SelectItem>
+                    {knownBrands.map(b => <SelectItem key={b} value={b}>{b}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Button variant="destructive" size="sm" onClick={handleDeleteSelected} disabled={updating}>
+                  {updating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                </Button>
+                <div className="w-px h-6 bg-teal-200" />
+                <Button variant="outline" size="sm" onClick={selectAll}>
+                  {selectedPhotos.size === filteredPhotos.length ? 'Tout désélect.' : 'Tout sélect.'}
+                </Button>
+              </div>
+            </Card>
           )}
 
           {/* Grille de photos */}
           <div>
-            <p className="text-sm font-medium mb-3">Photos {hasFilters ? `filtrées (${filteredPhotos.length})` : `(${photos.length})`}</p>
+            <p className="text-sm font-medium mb-3">
+              Photos {hasFilters ? `(${filteredPhotos.length} sur ${photos.length})` : `(${photos.length})`}
+            </p>
             {filteredPhotos.length === 0 ? (
               <Card className="p-8 text-center">
                 <Image className="h-12 w-12 mx-auto mb-4 text-gray-300" />
@@ -825,43 +939,50 @@ function UnclassifiedSortingCenter({ folder, folders, onBack, onDeletePhotos, on
               </Card>
             ) : (
               <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-                {filteredPhotos.map(photo => (
-                  <div
-                    key={photo.id}
-                    draggable
-                    onDragStart={(e) => handleDragStart(e, photo.id)}
-                    onDragEnd={handleDragEnd}
-                    className={`relative group cursor-grab active:cursor-grabbing ${draggedPhotoId === photo.id ? 'opacity-50' : ''}`}
-                  >
-                    <div className="aspect-square bg-gray-100 rounded-lg overflow-hidden">
-                      <img src={photo.thumbnail_url || photo.image_url} alt="" className="w-full h-full object-cover" />
-                    </div>
-                    {/* Badge type */}
-                    <div className="absolute top-1 left-1">
-                      <div className="bg-white/90 rounded p-1">
-                        {TYPE_ICONS[photo.detected_type] || TYPE_ICONS.unknown}
+                {filteredPhotos.map(photo => {
+                  const isSelected = selectedPhotos.has(photo.id)
+                  return (
+                    <div
+                      key={photo.id}
+                      draggable={selectionMode && isSelected}
+                      onDragStart={handleDragStart}
+                      className={`relative group cursor-pointer ${isSelected ? 'ring-2 ring-teal-500 rounded-lg' : ''}`}
+                      onClick={() => selectionMode && toggleSelect(photo.id)}
+                    >
+                      <div className="aspect-square bg-gray-100 rounded-lg overflow-hidden">
+                        <img src={photo.thumbnail_url || photo.image_url} alt="" className="w-full h-full object-cover" />
                       </div>
+                      {/* Checkbox si mode sélection */}
+                      {selectionMode && (
+                        <div className="absolute top-1 left-1">
+                          <Checkbox checked={isSelected} className="h-5 w-5 bg-white" />
+                        </div>
+                      )}
+                      {/* Badge type */}
+                      {!selectionMode && (
+                        <div className="absolute top-1 left-1">
+                          <div className="bg-white/90 rounded p-1">
+                            {TYPE_ICONS[photo.detected_type] || TYPE_ICONS.unknown}
+                          </div>
+                        </div>
+                      )}
+                      {/* Badge marque */}
+                      {photo.detected_brand && (
+                        <div className="absolute top-1 right-1">
+                          <div className="bg-white/90 rounded px-1 text-xs font-medium">
+                            {photo.detected_brand}
+                          </div>
+                        </div>
+                      )}
+                      {/* Badge confiance */}
+                      {photo.ai_confidence !== null && (
+                        <div className="absolute bottom-1 right-1 bg-black/60 text-white text-xs px-1 rounded">
+                          {photo.ai_confidence}%
+                        </div>
+                      )}
                     </div>
-                    {/* Badge confiance */}
-                    {photo.ai_confidence !== null && (
-                      <div className="absolute bottom-1 right-1 bg-black/60 text-white text-xs px-1 rounded">
-                        {photo.ai_confidence}%
-                      </div>
-                    )}
-                    {/* Grip icon */}
-                    <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <div className="bg-white/90 rounded p-1">
-                        <GripVertical className="h-4 w-4 text-gray-500" />
-                      </div>
-                    </div>
-                    {/* Delete on hover */}
-                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center">
-                      <Button size="sm" variant="destructive" onClick={() => { onDeletePhotos([photo.id]); setPhotos(photos.filter(p => p.id !== photo.id)) }}>
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             )}
           </div>
@@ -870,17 +991,19 @@ function UnclassifiedSortingCenter({ folder, folders, onBack, onDeletePhotos, on
           <div>
             <p className="text-sm font-medium mb-3">
               Dossiers cibles {hasFilters && targetFolders.length !== regularFolders.length ? `(${targetFolders.length} sur ${regularFolders.length})` : `(${regularFolders.length})`}
+              {selectionMode && selectedPhotos.size > 0 && <span className="text-teal-600 ml-2">← Glissez la sélection ici</span>}
             </p>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
               {targetFolders.map(f => (
                 <div
                   key={f.id}
-                  className={`p-3 rounded-lg border-2 border-dashed transition-all ${
-                    dragOverFolder === f.id ? 'border-teal-500 bg-teal-50' : 'border-gray-200 hover:border-gray-300'
+                  className={`p-3 rounded-lg border-2 transition-all cursor-pointer ${
+                    dragOverFolder === f.id ? 'border-teal-500 bg-teal-50 border-solid' : 'border-dashed border-gray-200 hover:border-gray-300'
                   }`}
                   onDragOver={(e) => { e.preventDefault(); setDragOverFolder(f.id) }}
                   onDragLeave={() => setDragOverFolder(null)}
-                  onDrop={(e) => { e.preventDefault(); const pid = e.dataTransfer.getData('text/plain'); if (pid) handleDropOnFolder(f.id, pid) }}
+                  onDrop={(e) => { e.preventDefault(); handleDropOnFolder(f.id, e.dataTransfer.getData('text/plain')) }}
+                  onClick={() => selectionMode && selectedPhotos.size > 0 && handleMoveToFolder(f.id)}
                 >
                   <div className="flex items-center gap-2">
                     <div className="w-8 h-8 bg-gray-100 rounded flex items-center justify-center flex-shrink-0">
@@ -895,12 +1018,20 @@ function UnclassifiedSortingCenter({ folder, folders, onBack, onDeletePhotos, on
               ))}
               {/* Nouveau dossier */}
               <div
-                className={`p-3 rounded-lg border-2 border-dashed transition-all ${
-                  dragOverFolder === 'new' ? 'border-teal-500 bg-teal-50' : 'border-gray-300 hover:border-teal-400'
+                className={`p-3 rounded-lg border-2 transition-all cursor-pointer ${
+                  dragOverFolder === 'new' ? 'border-teal-500 bg-teal-50 border-solid' : 'border-dashed border-gray-300 hover:border-teal-400'
                 }`}
                 onDragOver={(e) => { e.preventDefault(); setDragOverFolder('new') }}
                 onDragLeave={() => setDragOverFolder(null)}
-                onDrop={(e) => { e.preventDefault(); const pid = e.dataTransfer.getData('text/plain'); if (pid) handleDropOnNewFolder(pid) }}
+                onDrop={(e) => { e.preventDefault(); handleDropOnNewFolder(e.dataTransfer.getData('text/plain')) }}
+                onClick={() => {
+                  if (selectionMode && selectedPhotos.size > 0) {
+                    setPendingPhotoIds(Array.from(selectedPhotos))
+                    setNewFolderType(filterType || 'unknown')
+                    setNewFolderName(filterBrand && filterBrand !== '?' ? `${filterBrand} ` : '')
+                    setShowNewFolderModal(true)
+                  }
+                }}
               >
                 <div className="flex items-center gap-2 text-teal-600">
                   <div className="w-8 h-8 bg-teal-50 rounded flex items-center justify-center flex-shrink-0">
@@ -919,7 +1050,7 @@ function UnclassifiedSortingCenter({ folder, folders, onBack, onDeletePhotos, on
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Nouveau dossier</DialogTitle>
-            <DialogDescription>Créez un dossier pour cette photo</DialogDescription>
+            <DialogDescription>Créez un dossier pour {pendingPhotoIds.length} photo(s)</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>
@@ -940,8 +1071,11 @@ function UnclassifiedSortingCenter({ folder, folders, onBack, onDeletePhotos, on
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowNewFolderModal(false)}>Annuler</Button>
-            <Button onClick={handleCreateFolder} disabled={!newFolderName.trim()}>Créer et classer</Button>
+            <Button variant="outline" onClick={() => { setShowNewFolderModal(false); setPendingPhotoIds([]) }}>Annuler</Button>
+            <Button onClick={handleCreateFolder} disabled={!newFolderName.trim() || updating}>
+              {updating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              Créer et classer
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
