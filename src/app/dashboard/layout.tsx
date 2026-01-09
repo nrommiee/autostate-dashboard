@@ -31,7 +31,8 @@ import {
   ScanLine,
   Hammer,
   Eye,
-  GitBranch
+  GitBranch,
+  Monitor
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -112,6 +113,11 @@ const navItems: NavItem[] = [
       { title: 'Usage', href: '/dashboard/analytics/usage', icon: <Activity className="h-4 w-4" /> },
       { title: 'Coûts', href: '/dashboard/analytics/cost', icon: <DollarSign className="h-4 w-4" /> },
     ]
+  },
+  {
+    title: 'Monitoring',
+    href: '/dashboard/monitoring',
+    icon: <Monitor className="h-4 w-4" />,
   },
 ]
 
