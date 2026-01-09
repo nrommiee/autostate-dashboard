@@ -32,7 +32,8 @@ import {
   Hammer,
   Eye,
   GitBranch,
-  Monitor
+  Monitor,
+  Beaker
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -103,6 +104,7 @@ const navItems: NavItem[] = [
       { title: 'Vision Objets', href: '/dashboard/labs/objects', icon: <Eye className="h-4 w-4" /> },
       { title: 'Valorisation Dégâts', href: '/dashboard/labs/damages', icon: <Hammer className="h-4 w-4" /> },
       { title: 'Versions', href: '/dashboard/labs/versions', icon: <GitBranch className="h-4 w-4" /> },
+      { title: 'Experiments', href: '/dashboard/labs/experiments', icon: <Beaker className="h-4 w-4" /> },
     ]
   },
   {
