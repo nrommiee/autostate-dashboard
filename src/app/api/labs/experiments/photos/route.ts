@@ -1,3 +1,5 @@
+export const runtime = 'nodejs'
+
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import crypto from 'crypto'
@@ -6,6 +8,18 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
+
+// CORS headers
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+}
+
+// Handle OPTIONS for CORS
+export async function OPTIONS() {
+  return new NextResponse(null, { status: 200, headers: corsHeaders })
+}
 
 // Simple hash function using Node crypto
 function hashBuffer(buffer: ArrayBuffer): string {
@@ -30,7 +44,7 @@ export async function GET(request: NextRequest) {
         .single()
 
       if (error) throw error
-      return NextResponse.json({ photo: data })
+      return NextResponse.json({ photo: data }, { headers: corsHeaders })
     }
 
     let query = supabase
@@ -49,29 +63,42 @@ export async function GET(request: NextRequest) {
 
     if (error) throw error
 
-    return NextResponse.json({ photos: data })
+    return NextResponse.json({ photos: data }, { headers: corsHeaders })
   } catch (error) {
     console.error('Error fetching photos:', error)
-    return NextResponse.json({ error: 'Failed to fetch photos' }, { status: 500 })
+    return NextResponse.json({ error: 'Failed to fetch photos' }, { status: 500, headers: corsHeaders })
   }
 }
 
-// POST - Upload photos (avec clustering automatique)
+// POST - Upload photos
 export async function POST(request: NextRequest) {
+  console.log('POST /api/labs/experiments/photos - Start')
+  
   try {
-    const formData = await request.formData()
+    let formData: FormData
+    try {
+      formData = await request.formData()
+    } catch (e) {
+      console.error('FormData parsing error:', e)
+      return NextResponse.json({ error: 'Invalid form data' }, { status: 400, headers: corsHeaders })
+    }
+
     const files = formData.getAll('files') as File[]
     const folderId = formData.get('folder_id') as string | null
     const autoCluster = formData.get('auto_cluster') !== 'false'
 
+    console.log('Files received:', files.length)
+
     if (!files || files.length === 0) {
-      return NextResponse.json({ error: 'files are required' }, { status: 400 })
+      return NextResponse.json({ error: 'files are required' }, { status: 400, headers: corsHeaders })
     }
 
     const uploadedPhotos = []
     const errors = []
 
     for (const file of files) {
+      console.log('Processing file:', file.name, 'Size:', file.size)
+      
       try {
         // Lire le fichier
         const arrayBuffer = await file.arrayBuffer()
@@ -79,6 +106,7 @@ export async function POST(request: NextRequest) {
         
         // Calculer hash
         const imageHash = hashBuffer(arrayBuffer)
+        console.log('Hash:', imageHash)
 
         // Vérifier si doublon
         const { data: existing } = await supabase
@@ -88,12 +116,18 @@ export async function POST(request: NextRequest) {
           .maybeSingle()
 
         if (existing) {
+          console.log('Duplicate found:', existing.id)
           errors.push({ file: file.name, error: 'Duplicate image', existing_id: existing.id })
           continue
         }
 
+        // Nettoyer le nom de fichier
+        const cleanFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_')
+        const fileName = `experiment-photos/${Date.now()}-${Math.random().toString(36).substring(7)}-${cleanFileName}`
+        
+        console.log('Uploading to storage:', fileName)
+
         // Upload vers Supabase Storage
-        const fileName = `experiment-photos/${Date.now()}-${Math.random().toString(36).substring(7)}-${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`
         const { error: uploadError } = await supabase.storage
           .from('meter-photos')
           .upload(fileName, buffer, {
@@ -107,16 +141,21 @@ export async function POST(request: NextRequest) {
           continue
         }
 
+        console.log('Storage upload success')
+
         // Obtenir l'URL publique
         const { data: urlData } = supabase.storage
           .from('meter-photos')
           .getPublicUrl(fileName)
+
+        console.log('Public URL:', urlData.publicUrl)
 
         // Déterminer le folder_id
         let targetFolderId = folderId
 
         // Si pas de folder_id, créer un nouveau dossier
         if (!targetFolderId && autoCluster) {
+          console.log('Creating new folder...')
           const { data: newFolder, error: folderError } = await supabase
             .from('experiment_folders')
             .insert({
@@ -129,14 +168,16 @@ export async function POST(request: NextRequest) {
           
           if (folderError) {
             console.error('Folder creation error:', folderError)
-            errors.push({ file: file.name, error: 'Failed to create folder' })
+            errors.push({ file: file.name, error: 'Failed to create folder: ' + folderError.message })
             continue
           }
           
           targetFolderId = newFolder.id
+          console.log('New folder created:', targetFolderId)
         }
 
         // Créer l'entrée photo
+        console.log('Inserting photo record...')
         const { data: photo, error: dbError } = await supabase
           .from('experiment_photos')
           .insert({
@@ -156,6 +197,7 @@ export async function POST(request: NextRequest) {
           continue
         }
 
+        console.log('Photo record created:', photo.id)
         uploadedPhotos.push(photo)
       } catch (err) {
         console.error('Upload error for file:', file.name, err)
@@ -163,27 +205,29 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    console.log('Upload complete. Success:', uploadedPhotos.length, 'Errors:', errors.length)
+
     return NextResponse.json({
       uploaded: uploadedPhotos,
       errors,
       total: files.length,
       success_count: uploadedPhotos.length,
       error_count: errors.length
-    })
+    }, { headers: corsHeaders })
   } catch (error) {
     console.error('Error uploading photos:', error)
-    return NextResponse.json({ error: 'Failed to upload photos', details: String(error) }, { status: 500 })
+    return NextResponse.json({ error: 'Failed to upload photos', details: String(error) }, { status: 500, headers: corsHeaders })
   }
 }
 
-// PUT - Mettre à jour une photo (déplacer, changer status, ajouter ground truth)
+// PUT - Mettre à jour une photo
 export async function PUT(request: NextRequest) {
   try {
     const body = await request.json()
     const { id, ...updates } = body
 
     if (!id) {
-      return NextResponse.json({ error: 'id is required' }, { status: 400 })
+      return NextResponse.json({ error: 'id is required' }, { status: 400, headers: corsHeaders })
     }
 
     const allowedFields = ['folder_id', 'status', 'ground_truth']
@@ -204,10 +248,10 @@ export async function PUT(request: NextRequest) {
 
     if (error) throw error
 
-    return NextResponse.json({ photo: data })
+    return NextResponse.json({ photo: data }, { headers: corsHeaders })
   } catch (error) {
     console.error('Error updating photo:', error)
-    return NextResponse.json({ error: 'Failed to update photo' }, { status: 500 })
+    return NextResponse.json({ error: 'Failed to update photo' }, { status: 500, headers: corsHeaders })
   }
 }
 
@@ -218,11 +262,11 @@ export async function PATCH(request: NextRequest) {
     const { photo_ids, target_folder_id } = body
 
     if (!photo_ids || !Array.isArray(photo_ids) || photo_ids.length === 0) {
-      return NextResponse.json({ error: 'photo_ids array is required' }, { status: 400 })
+      return NextResponse.json({ error: 'photo_ids array is required' }, { status: 400, headers: corsHeaders })
     }
 
     if (!target_folder_id) {
-      return NextResponse.json({ error: 'target_folder_id is required' }, { status: 400 })
+      return NextResponse.json({ error: 'target_folder_id is required' }, { status: 400, headers: corsHeaders })
     }
 
     const { data, error } = await supabase
@@ -233,10 +277,10 @@ export async function PATCH(request: NextRequest) {
 
     if (error) throw error
 
-    return NextResponse.json({ moved: data?.length || 0 })
+    return NextResponse.json({ moved: data?.length || 0 }, { headers: corsHeaders })
   } catch (error) {
     console.error('Error moving photos:', error)
-    return NextResponse.json({ error: 'Failed to move photos' }, { status: 500 })
+    return NextResponse.json({ error: 'Failed to move photos' }, { status: 500, headers: corsHeaders })
   }
 }
 
@@ -247,7 +291,7 @@ export async function DELETE(request: NextRequest) {
     const id = searchParams.get('id')
 
     if (!id) {
-      return NextResponse.json({ error: 'id is required' }, { status: 400 })
+      return NextResponse.json({ error: 'id is required' }, { status: 400, headers: corsHeaders })
     }
 
     // Récupérer l'URL pour supprimer du storage
@@ -277,9 +321,9 @@ export async function DELETE(request: NextRequest) {
       }
     }
 
-    return NextResponse.json({ success: true })
+    return NextResponse.json({ success: true }, { headers: corsHeaders })
   } catch (error) {
     console.error('Error deleting photo:', error)
-    return NextResponse.json({ error: 'Failed to delete photo' }, { status: 500 })
+    return NextResponse.json({ error: 'Failed to delete photo' }, { status: 500, headers: corsHeaders })
   }
 }
