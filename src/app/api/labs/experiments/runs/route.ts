@@ -12,16 +12,6 @@ const anthropic = new Anthropic({
 })
 
 // Types
-interface PreprocessingConfig {
-  brightness?: number
-  contrast?: number
-  saturation?: number
-  sharpness?: number
-  grayscale?: boolean
-  binarization?: 'otsu' | 'sauvola' | null
-  denoise?: 'median' | 'bilateral' | null
-}
-
 interface PromptConfig {
   base_prompt?: string
   meter_type_addon?: string
@@ -32,7 +22,7 @@ interface ExperimentConfig {
   id: string
   name: string
   config_type: string
-  config_data: PreprocessingConfig | PromptConfig | any
+  config_data: PromptConfig | Record<string, unknown>
 }
 
 // GET - Liste des runs ou un run spécifique
@@ -45,35 +35,35 @@ export async function GET(request: NextRequest) {
     const limit = parseInt(searchParams.get('limit') || '50')
     const offset = parseInt(searchParams.get('offset') || '0')
 
+    if (id) {
+      const { data, error } = await supabase
+        .from('experiment_runs')
+        .select('*, experiment_configs(name, config_type)')
+        .eq('id', id)
+        .single()
+
+      if (error) throw error
+      return NextResponse.json({ runs: [data], total: 1 })
+    }
+
     let query = supabase
       .from('experiment_runs')
       .select('*, experiment_configs(name, config_type)', { count: 'exact' })
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1)
 
-    if (id) {
-      query = supabase
-        .from('experiment_runs')
-        .select('*, experiment_configs(name, config_type)')
-        .eq('id', id)
-        .single()
-    } else {
-      if (batchId) {
-        query = query.eq('batch_id', batchId)
-      }
-      if (status) {
-        query = query.eq('status', status)
-      }
+    if (batchId) {
+      query = query.eq('batch_id', batchId)
+    }
+    if (status) {
+      query = query.eq('status', status)
     }
 
     const { data, error, count } = await query
 
     if (error) throw error
 
-    return NextResponse.json({ 
-      runs: id ? [data] : data,
-      total: count 
-    })
+    return NextResponse.json({ runs: data, total: count })
   } catch (error) {
     console.error('Error fetching runs:', error)
     return NextResponse.json({ error: 'Failed to fetch runs' }, { status: 500 })
@@ -135,7 +125,7 @@ export async function POST(request: NextRequest) {
 
     // Si run_immediately, exécuter le test
     if (run_immediately) {
-      const result = await executeExperiment(run.id, config, image_base64 || image_url)
+      const result = await executeExperiment(run.id, config as ExperimentConfig, image_base64 || image_url)
       return NextResponse.json({ run: result })
     }
 
@@ -151,7 +141,7 @@ async function executeExperiment(
   runId: string, 
   config: ExperimentConfig, 
   imageData: string
-): Promise<any> {
+): Promise<Record<string, unknown>> {
   const startTime = Date.now()
   
   try {
@@ -268,7 +258,7 @@ Réponds UNIQUEMENT en JSON:
 }
 
 // Parser la réponse de Claude
-function parseClaudeResponse(response: string): any {
+function parseClaudeResponse(response: string): Record<string, unknown> {
   try {
     // Extraire le JSON de la réponse
     const jsonMatch = response.match(/\{[\s\S]*\}/)
@@ -276,7 +266,7 @@ function parseClaudeResponse(response: string): any {
       return JSON.parse(jsonMatch[0])
     }
     return { error: 'No JSON found in response', raw: response }
-  } catch (e) {
+  } catch {
     return { error: 'Failed to parse response', raw: response }
   }
 }
@@ -338,7 +328,7 @@ export async function PATCH(request: NextRequest) {
         run_id: id,
         original_value: {
           field,
-          value: run.actual_result?.[field],
+          value: (run.actual_result as Record<string, unknown>)?.[field],
           confidence: run.confidence_score
         },
         corrected_value: { field, value },
