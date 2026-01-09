@@ -1,10 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import crypto from 'crypto'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
+
+// Simple hash function using Node crypto
+function hashBuffer(buffer: ArrayBuffer): string {
+  const hash = crypto.createHash('sha256')
+  hash.update(Buffer.from(buffer))
+  return hash.digest('hex').substring(0, 32)
+}
 
 // GET - Liste des photos
 export async function GET(request: NextRequest) {
@@ -65,59 +73,67 @@ export async function POST(request: NextRequest) {
 
     for (const file of files) {
       try {
-        // Upload vers Supabase Storage
-        const fileName = `experiment-photos/${Date.now()}-${Math.random().toString(36).substring(7)}-${file.name}`
-        const { error: uploadError } = await supabase.storage
-          .from('meter-photos')
-          .upload(fileName, file, {
-            contentType: file.type,
-            upsert: false
-          })
-
-        if (uploadError) throw uploadError
-
-        // Obtenir l'URL publique
-        const { data: urlData } = supabase.storage
-          .from('meter-photos')
-          .getPublicUrl(fileName)
-
-        // Calculer hash
+        // Lire le fichier
         const arrayBuffer = await file.arrayBuffer()
-        const hashBuffer = await crypto.subtle.digest('SHA-256', arrayBuffer)
-        const hashArray = Array.from(new Uint8Array(hashBuffer))
-        const imageHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('').substring(0, 32)
+        const buffer = Buffer.from(arrayBuffer)
+        
+        // Calculer hash
+        const imageHash = hashBuffer(arrayBuffer)
 
         // Vérifier si doublon
         const { data: existing } = await supabase
           .from('experiment_photos')
           .select('id, folder_id')
           .eq('image_hash', imageHash)
-          .single()
+          .maybeSingle()
 
         if (existing) {
           errors.push({ file: file.name, error: 'Duplicate image', existing_id: existing.id })
           continue
         }
 
+        // Upload vers Supabase Storage
+        const fileName = `experiment-photos/${Date.now()}-${Math.random().toString(36).substring(7)}-${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`
+        const { error: uploadError } = await supabase.storage
+          .from('meter-photos')
+          .upload(fileName, buffer, {
+            contentType: file.type || 'image/jpeg',
+            upsert: false
+          })
+
+        if (uploadError) {
+          console.error('Storage upload error:', uploadError)
+          errors.push({ file: file.name, error: uploadError.message })
+          continue
+        }
+
+        // Obtenir l'URL publique
+        const { data: urlData } = supabase.storage
+          .from('meter-photos')
+          .getPublicUrl(fileName)
+
         // Déterminer le folder_id
         let targetFolderId = folderId
 
-        // TODO: Auto-clustering si autoCluster = true et pas de folder_id
-        // Pour l'instant, créer un nouveau dossier si pas de folder_id
+        // Si pas de folder_id, créer un nouveau dossier
         if (!targetFolderId && autoCluster) {
-          const { data: newFolder } = await supabase
+          const { data: newFolder, error: folderError } = await supabase
             .from('experiment_folders')
             .insert({
-              name: `Import ${new Date().toLocaleDateString('fr-FR')}`,
+              name: `Import ${new Date().toLocaleDateString('fr-FR')} ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`,
               status: 'draft',
               detected_type: 'unknown'
             })
             .select()
             .single()
           
-          if (newFolder) {
-            targetFolderId = newFolder.id
+          if (folderError) {
+            console.error('Folder creation error:', folderError)
+            errors.push({ file: file.name, error: 'Failed to create folder' })
+            continue
           }
+          
+          targetFolderId = newFolder.id
         }
 
         // Créer l'entrée photo
@@ -134,10 +150,15 @@ export async function POST(request: NextRequest) {
           .select()
           .single()
 
-        if (dbError) throw dbError
+        if (dbError) {
+          console.error('DB insert error:', dbError)
+          errors.push({ file: file.name, error: dbError.message })
+          continue
+        }
 
         uploadedPhotos.push(photo)
       } catch (err) {
+        console.error('Upload error for file:', file.name, err)
         errors.push({ file: file.name, error: String(err) })
       }
     }
@@ -151,7 +172,7 @@ export async function POST(request: NextRequest) {
     })
   } catch (error) {
     console.error('Error uploading photos:', error)
-    return NextResponse.json({ error: 'Failed to upload photos' }, { status: 500 })
+    return NextResponse.json({ error: 'Failed to upload photos', details: String(error) }, { status: 500 })
   }
 }
 
