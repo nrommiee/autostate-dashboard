@@ -221,7 +221,7 @@ export default function ExperimentsPage() {
   )
   const hasActiveFilters = filterType !== 'all' || filterStatus !== 'all' || filterBrand !== 'all'
   const typeStats = { gas: regularFolders.filter(f => f.detected_type === 'gas').length, water: regularFolders.filter(f => f.detected_type === 'water').length, electricity: regularFolders.filter(f => f.detected_type === 'electricity').length }
-  const statusStats = { draft: regularFolders.filter(f => f.status === 'draft').length, ready: regularFolders.filter(f => f.status === 'ready').length, validated: regularFolders.filter(f => f.status === 'validated').length }
+  const statusStats = { draft: regularFolders.filter(f => f.status === 'draft').length, ready: regularFolders.filter(f => f.status === 'ready').length, validated: regularFolders.filter(f => f.status === 'validated').length, promoted: regularFolders.filter(f => f.status === 'promoted').length }
 
   if (loading) return <div className="p-6 flex items-center justify-center min-h-[400px]"><Loader2 className="h-8 w-8 animate-spin text-teal-600" /></div>
 
@@ -331,7 +331,7 @@ export default function ExperimentsPage() {
                     <Button key={f.k} variant={filterType === f.k ? 'default' : 'outline'} size="sm" onClick={() => setFilterType(f.k)}>{f.l}</Button>
                   ))}
                   <div className="w-px h-6 bg-gray-200 mx-2" />
-                  {[{ k: 'draft', l: `Brouillon (${statusStats.draft})` }, { k: 'ready', l: `Prêt (${statusStats.ready})` }, { k: 'validated', l: `Validé (${statusStats.validated})` }].map(f => (
+                  {[{ k: 'draft', l: `Brouillon (${statusStats.draft})` }, { k: 'ready', l: `Prêt (${statusStats.ready})` }, { k: 'validated', l: `Validé (${statusStats.validated})` }, { k: 'promoted', l: `Promu (${statusStats.promoted})` }].map(f => (
                     <Button key={f.k} variant={filterStatus === f.k ? 'secondary' : 'ghost'} size="sm" onClick={() => setFilterStatus(filterStatus === f.k ? 'all' : f.k)}>{f.l}</Button>
                   ))}
                   {brands.length > 0 && (
@@ -392,8 +392,11 @@ export default function ExperimentsPage() {
                         <div className="flex items-center gap-4">
                           {folder.status === 'draft' && folder.photo_count < 5 && <div className="w-24"><Progress value={(folder.photo_count / 5) * 100} className="h-2" /><p className="text-xs text-muted-foreground text-center mt-1">{5 - folder.photo_count} manquante(s)</p></div>}
                           <Badge className={STATUS_COLORS[folder.status]}>{STATUS_LABELS[folder.status]}</Badge>
-                          {(folder.status === 'ready' || (folder.photos_since_last_test && folder.photos_since_last_test > 0)) && (
-                            <Button size="sm" onClick={(e) => { e.stopPropagation(); handleRunTest(folder.id) }}><Play className="h-4 w-4 mr-1" />{folder.photos_since_last_test ? 'Relancer' : 'Tester'}</Button>
+                          {folder.status === 'ready' && (
+                            <Button size="sm" onClick={(e) => { e.stopPropagation(); handleRunTest(folder.id) }}><Play className="h-4 w-4 mr-1" />Tester</Button>
+                          )}
+                          {folder.status !== 'ready' && folder.photos_since_last_test !== undefined && folder.photos_since_last_test > 0 && ['validated', 'promoted'].includes(folder.status) && (
+                            <Button size="sm" variant="outline" className="border-orange-300 text-orange-600 hover:bg-orange-50" onClick={(e) => { e.stopPropagation(); handleRunTest(folder.id) }}><Play className="h-4 w-4 mr-1" />Relancer</Button>
                           )}
                           <ChevronRight className="h-5 w-5 text-gray-400" />
                         </div>
@@ -488,7 +491,7 @@ export default function ExperimentsPage() {
                     <div className="flex items-center gap-3">
                       {folder.reference_photo?.image_url ? <img src={folder.reference_photo.thumbnail_url || folder.reference_photo.image_url} alt="" className="w-10 h-10 rounded object-cover" /> : TYPE_ICONS[folder.detected_type]}
                       <span className="font-medium">{folder.name}</span>
-                      {folder.photos_since_last_test && folder.photos_since_last_test > 0 && <Badge variant="outline" className="bg-orange-50 text-orange-600 border-orange-200">+{folder.photos_since_last_test}</Badge>}
+                      {folder.photos_since_last_test !== undefined && folder.photos_since_last_test > 0 && <Badge variant="outline" className="bg-orange-50 text-orange-600 border-orange-200">+{folder.photos_since_last_test}</Badge>}
                     </div>
                     <Button variant="outline" size="sm" asChild><a href="/dashboard/meters"><ExternalLink className="h-4 w-4 mr-2" />Voir</a></Button>
                   </div>
@@ -595,12 +598,13 @@ function FolderDetail({ folderId, folders, onBack, onDelete, onDeletePhotos, onU
               <div><h2 className="text-xl font-bold">{folder.name}</h2><p className="text-sm text-muted-foreground">{photos.length} photo(s)</p></div>
               {!isUnclassified && <Button variant="ghost" size="sm" onClick={() => setEditing(true)}><Pencil className="h-4 w-4" /></Button>}
               <Badge className={isUnclassified ? 'bg-orange-100 text-orange-700' : STATUS_COLORS[folder.status]}>{isUnclassified ? 'Pot commun' : STATUS_LABELS[folder.status]}</Badge>
-              {folder.photos_since_last_test && folder.photos_since_last_test > 0 && !isUnclassified && <Badge variant="outline" className="bg-orange-50 text-orange-600 border-orange-200"><ImagePlus className="h-3 w-3 mr-1" />+{folder.photos_since_last_test}</Badge>}
+              {folder.photos_since_last_test !== undefined && folder.photos_since_last_test > 0 && !isUnclassified && ['validated', 'promoted'].includes(folder.status) && <Badge variant="outline" className="bg-orange-50 text-orange-600 border-orange-200"><ImagePlus className="h-3 w-3 mr-1" />+{folder.photos_since_last_test}</Badge>}
             </div>
           )}
         </div>
         <div className="flex items-center gap-2">
-          {!isUnclassified && (folder.status === 'ready' || (folder.photos_since_last_test && folder.photos_since_last_test > 0)) && <Button onClick={() => onRunTest(folder.id)}><Play className="h-4 w-4 mr-2" />{folder.photos_since_last_test ? 'Relancer' : 'Tester'}</Button>}
+          {!isUnclassified && folder.status === 'ready' && <Button onClick={() => onRunTest(folder.id)}><Play className="h-4 w-4 mr-2" />Tester</Button>}
+          {!isUnclassified && folder.status !== 'ready' && folder.photos_since_last_test !== undefined && folder.photos_since_last_test > 0 && ['validated', 'promoted'].includes(folder.status) && <Button variant="outline" className="border-orange-300 text-orange-600 hover:bg-orange-50" onClick={() => onRunTest(folder.id)}><Play className="h-4 w-4 mr-2" />Relancer</Button>}
           {!isUnclassified && folder.status === 'validated' && <Button onClick={() => onPromote(folder.id)} className="bg-teal-600 hover:bg-teal-700"><ArrowRight className="h-4 w-4 mr-2" />Promouvoir</Button>}
           {!isUnclassified && <DropdownMenu><DropdownMenuTrigger asChild><Button variant="outline" size="icon"><MoreVertical className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent><DropdownMenuItem className="text-red-600" onClick={() => onDelete(folder.id, folder.name)}><Trash2 className="h-4 w-4 mr-2" />Supprimer</DropdownMenuItem></DropdownMenuContent></DropdownMenu>}
         </div>
