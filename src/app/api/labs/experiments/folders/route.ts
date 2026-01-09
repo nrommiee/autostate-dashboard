@@ -30,30 +30,33 @@ export async function GET(request: NextRequest) {
         .from('experiment_folders')
         .select(`
           *,
-          meter_models(id, name, manufacturer),
-          experiment_photos(*),
-          reference_photo:experiment_photos!experiment_folders_reference_photo_id_fkey(*)
+          experiment_photos(*)
         `)
         .eq('id', id)
         .single()
 
       if (error) throw error
-      return NextResponse.json({ folder: data }, { headers: corsHeaders })
+      
+      // Récupérer la photo de référence séparément si elle existe
+      let reference_photo = null
+      if (data?.reference_photo_id) {
+        const { data: refPhoto } = await supabase
+          .from('experiment_photos')
+          .select('*')
+          .eq('id', data.reference_photo_id)
+          .single()
+        reference_photo = refPhoto
+      }
+      
+      return NextResponse.json({ 
+        folder: { ...data, reference_photo } 
+      }, { headers: corsHeaders })
     }
 
     // Liste des dossiers
     let query = supabase
       .from('experiment_folders')
-      .select(withPhotos ? `
-        *,
-        meter_models(id, name, manufacturer),
-        experiment_photos(*),
-        reference_photo:experiment_photos!experiment_folders_reference_photo_id_fkey(*)
-      ` : `
-        *,
-        meter_models(id, name, manufacturer),
-        reference_photo:experiment_photos!experiment_folders_reference_photo_id_fkey(id, image_url, thumbnail_url)
-      `)
+      .select(withPhotos ? `*, experiment_photos(*)` : `*`)
       .order('created_at', { ascending: false })
 
     if (status) {
@@ -64,18 +67,31 @@ export async function GET(request: NextRequest) {
 
     if (error) throw error
 
-    // Calculer photo_count pour chaque dossier
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const foldersWithCount = (data || []).map((folder: any) => ({
-      ...folder,
-      photo_count: folder.experiment_photos?.length || 0,
-      min_photos_required: 5
+    // Pour chaque dossier, récupérer la photo de référence si elle existe
+    const foldersWithData = await Promise.all((data || []).map(async (folder: Record<string, unknown>) => {
+      let reference_photo = null
+      if (folder.reference_photo_id) {
+        const { data: refPhoto } = await supabase
+          .from('experiment_photos')
+          .select('id, image_url, thumbnail_url')
+          .eq('id', folder.reference_photo_id)
+          .single()
+        reference_photo = refPhoto
+      }
+      
+      const photos = folder.experiment_photos as unknown[] | undefined
+      return {
+        ...folder,
+        reference_photo,
+        photo_count: photos?.length || folder.photo_count || 0,
+        min_photos_required: 5
+      }
     }))
 
-    return NextResponse.json({ folders: foldersWithCount }, { headers: corsHeaders })
+    return NextResponse.json({ folders: foldersWithData }, { headers: corsHeaders })
   } catch (error) {
     console.error('Error fetching folders:', error)
-    return NextResponse.json({ error: 'Failed to fetch folders' }, { status: 500, headers: corsHeaders })
+    return NextResponse.json({ error: 'Failed to fetch folders', details: String(error) }, { status: 500, headers: corsHeaders })
   }
 }
 
@@ -141,7 +157,8 @@ export async function PUT(request: NextRequest) {
         .single()
       
       if (folder && !folder.is_unclassified) {
-        const photoCount = folder.experiment_photos?.length || 0
+        const photos = folder.experiment_photos as unknown[] | undefined
+        const photoCount = photos?.length || 0
         if (folder.status === 'draft' && photoCount >= 5) {
           filteredUpdates.status = 'ready'
         }
