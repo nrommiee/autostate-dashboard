@@ -28,7 +28,7 @@ import {
   Info, AlertCircle, Bug, Lightbulb, ExternalLink, Copy,
   Check, Loader2, Download, Trash2, Eye, Filter, Upload,
   FileCode, GitBranch, Plus, Server, Wifi, WifiOff, TrendingUp,
-  TrendingDown, Minus, Users, Camera, Brain
+  TrendingDown, Minus, Users, Camera, Brain, Globe
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 
@@ -305,6 +305,19 @@ export default function MonitoringPage() {
       {/* TAB: Overview */}
       {activeTab === 'overview' && (
         <div className="space-y-6">
+          {/* Link to public status page */}
+          <div className="flex justify-end">
+            <a 
+              href="/status" 
+              target="_blank"
+              className="flex items-center gap-2 text-sm text-teal-600 hover:text-teal-700 hover:underline"
+            >
+              <Globe className="h-4 w-4" />
+              Voir la page status publique
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          </div>
+
           {/* Stats Cards */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <Card className="p-4">
