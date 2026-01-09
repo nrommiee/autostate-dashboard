@@ -142,8 +142,10 @@ async function findOrCreateFolder(
   model: string | null,
   confidence: number
 ): Promise<string> {
-  // Si confiance < 100, mettre dans le pot commun "Non classé"
-  if (confidence < 100) {
+  // Si fabricant OU modèle manquant → "Non classé"
+  const isFullyIdentified = manufacturer && model && confidence >= 80
+  
+  if (!isFullyIdentified) {
     // Chercher le dossier "Non classé" existant
     const { data: unclassifiedFolder } = await supabase
       .from('experiment_folders')
@@ -177,7 +179,7 @@ async function findOrCreateFolder(
     return newUnclassified.id
   }
 
-  // Confiance 100% - chercher dossier existant avec même signature
+  // Fabricant ET modèle trouvés - chercher dossier existant avec même signature
   const { data: existingFolder } = await supabase
     .from('experiment_folders')
     .select('id')
