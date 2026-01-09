@@ -429,34 +429,57 @@ export async function POST(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   try {
     const body = await request.json()
-    const { id, ...updates } = body
+    
+    // Support pour mise à jour d'une seule photo (ancien format)
+    if (body.id) {
+      const { id, ...updates } = body
+      const allowedFields = ['folder_id', 'status', 'ground_truth', 'detected_type', 'detected_brand']
+      const filteredUpdates: Record<string, unknown> = {}
+      
+      for (const field of allowedFields) {
+        if (updates[field] !== undefined) {
+          filteredUpdates[field] = updates[field]
+        }
+      }
 
-    if (!id) {
-      return NextResponse.json({ error: 'id is required' }, { status: 400, headers: corsHeaders })
+      const { data, error } = await supabase
+        .from('experiment_photos')
+        .update(filteredUpdates)
+        .eq('id', id)
+        .select()
+        .single()
+
+      if (error) throw error
+      return NextResponse.json({ photo: data }, { headers: corsHeaders })
+    }
+    
+    // Support pour mise à jour de plusieurs photos (nouveau format)
+    const { photo_ids, detected_type, detected_brand } = body
+    
+    if (!photo_ids || !Array.isArray(photo_ids) || photo_ids.length === 0) {
+      return NextResponse.json({ error: 'photo_ids array is required' }, { status: 400, headers: corsHeaders })
     }
 
-    const allowedFields = ['folder_id', 'status', 'ground_truth', 'detected_type']
-    const filteredUpdates: Record<string, unknown> = {}
-    
-    for (const field of allowedFields) {
-      if (updates[field] !== undefined) {
-        filteredUpdates[field] = updates[field]
-      }
+    const updates: Record<string, unknown> = {}
+    if (detected_type !== undefined) updates.detected_type = detected_type
+    if (detected_brand !== undefined) updates.detected_brand = detected_brand || null
+
+    if (Object.keys(updates).length === 0) {
+      return NextResponse.json({ error: 'No valid updates provided' }, { status: 400, headers: corsHeaders })
     }
 
     const { data, error } = await supabase
       .from('experiment_photos')
-      .update(filteredUpdates)
-      .eq('id', id)
+      .update(updates)
+      .in('id', photo_ids)
       .select()
-      .single()
 
     if (error) throw error
 
-    return NextResponse.json({ photo: data }, { headers: corsHeaders })
+    return NextResponse.json({ photos: data, updated: data?.length || 0 }, { headers: corsHeaders })
   } catch (error) {
-    console.error('Error updating photo:', error)
-    return NextResponse.json({ error: 'Failed to update photo' }, { status: 500, headers: corsHeaders })
+    console.error('Error updating photo(s):', error)
+    return NextResponse.json({ error: 'Failed to update photo(s)' }, { status: 500, headers: corsHeaders })
   }
 }
 
