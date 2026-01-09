@@ -28,69 +28,40 @@ export async function GET(request: NextRequest) {
       // Récupérer un dossier spécifique avec ses photos
       const { data, error } = await supabase
         .from('experiment_folders')
-        .select(`
-          *,
-          experiment_photos(*)
-        `)
+        .select(`*, experiment_photos(*)`)
         .eq('id', id)
         .single()
 
-      if (error) throw error
-      
-      // Récupérer la photo de référence séparément si elle existe
-      let reference_photo = null
-      if (data?.reference_photo_id) {
-        const { data: refPhoto } = await supabase
-          .from('experiment_photos')
-          .select('*')
-          .eq('id', data.reference_photo_id)
-          .single()
-        reference_photo = refPhoto
+      if (error) {
+        console.error('Error fetching folder by id:', error)
+        return NextResponse.json({ error: 'Failed to fetch folder', details: error.message }, { status: 500, headers: corsHeaders })
       }
       
-      return NextResponse.json({ 
-        folder: { ...data, reference_photo } 
-      }, { headers: corsHeaders })
+      return NextResponse.json({ folder: data }, { headers: corsHeaders })
     }
 
-    // Liste des dossiers
-    let query = supabase
+    // Liste des dossiers - requête simple
+    const { data, error } = await supabase
       .from('experiment_folders')
       .select(withPhotos ? `*, experiment_photos(*)` : `*`)
       .order('created_at', { ascending: false })
 
-    if (status) {
-      query = query.eq('status', status)
+    if (error) {
+      console.error('Error fetching folders:', error)
+      return NextResponse.json({ error: 'Failed to fetch folders', details: error.message }, { status: 500, headers: corsHeaders })
     }
 
-    const { data, error } = await query
-
-    if (error) throw error
-
-    // Pour chaque dossier, récupérer la photo de référence si elle existe
+    // Calculer photo_count simplement
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const foldersWithData = await Promise.all((data || []).map(async (folder: any) => {
-      let reference_photo = null
-      if (folder.reference_photo_id) {
-        const { data: refPhoto } = await supabase
-          .from('experiment_photos')
-          .select('id, image_url, thumbnail_url')
-          .eq('id', folder.reference_photo_id)
-          .single()
-        reference_photo = refPhoto
-      }
-      
-      return {
-        ...folder,
-        reference_photo,
-        photo_count: folder.experiment_photos?.length || folder.photo_count || 0,
-        min_photos_required: 5
-      }
+    const foldersWithCount = (data || []).map((folder: any) => ({
+      ...folder,
+      photo_count: folder.experiment_photos?.length || 0,
+      min_photos_required: 5
     }))
 
-    return NextResponse.json({ folders: foldersWithData }, { headers: corsHeaders })
+    return NextResponse.json({ folders: foldersWithCount }, { headers: corsHeaders })
   } catch (error) {
-    console.error('Error fetching folders:', error)
+    console.error('Unexpected error in GET folders:', error)
     return NextResponse.json({ error: 'Failed to fetch folders', details: String(error) }, { status: 500, headers: corsHeaders })
   }
 }
