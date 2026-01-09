@@ -1484,12 +1484,14 @@ function TestPageInline({ folderId, onBack }: { folderId: string; onBack: () => 
       if (folderData.folder) {
         setFolder(folderData.folder)
         setPhotos(folderData.folder.experiment_photos || [])
-        const [univRes, typeRes] = await Promise.all([
-          fetch('/api/labs/experiments/configs?type=universal'),
-          folderData.folder.detected_type ? fetch(`/api/labs/experiments/configs?type=type&meter_type=${folderData.folder.detected_type}`) : Promise.resolve({ json: () => ({}) })
-        ])
-        const [univData, typeData] = await Promise.all([univRes.json(), typeRes.json()])
-        setConfigs({ universal: univData.config, type: typeData.config, model: null })
+        const univRes = await fetch('/api/labs/experiments/configs?type=universal')
+        const univData = await univRes.json()
+        let typeData: { config?: any } = {}
+        if (folderData.folder.detected_type) {
+          const typeRes = await fetch(`/api/labs/experiments/configs?type=type&meter_type=${folderData.folder.detected_type}`)
+          typeData = await typeRes.json()
+        }
+        setConfigs({ universal: univData.config || null, type: typeData.config || null, model: null })
       }
     } catch (e) { console.error(e) }
     setLoading(false)
