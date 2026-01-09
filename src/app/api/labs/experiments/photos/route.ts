@@ -1,13 +1,19 @@
 export const runtime = 'nodejs'
+export const maxDuration = 60
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import Anthropic from '@anthropic-ai/sdk'
 import crypto from 'crypto'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
+
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY!
+})
 
 // CORS headers
 const corsHeaders = {
@@ -16,16 +22,126 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 }
 
-// Handle OPTIONS for CORS
 export async function OPTIONS() {
   return new NextResponse(null, { status: 200, headers: corsHeaders })
 }
 
-// Simple hash function using Node crypto
 function hashBuffer(buffer: ArrayBuffer): string {
   const hash = crypto.createHash('sha256')
   hash.update(Buffer.from(buffer))
   return hash.digest('hex').substring(0, 32)
+}
+
+// Analyser une photo avec Claude Vision pour identifier le compteur
+async function analyzePhotoForClustering(imageBase64: string): Promise<{
+  meter_type: string
+  manufacturer: string | null
+  model: string | null
+  signature: string
+}> {
+  try {
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 500,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'image',
+              source: {
+                type: 'base64',
+                media_type: 'image/jpeg',
+                data: imageBase64
+              }
+            },
+            {
+              type: 'text',
+              text: `Analyse cette photo de compteur et identifie:
+1. TYPE: gas, water, electricity, ou unknown
+2. FABRICANT: nom du fabricant visible (ou null)
+3. MODÈLE: référence du modèle visible (ou null)
+
+Réponds UNIQUEMENT en JSON:
+{"type":"gas|water|electricity|unknown","manufacturer":"string|null","model":"string|null"}`
+            }
+          ]
+        }
+      ]
+    })
+
+    const textContent = response.content.find(c => c.type === 'text')
+    const responseText = textContent?.type === 'text' ? textContent.text : '{}'
+    
+    // Parser la réponse
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/)
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0])
+      // Créer une signature unique pour le clustering
+      const signature = `${parsed.type || 'unknown'}_${(parsed.manufacturer || 'unknown').toLowerCase().replace(/\s+/g, '_')}_${(parsed.model || 'unknown').toLowerCase().replace(/\s+/g, '_')}`
+      
+      return {
+        meter_type: parsed.type || 'unknown',
+        manufacturer: parsed.manufacturer,
+        model: parsed.model,
+        signature
+      }
+    }
+  } catch (error) {
+    console.error('Claude analysis error:', error)
+  }
+
+  return {
+    meter_type: 'unknown',
+    manufacturer: null,
+    model: null,
+    signature: 'unknown_unknown_unknown'
+  }
+}
+
+// Trouver ou créer un dossier pour cette signature
+async function findOrCreateFolder(
+  signature: string,
+  meterType: string,
+  manufacturer: string | null,
+  model: string | null
+): Promise<string> {
+  // Chercher un dossier existant avec la même signature
+  const { data: existingFolder } = await supabase
+    .from('experiment_folders')
+    .select('id')
+    .eq('cluster_signature', signature)
+    .eq('status', 'draft') // Seulement les brouillons, pas les promus
+    .single()
+
+  if (existingFolder) {
+    return existingFolder.id
+  }
+
+  // Créer un nouveau dossier
+  const folderName = model 
+    ? `${manufacturer || 'Inconnu'} ${model}`
+    : manufacturer 
+      ? `${manufacturer} (${meterType})`
+      : `Compteur ${meterType} - ${new Date().toLocaleDateString('fr-FR')}`
+
+  const { data: newFolder, error } = await supabase
+    .from('experiment_folders')
+    .insert({
+      name: folderName,
+      status: 'draft',
+      detected_type: meterType,
+      cluster_signature: signature
+    })
+    .select()
+    .single()
+
+  if (error) {
+    console.error('Folder creation error:', error)
+    throw error
+  }
+
+  return newFolder.id
 }
 
 // GET - Liste des photos
@@ -70,9 +186,9 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST - Upload photos
+// POST - Upload photos avec clustering automatique
 export async function POST(request: NextRequest) {
-  console.log('POST /api/labs/experiments/photos - Start')
+  console.log('POST /api/labs/experiments/photos - Start with auto-clustering')
   
   try {
     let formData: FormData
@@ -87,7 +203,7 @@ export async function POST(request: NextRequest) {
     const folderId = formData.get('folder_id') as string | null
     const autoCluster = formData.get('auto_cluster') !== 'false'
 
-    console.log('Files received:', files.length)
+    console.log('Files received:', files.length, 'Auto-cluster:', autoCluster)
 
     if (!files || files.length === 0) {
       return NextResponse.json({ error: 'files are required' }, { status: 400, headers: corsHeaders })
@@ -95,6 +211,7 @@ export async function POST(request: NextRequest) {
 
     const uploadedPhotos = []
     const errors = []
+    const clusteringResults: { file: string; signature: string; folder: string }[] = []
 
     for (const file of files) {
       console.log('Processing file:', file.name, 'Size:', file.size)
@@ -103,10 +220,10 @@ export async function POST(request: NextRequest) {
         // Lire le fichier
         const arrayBuffer = await file.arrayBuffer()
         const buffer = Buffer.from(arrayBuffer)
+        const imageBase64 = buffer.toString('base64')
         
         // Calculer hash
         const imageHash = hashBuffer(arrayBuffer)
-        console.log('Hash:', imageHash)
 
         // Vérifier si doublon
         const { data: existing } = await supabase
@@ -121,13 +238,10 @@ export async function POST(request: NextRequest) {
           continue
         }
 
-        // Nettoyer le nom de fichier
+        // Upload vers Storage d'abord
         const cleanFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_')
         const fileName = `experiment-photos/${Date.now()}-${Math.random().toString(36).substring(7)}-${cleanFileName}`
         
-        console.log('Uploading to storage:', fileName)
-
-        // Upload vers Supabase Storage
         const { error: uploadError } = await supabase.storage
           .from('meter-photos')
           .upload(fileName, buffer, {
@@ -141,22 +255,35 @@ export async function POST(request: NextRequest) {
           continue
         }
 
-        console.log('Storage upload success')
-
-        // Obtenir l'URL publique
         const { data: urlData } = supabase.storage
           .from('meter-photos')
           .getPublicUrl(fileName)
 
-        console.log('Public URL:', urlData.publicUrl)
-
         // Déterminer le folder_id
         let targetFolderId = folderId
 
-        // Si pas de folder_id, créer un nouveau dossier
+        // Si pas de folder_id et auto_cluster activé, utiliser Claude Vision
         if (!targetFolderId && autoCluster) {
-          console.log('Creating new folder...')
-          const { data: newFolder, error: folderError } = await supabase
+          console.log('Analyzing image with Claude Vision...')
+          
+          const analysis = await analyzePhotoForClustering(imageBase64)
+          console.log('Analysis result:', analysis)
+          
+          targetFolderId = await findOrCreateFolder(
+            analysis.signature,
+            analysis.meter_type,
+            analysis.manufacturer,
+            analysis.model
+          )
+          
+          clusteringResults.push({
+            file: file.name,
+            signature: analysis.signature,
+            folder: targetFolderId
+          })
+        } else if (!targetFolderId) {
+          // Fallback: créer un dossier générique
+          const { data: newFolder } = await supabase
             .from('experiment_folders')
             .insert({
               name: `Import ${new Date().toLocaleDateString('fr-FR')} ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`,
@@ -166,18 +293,12 @@ export async function POST(request: NextRequest) {
             .select()
             .single()
           
-          if (folderError) {
-            console.error('Folder creation error:', folderError)
-            errors.push({ file: file.name, error: 'Failed to create folder: ' + folderError.message })
-            continue
+          if (newFolder) {
+            targetFolderId = newFolder.id
           }
-          
-          targetFolderId = newFolder.id
-          console.log('New folder created:', targetFolderId)
         }
 
         // Créer l'entrée photo
-        console.log('Inserting photo record...')
         const { data: photo, error: dbError } = await supabase
           .from('experiment_photos')
           .insert({
@@ -197,7 +318,7 @@ export async function POST(request: NextRequest) {
           continue
         }
 
-        console.log('Photo record created:', photo.id)
+        console.log('Photo created:', photo.id, 'in folder:', targetFolderId)
         uploadedPhotos.push(photo)
       } catch (err) {
         console.error('Upload error for file:', file.name, err)
@@ -210,6 +331,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       uploaded: uploadedPhotos,
       errors,
+      clustering: clusteringResults,
       total: files.length,
       success_count: uploadedPhotos.length,
       error_count: errors.length
@@ -294,14 +416,12 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'id is required' }, { status: 400, headers: corsHeaders })
     }
 
-    // Récupérer l'URL pour supprimer du storage
     const { data: photo } = await supabase
       .from('experiment_photos')
       .select('image_url')
       .eq('id', id)
       .single()
 
-    // Supprimer de la base
     const { error } = await supabase
       .from('experiment_photos')
       .delete()
@@ -309,7 +429,6 @@ export async function DELETE(request: NextRequest) {
 
     if (error) throw error
 
-    // Supprimer du storage
     if (photo?.image_url) {
       try {
         const path = photo.image_url.split('/meter-photos/')[1]
