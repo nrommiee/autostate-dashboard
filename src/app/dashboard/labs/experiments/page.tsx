@@ -680,7 +680,7 @@ function UnclassifiedSortingCenter({ folder, folders, onBack, onDeletePhotos, on
     setSelectionMode(false)
   }
 
-  // Handler mise à jour type/marque
+  // Handler mise à jour type/marque (sélection multiple)
   const handleUpdatePhotos = async (updates: { detected_type?: string; detected_brand?: string }) => {
     if (selectedPhotos.size === 0) return
     setUpdating(true)
@@ -693,6 +693,17 @@ function UnclassifiedSortingCenter({ folder, folders, onBack, onDeletePhotos, on
     // Mettre à jour localement
     setPhotos(photos.map(p => ids.includes(p.id) ? { ...p, ...updates } : p))
     setUpdating(false)
+  }
+
+  // Handler mise à jour d'une seule photo (pour actions hover)
+  const handleUpdateSinglePhoto = async (photoId: string, updates: { detected_type?: string; detected_brand?: string }) => {
+    await fetch('/api/labs/experiments/photos', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ photo_ids: [photoId], ...updates })
+    })
+    // Mettre à jour localement
+    setPhotos(photos.map(p => p.id === photoId ? { ...p, ...updates } : p))
   }
 
   // Handler suppression
@@ -708,8 +719,8 @@ function UnclassifiedSortingCenter({ folder, folders, onBack, onDeletePhotos, on
   }
 
   // Handler déplacement vers dossier
-  const handleMoveToFolder = async (folderId: string) => {
-    const ids = Array.from(selectedPhotos)
+  const handleMoveToFolder = async (folderId: string, photoIds?: string[]) => {
+    const ids = photoIds || Array.from(selectedPhotos)
     if (ids.length === 0) return
     setUpdating(true)
     await onMovePhotos(ids, folderId)
@@ -721,9 +732,11 @@ function UnclassifiedSortingCenter({ folder, folders, onBack, onDeletePhotos, on
     onRefresh()
   }
 
-  // Handler drag & drop
-  const handleDragStart = (e: React.DragEvent) => {
-    const ids = Array.from(selectedPhotos)
+  // Handler drag & drop - supporte photo individuelle ou sélection
+  const handleDragStart = (e: React.DragEvent, photoId: string) => {
+    // Si la photo draggée fait partie de la sélection, on drag toute la sélection
+    // Sinon on drag juste cette photo
+    const ids = selectedPhotos.has(photoId) ? Array.from(selectedPhotos) : [photoId]
     e.dataTransfer.setData('text/plain', ids.join(','))
     e.dataTransfer.effectAllowed = 'move'
   }
@@ -944,9 +957,9 @@ function UnclassifiedSortingCenter({ folder, folders, onBack, onDeletePhotos, on
                   return (
                     <div
                       key={photo.id}
-                      draggable={selectionMode && isSelected}
-                      onDragStart={handleDragStart}
-                      className={`relative group cursor-pointer ${isSelected ? 'ring-2 ring-teal-500 rounded-lg' : ''}`}
+                      draggable
+                      onDragStart={(e) => handleDragStart(e, photo.id)}
+                      className={`relative group cursor-grab active:cursor-grabbing ${isSelected ? 'ring-2 ring-teal-500 rounded-lg' : ''}`}
                       onClick={() => selectionMode && toggleSelect(photo.id)}
                     >
                       <div className="aspect-square bg-gray-100 rounded-lg overflow-hidden">
@@ -959,13 +972,11 @@ function UnclassifiedSortingCenter({ folder, folders, onBack, onDeletePhotos, on
                         </div>
                       )}
                       {/* Badge type */}
-                      {!selectionMode && (
-                        <div className="absolute top-1 left-1">
-                          <div className="bg-white/90 rounded p-1">
-                            {TYPE_ICONS[photo.detected_type] || TYPE_ICONS.unknown}
-                          </div>
+                      <div className="absolute top-1 left-1">
+                        <div className="bg-white/90 rounded p-1">
+                          {TYPE_ICONS[photo.detected_type] || TYPE_ICONS.unknown}
                         </div>
-                      )}
+                      </div>
                       {/* Badge marque */}
                       {photo.detected_brand && (
                         <div className="absolute top-1 right-1">
@@ -978,6 +989,41 @@ function UnclassifiedSortingCenter({ folder, folders, onBack, onDeletePhotos, on
                       {photo.ai_confidence !== null && (
                         <div className="absolute bottom-1 right-1 bg-black/60 text-white text-xs px-1 rounded">
                           {photo.ai_confidence}%
+                        </div>
+                      )}
+                      {/* Actions au hover (quand pas en mode sélection) */}
+                      {!selectionMode && (
+                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center gap-1">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button size="sm" variant="secondary" title="Changer le type">
+                                {TYPE_ICONS[photo.detected_type] || TYPE_ICONS.unknown}
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent>
+                              <DropdownMenuItem onClick={() => handleUpdateSinglePhoto(photo.id, { detected_type: 'gas' })}>🔥 Gaz</DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleUpdateSinglePhoto(photo.id, { detected_type: 'water' })}>💧 Eau</DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleUpdateSinglePhoto(photo.id, { detected_type: 'electricity' })}>⚡ Électricité</DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button size="sm" variant="secondary" title="Assigner une marque">
+                                <span className="text-xs">ABC</span>
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent>
+                              {knownBrands.map(b => (
+                                <DropdownMenuItem key={b} onClick={() => handleUpdateSinglePhoto(photo.id, { detected_brand: b })}>{b}</DropdownMenuItem>
+                              ))}
+                              {photo.detected_brand && (
+                                <DropdownMenuItem onClick={() => handleUpdateSinglePhoto(photo.id, { detected_brand: '' })} className="text-red-600">❌ Retirer</DropdownMenuItem>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                          <Button size="sm" variant="destructive" onClick={() => { onDeletePhotos([photo.id]); setPhotos(photos.filter(p => p.id !== photo.id)) }}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
                         </div>
                       )}
                     </div>
@@ -1025,12 +1071,15 @@ function UnclassifiedSortingCenter({ folder, folders, onBack, onDeletePhotos, on
                 onDragLeave={() => setDragOverFolder(null)}
                 onDrop={(e) => { e.preventDefault(); handleDropOnNewFolder(e.dataTransfer.getData('text/plain')) }}
                 onClick={() => {
+                  // Toujours permettre de créer un dossier
                   if (selectionMode && selectedPhotos.size > 0) {
                     setPendingPhotoIds(Array.from(selectedPhotos))
-                    setNewFolderType(filterType || 'unknown')
-                    setNewFolderName(filterBrand && filterBrand !== '?' ? `${filterBrand} ` : '')
-                    setShowNewFolderModal(true)
+                  } else {
+                    setPendingPhotoIds([])
                   }
+                  setNewFolderType(filterType || 'unknown')
+                  setNewFolderName(filterBrand && filterBrand !== '?' ? `${filterBrand} ` : '')
+                  setShowNewFolderModal(true)
                 }}
               >
                 <div className="flex items-center gap-2 text-teal-600">
@@ -1050,7 +1099,11 @@ function UnclassifiedSortingCenter({ folder, folders, onBack, onDeletePhotos, on
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Nouveau dossier</DialogTitle>
-            <DialogDescription>Créez un dossier pour {pendingPhotoIds.length} photo(s)</DialogDescription>
+            <DialogDescription>
+              {pendingPhotoIds.length > 0 
+                ? `Créez un dossier et classez ${pendingPhotoIds.length} photo(s)` 
+                : 'Créez un nouveau dossier vide'}
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>
