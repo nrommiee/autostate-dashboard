@@ -257,7 +257,22 @@ function ConfigEditor({ level, universal, type, model, types, onSave, onCancel }
     </div>
   )
 }
-PassEnabled] = useState(true)
+
+function TestPageInline({ folderId, onBack }: { folderId: string; onBack: () => void }) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [folder, setFolder] = useState<Folder | null>(null)
+  const [photos, setPhotos] = useState<Photo[]>([])
+  const [referencePhoto, setReferencePhoto] = useState<Photo | null>(null)
+  const [configUniversal, setConfigUniversal] = useState<ConfigUniversal | null>(null)
+  const [configType, setConfigType] = useState<ConfigType | null>(null)
+  const [preprocessing, setPreprocessing] = useState<PreprocessingConfig>(DEFAULT_PREPROCESSING)
+  const [inheritPreprocessing, setInheritPreprocessing] = useState(true)
+  const [zones, setZones] = useState<ROIZone[]>([])
+  const [promptModel, setPromptModel] = useState('')
+  const [validation, setValidation] = useState<ValidationConfig>(DEFAULT_VALIDATION)
+  const [multiPassEnabled, setMultiPassEnabled] = useState(true)
   const [multiPassCount, setMultiPassCount] = useState(2)
   const [drawing, setDrawing] = useState(false)
   const [drawStart, setDrawStart] = useState({ x: 0, y: 0 })
