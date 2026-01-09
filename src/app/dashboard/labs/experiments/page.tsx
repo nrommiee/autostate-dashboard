@@ -202,10 +202,13 @@ export default function ExperimentsPage() {
     await fetch('/api/labs/experiments/folders', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, ...updates }) })
     await loadData()
   }
+  
+  // State pour la page de test
+  const [testingFolderId, setTestingFolderId] = useState<string | null>(null)
+  
   const handleRunTest = async (folderId: string) => {
-    const res = await fetch('/api/labs/experiments/tests', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ folder_id: folderId, run_immediately: true }) })
-    const data = await res.json()
-    if (data.test) { await loadData(); setActiveTab('tests'); setSelectedTest(data.test) }
+    // Ouvrir la page de test dédiée
+    setTestingFolderId(folderId)
   }
   const handlePromote = async (folderId: string) => {
     const res = await fetch('/api/labs/experiments/promote', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ folder_id: folderId }) })
@@ -240,6 +243,18 @@ export default function ExperimentsPage() {
   const statusStats = { draft: regularFolders.filter(f => f.status === 'draft').length, ready: regularFolders.filter(f => f.status === 'ready').length, validated: regularFolders.filter(f => f.status === 'validated').length, promoted: regularFolders.filter(f => f.status === 'promoted').length }
 
   if (loading) return <div className="p-6 flex items-center justify-center min-h-[400px]"><Loader2 className="h-8 w-8 animate-spin text-teal-600" /></div>
+
+  // Si une page de test est ouverte
+  if (testingFolderId) {
+    return (
+      <div className="p-6">
+        <TestPageInline 
+          folderId={testingFolderId} 
+          onBack={() => { setTestingFolderId(null); loadData() }} 
+        />
+      </div>
+    )
+  }
 
   return (
     <div className="p-6 space-y-6">
@@ -1441,6 +1456,153 @@ function ConfigEditor({ level, universal, type, model, types, onSave, onCancel }
         <div><div className="flex items-center justify-between mb-2"><label className="text-sm font-medium">Prompt spécifique</label><Button variant="outline" size="sm"><Sparkles className="h-4 w-4 mr-2" />Générer IA</Button></div><Textarea value={specificPrompt} onChange={(e) => setSpecificPrompt(e.target.value)} className="font-mono text-sm h-32" placeholder="Instructions..." /></div>
       </>}
       <DialogFooter><Button variant="outline" onClick={onCancel}>Annuler</Button><Button onClick={handleSave} disabled={saving}>{saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}Sauvegarder</Button></DialogFooter>
+    </div>
+  )
+}
+
+// ============================================
+// TEST PAGE INLINE - Page de test avec couches
+// ============================================
+function TestPageInline({ folderId, onBack }: { folderId: string; onBack: () => void }) {
+  const [loading, setLoading] = useState(true)
+  const [folder, setFolder] = useState<Folder | null>(null)
+  const [photos, setPhotos] = useState<Photo[]>([])
+  const [configs, setConfigs] = useState<{ universal: any; type: any; model: any }>({ universal: null, type: null, model: null })
+  const [testing, setTesting] = useState(false)
+  const [testId, setTestId] = useState<string | null>(null)
+  const [testStatus, setTestStatus] = useState<string>('')
+  const [testResults, setTestResults] = useState<any[]>([])
+  const [selectedResultIndex, setSelectedResultIndex] = useState(0)
+
+  useEffect(() => { loadData() }, [folderId])
+
+  const loadData = async () => {
+    setLoading(true)
+    try {
+      const folderRes = await fetch(`/api/labs/experiments/folders?id=${folderId}`)
+      const folderData = await folderRes.json()
+      if (folderData.folder) {
+        setFolder(folderData.folder)
+        setPhotos(folderData.folder.experiment_photos || [])
+        const [univRes, typeRes] = await Promise.all([
+          fetch('/api/labs/experiments/configs?type=universal'),
+          folderData.folder.detected_type ? fetch(`/api/labs/experiments/configs?type=type&meter_type=${folderData.folder.detected_type}`) : Promise.resolve({ json: () => ({}) })
+        ])
+        const [univData, typeData] = await Promise.all([univRes.json(), typeRes.json()])
+        setConfigs({ universal: univData.config, type: typeData.config, model: null })
+      }
+    } catch (e) { console.error(e) }
+    setLoading(false)
+  }
+
+  const runTest = async () => {
+    setTesting(true)
+    setTestResults([])
+    setTestStatus('Lancement du test...')
+    try {
+      const res = await fetch('/api/labs/experiments/tests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folder_id: folderId, run_immediately: true, multi_pass: true })
+      })
+      const data = await res.json()
+      if (data.test) {
+        setTestId(data.test.id)
+        setTestStatus('Test en cours...')
+        let attempts = 0
+        while (attempts < 60) {
+          await new Promise(r => setTimeout(r, 2000))
+          const statusRes = await fetch(`/api/labs/experiments/tests?id=${data.test.id}`)
+          const statusData = await statusRes.json()
+          if (statusData.test?.status === 'completed' || statusData.test?.status === 'failed') {
+            setTestResults(statusData.test.experiment_test_results || [])
+            setTestStatus(statusData.test.status === 'completed' ? 'Terminé' : 'Échoué')
+            break
+          }
+          attempts++
+        }
+      }
+    } catch (e) { console.error(e); setTestStatus('Erreur') }
+    setTesting(false)
+  }
+
+  if (loading) return <div className="flex items-center justify-center h-96"><Loader2 className="h-8 w-8 animate-spin" /></div>
+  if (!folder) return <div className="text-center py-12">Dossier non trouvé</div>
+
+  const currentResult = testResults[selectedResultIndex]
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" onClick={onBack}><ChevronRight className="h-4 w-4 rotate-180 mr-2" />Retour</Button>
+          <div className="flex items-center gap-2">
+            <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center">{TYPE_ICONS[folder.detected_type]}</div>
+            <div><h1 className="text-xl font-bold">Test : {folder.name}</h1><p className="text-sm text-muted-foreground">{photos.length} photo(s) • {testResults.length > 0 ? `${testResults.length} résultats` : 'Aucun test'}</p></div>
+          </div>
+        </div>
+        <Button onClick={runTest} disabled={testing || photos.length === 0}>
+          {testing ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />{testStatus}</> : <><Play className="h-4 w-4 mr-2" />Lancer le test</>}
+        </Button>
+      </div>
+
+      <Tabs defaultValue="config">
+        <TabsList>
+          <TabsTrigger value="config"><Settings2 className="h-4 w-4 mr-2" />Configuration</TabsTrigger>
+          <TabsTrigger value="prompts"><FlaskConical className="h-4 w-4 mr-2" />Prompts</TabsTrigger>
+          <TabsTrigger value="results"><CheckCircle2 className="h-4 w-4 mr-2" />Résultats{testResults.length > 0 && <Badge variant="secondary" className="ml-2">{testResults.length}</Badge>}</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="config" className="space-y-4">
+          <div className="grid grid-cols-2 gap-6">
+            <Card className="p-6"><h3 className="font-semibold mb-4">Informations du modèle</h3>
+              <div className="space-y-3">
+                <div><label className="text-sm text-muted-foreground">Nom</label><p className="font-medium">{folder.name}</p></div>
+                <div><label className="text-sm text-muted-foreground">Type</label><div className="flex items-center gap-2">{TYPE_ICONS[folder.detected_type]}<span className="capitalize">{folder.detected_type}</span></div></div>
+                <div><label className="text-sm text-muted-foreground">Photos</label><p>{photos.length}</p></div>
+              </div>
+            </Card>
+            <Card className="p-6"><h3 className="font-semibold mb-4">Aperçu des photos</h3>
+              <div className="grid grid-cols-4 gap-2">{photos.slice(0, 8).map(p => (<div key={p.id} className="aspect-square bg-gray-100 rounded overflow-hidden"><img src={p.thumbnail_url || p.image_url} alt="" className="w-full h-full object-cover" /></div>))}</div>
+            </Card>
+          </div>
+          <Card className="p-6"><h3 className="font-semibold mb-4">Architecture des couches (9)</h3>
+            <div className="grid grid-cols-3 gap-3">{['Pré-traitement', 'Détection', 'Classification', 'Zones ROI', 'Prompts', 'OCR Claude', 'Validation croisée', 'Cohérence', 'Multi-pass'].map((layer, i) => (<div key={i} className="p-3 bg-gray-50 rounded-lg text-center"><div className="w-8 h-8 bg-teal-100 rounded-full flex items-center justify-center mx-auto mb-2"><span className="text-teal-700 text-sm font-medium">{i + 1}</span></div><p className="text-sm">{layer}</p></div>))}</div>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="prompts" className="space-y-4">
+          <Card className="p-4"><div className="flex items-center gap-2 mb-2"><Badge>Universel</Badge><span className="text-sm text-muted-foreground">S'applique à tous les compteurs</span></div><pre className="text-xs bg-gray-50 p-3 rounded max-h-40 overflow-y-auto whitespace-pre-wrap">{configs.universal?.base_prompt || 'Non configuré'}</pre></Card>
+          <Card className="p-4"><div className="flex items-center gap-2 mb-2"><Badge variant="secondary">{folder.detected_type}</Badge><span className="text-sm text-muted-foreground">Spécifique au type</span></div><pre className="text-xs bg-gray-50 p-3 rounded max-h-32 overflow-y-auto whitespace-pre-wrap">{configs.type?.additional_prompt || 'Non configuré'}</pre></Card>
+          <Card className="p-4 border-teal-200 bg-teal-50/30"><div className="flex items-center gap-2 mb-2"><Badge className="bg-teal-600">Modèle</Badge><span className="text-sm text-muted-foreground">{folder.name}</span></div><Textarea placeholder="Prompt spécifique au modèle (optionnel)" className="text-xs font-mono" /></Card>
+        </TabsContent>
+
+        <TabsContent value="results" className="space-y-4">
+          {testing && (<Card className="p-8 text-center"><Loader2 className="h-12 w-12 animate-spin mx-auto mb-4 text-teal-500" /><p className="text-lg font-medium">{testStatus}</p><p className="text-muted-foreground">Analyse avec 9 couches sur {photos.length} photos...</p></Card>)}
+          {!testing && testResults.length === 0 && (<Card className="p-8 text-center"><Play className="h-12 w-12 mx-auto mb-4 text-gray-300" /><p className="text-lg font-medium">Aucun test lancé</p><p className="text-muted-foreground mb-4">Cliquez sur "Lancer le test" pour analyser les photos</p><Button onClick={runTest}><Play className="h-4 w-4 mr-2" />Lancer maintenant</Button></Card>)}
+          {!testing && testResults.length > 0 && (
+            <div className="grid grid-cols-4 gap-6">
+              <div className="space-y-2"><h3 className="font-semibold mb-2">Photos testées</h3>
+                {testResults.map((result: any, i: number) => (<div key={result.id} onClick={() => setSelectedResultIndex(i)} className={`p-2 rounded-lg border cursor-pointer ${selectedResultIndex === i ? 'border-teal-500 bg-teal-50' : 'hover:border-gray-300'}`}><div className="flex items-center gap-2"><div className="w-10 h-10 bg-gray-100 rounded overflow-hidden flex-shrink-0">{photos[i] && <img src={photos[i].thumbnail_url || photos[i].image_url} alt="" className="w-full h-full object-cover" />}</div><div><p className="text-sm font-medium">Photo {i + 1}</p><div className="flex items-center gap-1">{(result.confidence_score || 0) >= 0.8 ? <CheckCircle2 className="h-3 w-3 text-green-500" /> : (result.confidence_score || 0) >= 0.5 ? <AlertTriangle className="h-3 w-3 text-orange-500" /> : <XCircle className="h-3 w-3 text-red-500" />}<span className="text-xs">{Math.round((result.confidence_score || 0) * 100)}%</span></div></div></div></div>))}
+              </div>
+              <div className="col-span-3 space-y-4">
+                {currentResult && (<>
+                  <Card className="p-4"><h3 className="font-semibold mb-3">Résultat</h3>
+                    <div className="grid grid-cols-4 gap-4">
+                      <div><p className="text-sm text-muted-foreground">Type</p><div className="flex items-center gap-1">{TYPE_ICONS[currentResult.actual_result?.type]}<span className="capitalize">{currentResult.actual_result?.type}</span></div></div>
+                      <div><p className="text-sm text-muted-foreground">Lecture</p><p className="font-mono text-lg font-bold">{currentResult.actual_result?.reading || '-'}</p></div>
+                      <div><p className="text-sm text-muted-foreground">Confiance</p><p className={`text-lg font-bold ${(currentResult.confidence_score || 0) >= 0.8 ? 'text-green-600' : 'text-orange-600'}`}>{Math.round((currentResult.confidence_score || 0) * 100)}%</p></div>
+                      <div><p className="text-sm text-muted-foreground">Durée</p><p>{currentResult.processing_time_ms}ms</p></div>
+                    </div>
+                    {currentResult.actual_result?.serial_number && <div className="mt-3"><p className="text-sm text-muted-foreground">N° série</p><p className="font-mono">{currentResult.actual_result.serial_number}</p></div>}
+                  </Card>
+                  <Card className="p-4"><h3 className="font-semibold mb-3">Détails</h3><pre className="text-xs bg-gray-50 p-3 rounded max-h-60 overflow-y-auto">{JSON.stringify(currentResult.actual_result, null, 2)}</pre></Card>
+                </>)}
+              </div>
+            </div>
+          )}
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }
