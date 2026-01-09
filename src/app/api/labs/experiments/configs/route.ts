@@ -14,27 +14,36 @@ export async function GET(request: NextRequest) {
     const type = searchParams.get('type')
     const activeOnly = searchParams.get('active') !== 'false'
 
+    if (id) {
+      // Requête pour un seul élément
+      const { data, error } = await supabase
+        .from('experiment_configs')
+        .select('*')
+        .eq('id', id)
+        .single()
+
+      if (error) throw error
+      return NextResponse.json({ configs: [data] })
+    }
+
+    // Requête pour liste
     let query = supabase
       .from('experiment_configs')
       .select('*')
       .order('created_at', { ascending: false })
 
-    if (id) {
-      query = query.eq('id', id).single()
-    } else {
-      if (type) {
-        query = query.eq('config_type', type)
-      }
-      if (activeOnly) {
-        query = query.eq('is_active', true)
-      }
+    if (type) {
+      query = query.eq('config_type', type)
+    }
+    if (activeOnly) {
+      query = query.eq('is_active', true)
     }
 
     const { data, error } = await query
 
     if (error) throw error
 
-    return NextResponse.json({ configs: id ? [data] : data })
+    return NextResponse.json({ configs: data })
   } catch (error) {
     console.error('Error fetching configs:', error)
     return NextResponse.json({ error: 'Failed to fetch configs' }, { status: 500 })
