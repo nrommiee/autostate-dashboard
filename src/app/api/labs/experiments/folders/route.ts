@@ -63,7 +63,8 @@ export async function GET(request: NextRequest) {
     if (error) throw error
 
     // Calculer photo_count pour chaque dossier
-    const foldersWithCount = (data || []).map((folder: Record<string, unknown> & { experiment_photos?: unknown[] }) => ({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const foldersWithCount = (data || []).map((folder: any) => ({
       ...folder,
       photo_count: folder.experiment_photos?.length || 0,
       min_photos_required: 5
