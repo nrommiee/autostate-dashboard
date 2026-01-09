@@ -38,7 +38,7 @@ import {
   Trash2, MoreVertical, ChevronRight, Loader2, AlertTriangle,
   Play, Eye, RefreshCw, Plus, Flame, Droplets, Bolt,
   Check, Sparkles, ArrowRight, XCircle, MoveRight,
-  ExternalLink
+  ExternalLink, Pencil
 } from 'lucide-react'
 
 // ============================================
@@ -168,13 +168,12 @@ const STATUS_LABELS: Record<string, string> = {
 // IMAGE COMPRESSION UTILITY
 // ============================================
 
-const MAX_IMAGE_SIZE = 1200 // Max width/height in pixels
-const JPEG_QUALITY = 0.8 // 80% quality
+const MAX_IMAGE_SIZE = 1200
+const JPEG_QUALITY = 0.8
 
 async function compressImage(file: File): Promise<File> {
   return new Promise((resolve, reject) => {
-    // If file is small enough, return as-is
-    if (file.size < 500 * 1024) { // Less than 500KB
+    if (file.size < 500 * 1024) {
       resolve(file)
       return
     }
@@ -186,7 +185,6 @@ async function compressImage(file: File): Promise<File> {
     img.onload = () => {
       let { width, height } = img
 
-      // Calculate new dimensions
       if (width > height) {
         if (width > MAX_IMAGE_SIZE) {
           height = Math.round((height * MAX_IMAGE_SIZE) / width)
@@ -201,8 +199,6 @@ async function compressImage(file: File): Promise<File> {
 
       canvas.width = width
       canvas.height = height
-
-      // Draw and compress
       ctx?.drawImage(img, 0, 0, width, height)
 
       canvas.toBlob(
@@ -212,7 +208,6 @@ async function compressImage(file: File): Promise<File> {
               type: 'image/jpeg',
               lastModified: Date.now(),
             })
-            console.log(`Compressed ${file.name}: ${(file.size / 1024).toFixed(0)}KB -> ${(compressedFile.size / 1024).toFixed(0)}KB`)
             resolve(compressedFile)
           } else {
             reject(new Error('Compression failed'))
@@ -247,7 +242,7 @@ export default function ExperimentsPage() {
   const [tests, setTests] = useState<Test[]>([])
 
   // UI State
-  const [selectedFolder, setSelectedFolder] = useState<Folder | null>(null)
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null)
   const [selectedTest, setSelectedTest] = useState<Test | null>(null)
   const [showConfigModal, setShowConfigModal] = useState(false)
   const [configModalLevel, setConfigModalLevel] = useState<'universal' | 'type' | 'model'>('universal')
@@ -300,7 +295,7 @@ export default function ExperimentsPage() {
   }
 
   // ============================================
-  // UPLOAD HANDLERS (with compression)
+  // UPLOAD HANDLERS
   // ============================================
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -311,22 +306,19 @@ export default function ExperimentsPage() {
     setUploadProgress('Compression des images...')
 
     try {
-      // Compress all images first
       const compressedFiles: File[] = []
       for (let i = 0; i < files.length; i++) {
         setUploadProgress(`Compression ${i + 1}/${files.length}...`)
         try {
           const compressed = await compressImage(files[i])
           compressedFiles.push(compressed)
-        } catch (err) {
-          console.error('Compression error for', files[i].name, err)
-          compressedFiles.push(files[i]) // Use original if compression fails
+        } catch {
+          compressedFiles.push(files[i])
         }
       }
 
-      setUploadProgress('Upload en cours...')
+      setUploadProgress('Analyse et upload...')
 
-      // Upload compressed files
       const formData = new FormData()
       for (const file of compressedFiles) {
         formData.append('files', file)
@@ -346,7 +338,6 @@ export default function ExperimentsPage() {
       }
 
       const data = await res.json()
-      console.log('Upload response:', data)
       
       if (data.uploaded && data.uploaded.length > 0) {
         await loadData()
@@ -374,10 +365,6 @@ export default function ExperimentsPage() {
     if (!confirm('Supprimer cette photo ?')) return
     await fetch(`/api/labs/experiments/photos?id=${photoId}`, { method: 'DELETE' })
     await loadData()
-    if (selectedFolder) {
-      const updated = folders.find(f => f.id === selectedFolder.id)
-      setSelectedFolder(updated || null)
-    }
   }
 
   const handleMovePhoto = async (photoId: string, targetFolderId: string) => {
@@ -392,7 +379,16 @@ export default function ExperimentsPage() {
   const handleDeleteFolder = async (folderId: string) => {
     if (!confirm('Supprimer ce dossier et toutes ses photos ?')) return
     await fetch(`/api/labs/experiments/folders?id=${folderId}`, { method: 'DELETE' })
-    setSelectedFolder(null)
+    setSelectedFolderId(null)
+    await loadData()
+  }
+
+  const handleUpdateFolder = async (folderId: string, updates: { name?: string; detected_type?: string }) => {
+    await fetch('/api/labs/experiments/folders', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: folderId, ...updates })
+    })
     await loadData()
   }
 
@@ -448,6 +444,8 @@ export default function ExperimentsPage() {
     if (value === null || value === undefined) return '-'
     return `${(value * 100).toFixed(1)}%`
   }
+
+  const selectedFolder = folders.find(f => f.id === selectedFolderId) || null
 
   // ============================================
   // RENDER
@@ -540,7 +538,7 @@ export default function ExperimentsPage() {
                   <p className="text-lg font-medium mb-2">Glissez vos photos ici</p>
                   <p className="text-sm text-muted-foreground mb-4">ou cliquez pour sélectionner</p>
                   <p className="text-xs text-muted-foreground">
-                    Les images seront automatiquement compressées (max 1200px, ~300KB)
+                    🤖 Les photos seront analysées par IA et regroupées automatiquement par compteur
                   </p>
                 </>
               )}
@@ -601,20 +599,19 @@ export default function ExperimentsPage() {
         {/* ============================================ */}
         <TabsContent value="folders" className="space-y-6">
           {selectedFolder ? (
-            // Vue détail dossier
             <FolderDetail 
-              folder={selectedFolder}
+              folderId={selectedFolder.id}
               folders={folders}
-              onBack={() => setSelectedFolder(null)}
+              onBack={() => setSelectedFolderId(null)}
               onDeletePhoto={handleDeletePhoto}
               onMovePhoto={handleMovePhoto}
               onDeleteFolder={handleDeleteFolder}
+              onUpdateFolder={handleUpdateFolder}
               onRunTest={handleRunTest}
               onPromote={handlePromote}
               onRefresh={loadData}
             />
           ) : (
-            // Liste des dossiers
             <>
               <div className="flex items-center justify-between">
                 <p className="text-muted-foreground">{folders.length} dossier(s)</p>
@@ -638,7 +635,7 @@ export default function ExperimentsPage() {
                     <Card 
                       key={folder.id} 
                       className="p-4 hover:shadow-md transition-shadow cursor-pointer"
-                      onClick={() => setSelectedFolder(folder)}
+                      onClick={() => setSelectedFolderId(folder.id)}
                     >
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-4">
@@ -788,9 +785,6 @@ export default function ExperimentsPage() {
               <Card className="p-8 text-center">
                 <Settings2 className="h-10 w-10 mx-auto mb-3 text-gray-300" />
                 <p className="text-muted-foreground">Aucune config spécifique</p>
-                <p className="text-sm text-muted-foreground">
-                  Créez des configs pour vos modèles de compteurs
-                </p>
               </Card>
             ) : (
               <div className="grid md:grid-cols-2 gap-4">
@@ -998,30 +992,85 @@ export default function ExperimentsPage() {
 }
 
 // ============================================
-// COMPOSANT: FOLDER DETAIL
+// COMPOSANT: FOLDER DETAIL (avec chargement photos)
 // ============================================
 
 function FolderDetail({ 
-  folder, 
+  folderId,
   folders,
   onBack, 
   onDeletePhoto, 
   onMovePhoto,
   onDeleteFolder,
+  onUpdateFolder,
   onRunTest,
   onPromote,
+  onRefresh
 }: {
-  folder: Folder
+  folderId: string
   folders: Folder[]
   onBack: () => void
   onDeletePhoto: (id: string) => void
   onMovePhoto: (photoId: string, targetFolderId: string) => void
   onDeleteFolder: (id: string) => void
+  onUpdateFolder: (folderId: string, updates: { name?: string; detected_type?: string }) => void
   onRunTest: (folderId: string) => void
   onPromote: (folderId: string) => void
   onRefresh: () => void
 }) {
-  const photos = folder.experiment_photos || []
+  const [loading, setLoading] = useState(true)
+  const [folder, setFolder] = useState<Folder | null>(null)
+  const [photos, setPhotos] = useState<Photo[]>([])
+  const [editingName, setEditingName] = useState(false)
+  const [editedName, setEditedName] = useState('')
+  const [editedType, setEditedType] = useState('')
+
+  // Charger le dossier et ses photos
+  useEffect(() => {
+    const loadFolder = async () => {
+      setLoading(true)
+      try {
+        const res = await fetch(`/api/labs/experiments/folders?id=${folderId}`)
+        const data = await res.json()
+        if (data.folder) {
+          setFolder(data.folder)
+          setPhotos(data.folder.experiment_photos || [])
+          setEditedName(data.folder.name)
+          setEditedType(data.folder.detected_type)
+        }
+      } catch (error) {
+        console.error('Error loading folder:', error)
+      } finally {
+        setLoading(false)
+      }
+    }
+    loadFolder()
+  }, [folderId])
+
+  const handleSaveName = async () => {
+    if (!folder) return
+    await onUpdateFolder(folder.id, { name: editedName, detected_type: editedType })
+    setFolder({ ...folder, name: editedName, detected_type: editedType })
+    setEditingName(false)
+    onRefresh()
+  }
+
+  const handleDeletePhotoAndRefresh = async (photoId: string) => {
+    await onDeletePhoto(photoId)
+    setPhotos(photos.filter(p => p.id !== photoId))
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-8 w-8 animate-spin text-teal-600" />
+      </div>
+    )
+  }
+
+  if (!folder) {
+    return <div>Dossier non trouvé</div>
+  }
 
   return (
     <div className="space-y-6">
@@ -1031,15 +1080,51 @@ function FolderDetail({
           <Button variant="ghost" onClick={onBack}>
             ← Retour
           </Button>
-          <div className="flex items-center gap-3">
-            {TYPE_ICONS[folder.detected_type]}
-            <div>
-              <h2 className="text-xl font-bold">{folder.name}</h2>
-              <p className="text-sm text-muted-foreground">
-                {folder.photo_count} photo{folder.photo_count > 1 ? 's' : ''}
-              </p>
+          
+          {editingName ? (
+            <div className="flex items-center gap-3">
+              <Select value={editedType} onValueChange={setEditedType}>
+                <SelectTrigger className="w-32">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="gas">🔥 Gaz</SelectItem>
+                  <SelectItem value="water">💧 Eau</SelectItem>
+                  <SelectItem value="electricity">⚡ Électricité</SelectItem>
+                  <SelectItem value="unknown">❓ Inconnu</SelectItem>
+                </SelectContent>
+              </Select>
+              <Input 
+                value={editedName}
+                onChange={(e) => setEditedName(e.target.value)}
+                className="w-64"
+              />
+              <Button size="sm" onClick={handleSaveName}>
+                <Check className="h-4 w-4" />
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setEditingName(false)}>
+                <XCircle className="h-4 w-4" />
+              </Button>
             </div>
-          </div>
+          ) : (
+            <div className="flex items-center gap-3">
+              {TYPE_ICONS[folder.detected_type]}
+              <div>
+                <h2 className="text-xl font-bold">{folder.name}</h2>
+                <p className="text-sm text-muted-foreground">
+                  {folder.photo_count} photo{folder.photo_count > 1 ? 's' : ''}
+                </p>
+              </div>
+              <Button 
+                variant="ghost" 
+                size="sm"
+                onClick={() => setEditingName(true)}
+              >
+                <Pencil className="h-4 w-4" />
+              </Button>
+            </div>
+          )}
+          
           <Badge className={STATUS_COLORS[folder.status]}>
             {STATUS_LABELS[folder.status]}
           </Badge>
@@ -1084,10 +1169,10 @@ function FolderDetail({
             <AlertTriangle className="h-5 w-5 text-orange-600" />
             <div className="flex-1">
               <p className="font-medium text-orange-800">
-                {folder.min_photos_required - folder.photo_count} photo(s) manquante(s)
+                {folder.min_photos_required - photos.length} photo(s) manquante(s)
               </p>
               <Progress 
-                value={(folder.photo_count / folder.min_photos_required) * 100} 
+                value={(photos.length / folder.min_photos_required) * 100} 
                 className="h-2 mt-2"
               />
             </div>
@@ -1136,7 +1221,7 @@ function FolderDetail({
                   <Button 
                     size="sm" 
                     variant="destructive"
-                    onClick={() => onDeletePhoto(photo.id)}
+                    onClick={() => handleDeletePhotoAndRefresh(photo.id)}
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>
@@ -1197,7 +1282,6 @@ function TestDetail({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ result_id: resultId, is_correct: isCorrect })
     })
-    // Reload test
     const res = await fetch(`/api/labs/experiments/tests?id=${test.id}`)
     const data = await res.json()
     setFullTest(data.test)
@@ -1261,7 +1345,6 @@ function TestDetail({
           {results.map(result => (
             <Card key={result.id} className="p-4">
               <div className="flex items-start gap-4">
-                {/* Image */}
                 <div className="w-20 h-20 bg-gray-100 rounded-lg overflow-hidden flex-shrink-0">
                   {result.experiment_photos && (
                     <img 
@@ -1272,7 +1355,6 @@ function TestDetail({
                   )}
                 </div>
                 
-                {/* Résultat */}
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-2">
                     {result.is_correct === true && <Check className="h-5 w-5 text-green-600" />}
@@ -1293,7 +1375,6 @@ function TestDetail({
                   )}
                 </div>
 
-                {/* Actions */}
                 {result.is_correct === null && (
                   <div className="flex gap-2">
                     <Button 
@@ -1343,15 +1424,9 @@ function ConfigEditor({
   onCancel: () => void
 }) {
   const [saving, setSaving] = useState(false)
-  
-  // Universal state
   const [basePrompt, setBasePrompt] = useState(universal?.base_prompt || '')
   const [minConfidence, setMinConfidence] = useState(universal?.min_confidence || 0.7)
-  
-  // Type state
   const [additionalPrompt, setAdditionalPrompt] = useState(type?.additional_prompt || '')
-  
-  // Model state
   const [modelName, setModelName] = useState(model?.name || '')
   const [manufacturer, setManufacturer] = useState(model?.manufacturer || '')
   const [specificPrompt, setSpecificPrompt] = useState(model?.specific_prompt || '')
@@ -1433,7 +1508,7 @@ function ConfigEditor({
 
       {level === 'type' && (
         <div>
-          <label className="text-sm font-medium mb-2 block">Prompt additionnel (s'ajoute au prompt universel)</label>
+          <label className="text-sm font-medium mb-2 block">Prompt additionnel</label>
           <Textarea 
             value={additionalPrompt}
             onChange={(e) => setAdditionalPrompt(e.target.value)}
@@ -1489,7 +1564,7 @@ function ConfigEditor({
               value={specificPrompt}
               onChange={(e) => setSpecificPrompt(e.target.value)}
               className="font-mono text-sm h-32"
-              placeholder="Instructions spécifiques pour ce modèle de compteur..."
+              placeholder="Instructions spécifiques..."
             />
           </div>
         </>
