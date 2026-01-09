@@ -27,135 +27,198 @@ import {
   TabsList,
   TabsTrigger,
 } from '@/components/ui/tabs'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { 
-  FlaskConical, Play, Upload, Image as ImageIcon, Settings2,
-  BarChart3, CheckCircle, XCircle, AlertTriangle,
-  Clock, Zap, DollarSign, Target, TrendingUp,
-  RefreshCw, Plus, Trash2, Eye, Edit,
-  ChevronRight, Loader2, Camera, FileJson, Sliders,
-  Beaker, Microscope, Database, Layers
+  Upload, FolderOpen, Settings2, FlaskConical, CheckCircle2,
+  Trash2, MoreVertical, ChevronRight, Loader2, AlertTriangle,
+  Play, Eye, RefreshCw, Plus, Flame, Droplets, Bolt,
+  Check, Sparkles, ArrowRight, XCircle, MoveRight,
+  ExternalLink
 } from 'lucide-react'
 
-// Types
-interface ExperimentConfig {
+// ============================================
+// TYPES
+// ============================================
+
+interface ConfigUniversal {
   id: string
   name: string
-  description: string | null
-  config_type: 'prompt' | 'preprocessing' | 'pipeline' | 'full'
-  config_data: any
-  is_active: boolean
-  is_baseline: boolean
-  created_at: string
+  base_prompt: string
+  preprocessing: {
+    brightness: number
+    contrast: number
+    sharpness: number
+    denoise: string | null
+    binarization: string | null
+  }
+  min_confidence: number
+  multi_pass_enabled: boolean
+  multi_pass_count: number
+  version: number
 }
 
-interface ExperimentRun {
+interface ConfigType {
   id: string
-  config_id: string
-  image_url: string | null
-  expected_result: any
-  actual_result: any
-  confidence_score: number | null
-  processing_time_ms: number | null
-  tokens_used: number | null
-  api_cost_usd: number | null
-  is_correct: boolean | null
-  error_type: string | null
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'evaluated'
-  created_at: string
-  experiment_configs?: { name: string; config_type: string }
-}
-
-interface ExperimentBatch {
-  id: string
+  meter_type: 'gas' | 'water' | 'electricity'
   name: string
-  description: string | null
-  config_id: string
-  total_runs: number
-  completed_runs: number
-  successful_runs: number
+  additional_prompt: string | null
+  preprocessing_override: Record<string, unknown> | null
+  typical_unit: string
+  decimal_places: number
+}
+
+interface ConfigModel {
+  id: string
+  type_config_id: string | null
+  meter_model_id: string | null
+  name: string
+  manufacturer: string | null
+  specific_prompt: string | null
+  preprocessing_override: Record<string, unknown> | null
   accuracy_rate: number | null
-  status: 'draft' | 'running' | 'completed' | 'cancelled'
-  created_at: string
-  experiment_configs?: { name: string; config_type: string }
+  is_promoted: boolean
+  experiment_config_type?: ConfigType
 }
 
-interface ExperimentImage {
+interface Folder {
   id: string
+  name: string
+  description: string | null
+  linked_meter_model_id: string | null
+  config_model_id: string | null
+  detected_type: string
+  status: 'draft' | 'ready' | 'testing' | 'validated' | 'promoted'
+  photo_count: number
+  min_photos_required: number
+  meter_models?: { id: string; name: string; manufacturer: string }
+  experiment_photos?: Photo[]
+}
+
+interface Photo {
+  id: string
+  folder_id: string
   image_url: string
   thumbnail_url: string | null
   original_filename: string | null
-  meter_type: string | null
-  display_type: string | null
-  lighting: string | null
-  ground_truth: any
-  tags: string[]
-  times_used: number
-  created_at: string
+  ground_truth: Record<string, unknown> | null
+  status: 'pending' | 'tested' | 'validated' | 'reference'
 }
 
-interface Stats {
-  total_runs: number
-  completed_runs: number
-  evaluated_runs: number
-  correct_runs: number
+interface Test {
+  id: string
+  folder_id: string
+  name: string
+  total_photos: number
+  successful_count: number
+  failed_count: number
   accuracy_rate: number | null
-  avg_confidence: number
-  avg_processing_time_ms: number
-  total_cost_usd: number
+  avg_confidence: number | null
+  avg_processing_time_ms: number | null
+  total_cost_usd: number | null
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  created_at: string
+  experiment_folders?: { id: string; name: string }
+  experiment_config_model?: { id: string; name: string }
+  experiment_test_results?: TestResult[]
 }
 
-const CONFIG_TYPE_LABELS: Record<string, { label: string; icon: any; color: string }> = {
-  prompt: { label: 'Prompt', icon: FileJson, color: 'bg-blue-100 text-blue-700' },
-  preprocessing: { label: 'Pré-traitement', icon: Sliders, color: 'bg-purple-100 text-purple-700' },
-  pipeline: { label: 'Pipeline', icon: Layers, color: 'bg-green-100 text-green-700' },
-  full: { label: 'Complet', icon: Beaker, color: 'bg-orange-100 text-orange-700' }
+interface TestResult {
+  id: string
+  photo_id: string
+  expected_result: Record<string, unknown> | null
+  actual_result: Record<string, unknown>
+  confidence_score: number
+  is_correct: boolean | null
+  experiment_photos?: Photo
 }
 
-export default function ExperimentsLabPage() {
-  const [activeTab, setActiveTab] = useState('overview')
+// ============================================
+// CONSTANTES
+// ============================================
+
+const TYPE_ICONS: Record<string, React.ReactNode> = {
+  gas: <Flame className="h-4 w-4 text-orange-500" />,
+  water: <Droplets className="h-4 w-4 text-blue-500" />,
+  electricity: <Bolt className="h-4 w-4 text-yellow-500" />,
+  unknown: <AlertTriangle className="h-4 w-4 text-gray-400" />
+}
+
+const STATUS_COLORS: Record<string, string> = {
+  draft: 'bg-gray-100 text-gray-700',
+  ready: 'bg-green-100 text-green-700',
+  testing: 'bg-blue-100 text-blue-700',
+  validated: 'bg-purple-100 text-purple-700',
+  promoted: 'bg-teal-100 text-teal-700'
+}
+
+const STATUS_LABELS: Record<string, string> = {
+  draft: 'Brouillon',
+  ready: 'Prêt',
+  testing: 'En test',
+  validated: 'Validé',
+  promoted: 'Promu'
+}
+
+// ============================================
+// COMPOSANT PRINCIPAL
+// ============================================
+
+export default function ExperimentsPage() {
+  const [activeTab, setActiveTab] = useState('import')
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
 
-  const [configs, setConfigs] = useState<ExperimentConfig[]>([])
-  const [runs, setRuns] = useState<ExperimentRun[]>([])
-  const [batches, setBatches] = useState<ExperimentBatch[]>([])
-  const [images, setImages] = useState<ExperimentImage[]>([])
-  const [stats, setStats] = useState<Stats | null>(null)
+  // Data
+  const [configs, setConfigs] = useState<{
+    universal: ConfigUniversal | null
+    types: ConfigType[]
+    models: ConfigModel[]
+  }>({ universal: null, types: [], models: [] })
+  const [folders, setFolders] = useState<Folder[]>([])
+  const [tests, setTests] = useState<Test[]>([])
 
-  const [selectedConfig, setSelectedConfig] = useState<ExperimentConfig | null>(null)
-  const [selectedRun, setSelectedRun] = useState<ExperimentRun | null>(null)
+  // UI State
+  const [selectedFolder, setSelectedFolder] = useState<Folder | null>(null)
+  const [selectedTest, setSelectedTest] = useState<Test | null>(null)
   const [showConfigModal, setShowConfigModal] = useState(false)
-  const [showRunModal, setShowRunModal] = useState(false)
+  const [configModalLevel, setConfigModalLevel] = useState<'universal' | 'type' | 'model'>('universal')
+  const [selectedConfigType, setSelectedConfigType] = useState<ConfigType | null>(null)
+  const [selectedConfigModel, setSelectedConfigModel] = useState<ConfigModel | null>(null)
 
-  const [testImage, setTestImage] = useState<string | null>(null)
-  const [testConfigId, setTestConfigId] = useState<string>('')
-  const [testing, setTesting] = useState(false)
-  const [testResult, setTestResult] = useState<any>(null)
+  // Upload
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [uploading, setUploading] = useState(false)
+
+  // ============================================
+  // DATA LOADING
+  // ============================================
 
   const loadData = useCallback(async () => {
     try {
-      const [configsRes, runsRes, batchesRes, imagesRes, statsRes] = await Promise.all([
-        fetch('/api/labs/experiments/configs'),
-        fetch('/api/labs/experiments/runs?limit=20'),
-        fetch('/api/labs/experiments/batches?limit=10'),
-        fetch('/api/labs/experiments/images?limit=20'),
-        fetch('/api/labs/experiments/stats?period=7d')
+      const [configsRes, foldersRes, testsRes] = await Promise.all([
+        fetch('/api/labs/experiments/configs?level=all'),
+        fetch('/api/labs/experiments/folders?with_photos=true'),
+        fetch('/api/labs/experiments/tests')
       ])
 
-      const [configsData, runsData, batchesData, imagesData, statsData] = await Promise.all([
+      const [configsData, foldersData, testsData] = await Promise.all([
         configsRes.json(),
-        runsRes.json(),
-        batchesRes.json(),
-        imagesRes.json(),
-        statsRes.json()
+        foldersRes.json(),
+        testsRes.json()
       ])
 
-      setConfigs(configsData.configs || [])
-      setRuns(runsData.runs || [])
-      setBatches(batchesData.batches || [])
-      setImages(imagesData.images || [])
-      setStats(statsData.stats || null)
+      setConfigs({
+        universal: configsData.universal || null,
+        types: configsData.types || [],
+        models: configsData.models || []
+      })
+      setFolders(foldersData.folders || [])
+      setTests(testsData.tests || [])
     } catch (error) {
       console.error('Error loading data:', error)
     } finally {
@@ -171,59 +234,129 @@ export default function ExperimentsLabPage() {
     setRefreshing(false)
   }
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (file) {
-      const reader = new FileReader()
-      reader.onload = (e) => {
-        setTestImage(e.target?.result as string)
-        setTestResult(null)
+  // ============================================
+  // UPLOAD HANDLERS
+  // ============================================
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files || files.length === 0) return
+
+    setUploading(true)
+
+    const formData = new FormData()
+    for (let i = 0; i < files.length; i++) {
+      formData.append('files', files[i])
+    }
+    formData.append('auto_cluster', 'true')
+
+    try {
+      const res = await fetch('/api/labs/experiments/photos', {
+        method: 'POST',
+        body: formData
+      })
+      const data = await res.json()
+      
+      if (data.uploaded) {
+        await loadData()
+        setActiveTab('folders')
       }
-      reader.readAsDataURL(file)
+    } catch (error) {
+      console.error('Upload error:', error)
+    } finally {
+      setUploading(false)
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
     }
   }
 
-  const handleRunTest = async () => {
-    if (!testImage || !testConfigId) return
-    setTesting(true)
-    setTestResult(null)
+  // ============================================
+  // ACTION HANDLERS
+  // ============================================
 
+  const handleDeletePhoto = async (photoId: string) => {
+    if (!confirm('Supprimer cette photo ?')) return
+    await fetch(`/api/labs/experiments/photos?id=${photoId}`, { method: 'DELETE' })
+    await loadData()
+    if (selectedFolder) {
+      const updated = folders.find(f => f.id === selectedFolder.id)
+      setSelectedFolder(updated || null)
+    }
+  }
+
+  const handleMovePhoto = async (photoId: string, targetFolderId: string) => {
+    await fetch('/api/labs/experiments/photos', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ photo_ids: [photoId], target_folder_id: targetFolderId })
+    })
+    await loadData()
+  }
+
+  const handleDeleteFolder = async (folderId: string) => {
+    if (!confirm('Supprimer ce dossier et toutes ses photos ?')) return
+    await fetch(`/api/labs/experiments/folders?id=${folderId}`, { method: 'DELETE' })
+    setSelectedFolder(null)
+    await loadData()
+  }
+
+  const handleRunTest = async (folderId: string, configModelId?: string) => {
     try {
-      const res = await fetch('/api/labs/experiments/runs', {
+      const res = await fetch('/api/labs/experiments/tests', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          config_id: testConfigId,
-          image_base64: testImage,
+          folder_id: folderId,
+          config_model_id: configModelId,
+          use_universal_only: !configModelId,
           run_immediately: true
         })
       })
       const data = await res.json()
-      setTestResult(data.run)
-      const runsRes = await fetch('/api/labs/experiments/runs?limit=20')
-      const runsData = await runsRes.json()
-      setRuns(runsData.runs || [])
+      
+      if (data.test) {
+        await loadData()
+        setActiveTab('tests')
+        setSelectedTest(data.test)
+      }
     } catch (error) {
-      setTestResult({ error: String(error) })
-    } finally {
-      setTesting(false)
+      console.error('Test error:', error)
     }
   }
 
-  const formatDuration = (ms: number | null) => {
-    if (!ms) return '-'
-    return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(2)}s`
+  const handlePromote = async (folderId: string) => {
+    if (!confirm('Promouvoir ce dossier vers les Modèles ?')) return
+    
+    try {
+      const res = await fetch('/api/labs/experiments/promote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folder_id: folderId })
+      })
+      const data = await res.json()
+      
+      if (data.meter_model) {
+        await loadData()
+        alert(`Modèle ${data.action === 'created' ? 'créé' : 'mis à jour'}: ${data.meter_model.name}`)
+      }
+    } catch (error) {
+      console.error('Promote error:', error)
+    }
   }
 
-  const formatCost = (usd: number | null) => {
-    if (!usd) return '-'
-    return `$${usd.toFixed(4)}`
-  }
+  // ============================================
+  // HELPERS
+  // ============================================
 
   const formatPercent = (value: number | null) => {
-    if (value === null) return '-'
+    if (value === null || value === undefined) return '-'
     return `${(value * 100).toFixed(1)}%`
   }
+
+  // ============================================
+  // RENDER
+  // ============================================
 
   if (loading) {
     return (
@@ -242,419 +375,1038 @@ export default function ExperimentsLabPage() {
             <FlaskConical className="h-6 w-6 text-white" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold">Labs Expérimental</h1>
-            <p className="text-muted-foreground">Sandbox isolée pour tester sans risque</p>
+            <h1 className="text-2xl font-bold">Experiments</h1>
+            <p className="text-muted-foreground">Créez et testez vos modèles de compteurs</p>
           </div>
         </div>
-        <div className="flex items-center gap-3">
-          <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">
-            <Beaker className="h-3 w-3 mr-1" />
-            Environnement isolé
-          </Badge>
-          <Button variant="outline" onClick={handleRefresh} disabled={refreshing}>
-            <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
-            Actualiser
-          </Button>
-        </div>
+        <Button variant="outline" onClick={handleRefresh} disabled={refreshing}>
+          <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
+          Actualiser
+        </Button>
       </div>
 
-      {/* Warning */}
-      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
-        <AlertTriangle className="h-5 w-5 text-amber-600 mt-0.5" />
-        <div>
-          <p className="font-medium text-amber-800">Environnement de test</p>
-          <p className="text-sm text-amber-700">
-            Les expériences ici n'affectent pas la production. Testez librement vos nouvelles configs.
-          </p>
-        </div>
-      </div>
-
-      {/* Tabs */}
+      {/* Main Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid grid-cols-5 w-full max-w-2xl">
-          <TabsTrigger value="overview"><BarChart3 className="h-4 w-4 mr-2" />Aperçu</TabsTrigger>
-          <TabsTrigger value="test"><Play className="h-4 w-4 mr-2" />Test</TabsTrigger>
-          <TabsTrigger value="configs"><Settings2 className="h-4 w-4 mr-2" />Configs</TabsTrigger>
-          <TabsTrigger value="batches"><Database className="h-4 w-4 mr-2" />Batches</TabsTrigger>
-          <TabsTrigger value="images"><ImageIcon className="h-4 w-4 mr-2" />Images</TabsTrigger>
+        <TabsList className="grid grid-cols-5 w-full max-w-3xl">
+          <TabsTrigger value="import" className="flex items-center gap-2">
+            <Upload className="h-4 w-4" />
+            Import
+          </TabsTrigger>
+          <TabsTrigger value="folders" className="flex items-center gap-2">
+            <FolderOpen className="h-4 w-4" />
+            Dossiers
+            {folders.filter(f => f.status === 'ready').length > 0 && (
+              <Badge variant="secondary" className="ml-1 h-5 w-5 p-0 justify-center text-xs">
+                {folders.filter(f => f.status === 'ready').length}
+              </Badge>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="configs" className="flex items-center gap-2">
+            <Settings2 className="h-4 w-4" />
+            Configs
+          </TabsTrigger>
+          <TabsTrigger value="tests" className="flex items-center gap-2">
+            <FlaskConical className="h-4 w-4" />
+            Tests
+          </TabsTrigger>
+          <TabsTrigger value="models" className="flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4" />
+            Modèles
+          </TabsTrigger>
         </TabsList>
 
-        {/* Overview Tab */}
-        <TabsContent value="overview" className="space-y-6">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <Card className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs text-muted-foreground mb-1">Tests</p>
-                  <p className="text-2xl font-bold">{stats?.total_runs || 0}</p>
+        {/* ============================================ */}
+        {/* TAB: IMPORT */}
+        {/* ============================================ */}
+        <TabsContent value="import" className="space-y-6">
+          <Card className="p-8">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={handleFileSelect}
+            />
+            
+            <div 
+              className={`border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-colors
+                ${uploading ? 'border-teal-500 bg-teal-50' : 'border-gray-300 hover:border-teal-500 hover:bg-teal-50/50'}`}
+              onClick={() => !uploading && fileInputRef.current?.click()}
+            >
+              {uploading ? (
+                <div className="space-y-4">
+                  <Loader2 className="h-12 w-12 mx-auto text-teal-600 animate-spin" />
+                  <p className="text-lg font-medium">Import en cours...</p>
                 </div>
-                <Target className="h-8 w-8 text-teal-600 opacity-50" />
+              ) : (
+                <>
+                  <Upload className="h-12 w-12 mx-auto text-gray-400 mb-4" />
+                  <p className="text-lg font-medium mb-2">Glissez vos photos ici</p>
+                  <p className="text-sm text-muted-foreground mb-4">ou cliquez pour sélectionner</p>
+                  <p className="text-xs text-muted-foreground">
+                    Les photos seront automatiquement triées par compteur similaire
+                  </p>
+                </>
+              )}
+            </div>
+          </Card>
+
+          {/* Stats rapides */}
+          <div className="grid grid-cols-4 gap-4">
+            <Card className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center">
+                  <FolderOpen className="h-5 w-5 text-gray-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold">{folders.length}</p>
+                  <p className="text-xs text-muted-foreground">Dossiers</p>
+                </div>
               </div>
             </Card>
             <Card className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs text-muted-foreground mb-1">Précision</p>
-                  <p className="text-2xl font-bold text-green-600">{formatPercent(stats?.accuracy_rate || null)}</p>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
+                  <Check className="h-5 w-5 text-green-600" />
                 </div>
-                <TrendingUp className="h-8 w-8 text-green-600 opacity-50" />
+                <div>
+                  <p className="text-2xl font-bold">{folders.filter(f => f.status === 'ready').length}</p>
+                  <p className="text-xs text-muted-foreground">Prêts pour test</p>
+                </div>
               </div>
             </Card>
             <Card className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs text-muted-foreground mb-1">Confiance</p>
-                  <p className="text-2xl font-bold">{formatPercent(stats?.avg_confidence || null)}</p>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
+                  <FlaskConical className="h-5 w-5 text-purple-600" />
                 </div>
-                <Zap className="h-8 w-8 text-yellow-600 opacity-50" />
+                <div>
+                  <p className="text-2xl font-bold">{tests.length}</p>
+                  <p className="text-xs text-muted-foreground">Tests</p>
+                </div>
               </div>
             </Card>
             <Card className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-teal-100 rounded-lg flex items-center justify-center">
+                  <CheckCircle2 className="h-5 w-5 text-teal-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold">{configs.models.filter(m => m.is_promoted).length}</p>
+                  <p className="text-xs text-muted-foreground">Promus</p>
+                </div>
+              </div>
+            </Card>
+          </div>
+        </TabsContent>
+
+        {/* ============================================ */}
+        {/* TAB: DOSSIERS */}
+        {/* ============================================ */}
+        <TabsContent value="folders" className="space-y-6">
+          {selectedFolder ? (
+            // Vue détail dossier
+            <FolderDetail 
+              folder={selectedFolder}
+              folders={folders}
+              onBack={() => setSelectedFolder(null)}
+              onDeletePhoto={handleDeletePhoto}
+              onMovePhoto={handleMovePhoto}
+              onDeleteFolder={handleDeleteFolder}
+              onRunTest={handleRunTest}
+              onPromote={handlePromote}
+              onRefresh={loadData}
+            />
+          ) : (
+            // Liste des dossiers
+            <>
+              <div className="flex items-center justify-between">
+                <p className="text-muted-foreground">{folders.length} dossier(s)</p>
+              </div>
+
+              {folders.length === 0 ? (
+                <Card className="p-12 text-center">
+                  <FolderOpen className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+                  <p className="text-lg font-medium text-gray-600 mb-2">Aucun dossier</p>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    Importez des photos pour créer automatiquement des dossiers
+                  </p>
+                  <Button onClick={() => setActiveTab('import')}>
+                    <Upload className="h-4 w-4 mr-2" />
+                    Importer des photos
+                  </Button>
+                </Card>
+              ) : (
+                <div className="grid gap-4">
+                  {folders.map(folder => (
+                    <Card 
+                      key={folder.id} 
+                      className="p-4 hover:shadow-md transition-shadow cursor-pointer"
+                      onClick={() => setSelectedFolder(folder)}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                          <div className="w-12 h-12 bg-gray-100 rounded-lg flex items-center justify-center">
+                            {TYPE_ICONS[folder.detected_type] || TYPE_ICONS.unknown}
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h3 className="font-semibold">{folder.name}</h3>
+                              {folder.linked_meter_model_id && (
+                                <Badge variant="outline" className="text-xs">
+                                  🔗 {folder.meter_models?.name}
+                                </Badge>
+                              )}
+                            </div>
+                            <p className="text-sm text-muted-foreground">
+                              {folder.photo_count} photo{folder.photo_count > 1 ? 's' : ''}
+                            </p>
+                          </div>
+                        </div>
+                        
+                        <div className="flex items-center gap-4">
+                          {folder.status === 'draft' && (
+                            <div className="w-32">
+                              <Progress 
+                                value={(folder.photo_count / folder.min_photos_required) * 100} 
+                                className="h-2"
+                              />
+                              <p className="text-xs text-muted-foreground mt-1 text-center">
+                                {folder.min_photos_required - folder.photo_count} manquante(s)
+                              </p>
+                            </div>
+                          )}
+                          
+                          <Badge className={STATUS_COLORS[folder.status]}>
+                            {STATUS_LABELS[folder.status]}
+                          </Badge>
+                          
+                          {folder.status === 'ready' && (
+                            <Button 
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleRunTest(folder.id)
+                              }}
+                            >
+                              <Play className="h-4 w-4 mr-1" />
+                              Tester
+                            </Button>
+                          )}
+                          
+                          <ChevronRight className="h-5 w-5 text-gray-400" />
+                        </div>
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </TabsContent>
+
+        {/* ============================================ */}
+        {/* TAB: CONFIGS */}
+        {/* ============================================ */}
+        <TabsContent value="configs" className="space-y-6">
+          {/* Config Universelle */}
+          <div>
+            <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
+              🌍 Configuration Universelle
+            </h3>
+            <Card className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-xs text-muted-foreground mb-1">Coût</p>
-                  <p className="text-2xl font-bold">{formatCost(stats?.total_cost_usd || null)}</p>
+                  <p className="font-medium">{configs.universal?.name || 'Configuration universelle'}</p>
+                  <p className="text-sm text-muted-foreground">
+                    Appliquée à tous les compteurs • Version {configs.universal?.version || 1}
+                  </p>
                 </div>
-                <DollarSign className="h-8 w-8 text-purple-600 opacity-50" />
+                <Button 
+                  variant="outline"
+                  onClick={() => {
+                    setConfigModalLevel('universal')
+                    setShowConfigModal(true)
+                  }}
+                >
+                  <Eye className="h-4 w-4 mr-2" />
+                  Voir / Éditer
+                </Button>
               </div>
             </Card>
           </div>
 
-          {/* Recent Runs */}
-          <Card className="p-4">
-            <h3 className="font-semibold mb-4 flex items-center gap-2">
-              <Clock className="h-5 w-5" />Tests récents
+          {/* Configs par Type */}
+          <div>
+            <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
+              📦 Configurations par Type
             </h3>
-            {runs.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                <FlaskConical className="h-12 w-12 mx-auto mb-3 opacity-30" />
-                <p>Aucun test - Lancez-en un dans l'onglet Test</p>
+            <div className="grid md:grid-cols-3 gap-4">
+              {configs.types.map(type => (
+                <Card key={type.id} className="p-4">
+                  <div className="flex items-center gap-3 mb-3">
+                    {TYPE_ICONS[type.meter_type]}
+                    <div>
+                      <p className="font-medium">{type.name}</p>
+                      <p className="text-xs text-muted-foreground">{type.typical_unit}</p>
+                    </div>
+                  </div>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="w-full"
+                    onClick={() => {
+                      setSelectedConfigType(type)
+                      setConfigModalLevel('type')
+                      setShowConfigModal(true)
+                    }}
+                  >
+                    <Eye className="h-4 w-4 mr-2" />
+                    Voir / Éditer
+                  </Button>
+                </Card>
+              ))}
+            </div>
+          </div>
+
+          {/* Configs par Modèle */}
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-lg font-semibold flex items-center gap-2">
+                🎯 Configurations par Modèle
+              </h3>
+              <Button 
+                size="sm"
+                onClick={() => {
+                  setSelectedConfigModel(null)
+                  setConfigModalLevel('model')
+                  setShowConfigModal(true)
+                }}
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Nouvelle config
+              </Button>
+            </div>
+            
+            {configs.models.length === 0 ? (
+              <Card className="p-8 text-center">
+                <Settings2 className="h-10 w-10 mx-auto mb-3 text-gray-300" />
+                <p className="text-muted-foreground">Aucune config spécifique</p>
+                <p className="text-sm text-muted-foreground">
+                  Créez des configs pour vos modèles de compteurs
+                </p>
+              </Card>
+            ) : (
+              <div className="grid md:grid-cols-2 gap-4">
+                {configs.models.map(model => (
+                  <Card key={model.id} className="p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        {model.experiment_config_type && TYPE_ICONS[model.experiment_config_type.meter_type]}
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <p className="font-medium">{model.name}</p>
+                            {model.is_promoted && (
+                              <Badge className="bg-teal-100 text-teal-700">Promu</Badge>
+                            )}
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            {model.manufacturer || 'Fabricant inconnu'}
+                            {model.accuracy_rate && ` • ${formatPercent(model.accuracy_rate)}`}
+                          </p>
+                        </div>
+                      </div>
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={() => {
+                          setSelectedConfigModel(model)
+                          setConfigModalLevel('model')
+                          setShowConfigModal(true)
+                        }}
+                      >
+                        <Eye className="h-4 w-4 mr-2" />
+                        Éditer
+                      </Button>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </div>
+        </TabsContent>
+
+        {/* ============================================ */}
+        {/* TAB: TESTS */}
+        {/* ============================================ */}
+        <TabsContent value="tests" className="space-y-6">
+          {selectedTest ? (
+            <TestDetail 
+              test={selectedTest}
+              onBack={() => setSelectedTest(null)}
+              onRefresh={loadData}
+            />
+          ) : (
+            <>
+              {tests.length === 0 ? (
+                <Card className="p-12 text-center">
+                  <FlaskConical className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+                  <p className="text-lg font-medium text-gray-600 mb-2">Aucun test</p>
+                  <p className="text-sm text-muted-foreground">
+                    Lancez un test depuis un dossier prêt
+                  </p>
+                </Card>
+              ) : (
+                <div className="space-y-4">
+                  {tests.map(test => (
+                    <Card 
+                      key={test.id} 
+                      className="p-4 hover:shadow-md transition-shadow cursor-pointer"
+                      onClick={() => setSelectedTest(test)}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                          <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${
+                            test.status === 'completed' 
+                              ? test.accuracy_rate && test.accuracy_rate >= 0.8 
+                                ? 'bg-green-100' 
+                                : 'bg-orange-100'
+                              : test.status === 'running'
+                                ? 'bg-blue-100'
+                                : 'bg-gray-100'
+                          }`}>
+                            {test.status === 'running' ? (
+                              <Loader2 className="h-5 w-5 text-blue-600 animate-spin" />
+                            ) : test.status === 'completed' ? (
+                              test.accuracy_rate && test.accuracy_rate >= 0.8 ? (
+                                <Check className="h-5 w-5 text-green-600" />
+                              ) : (
+                                <AlertTriangle className="h-5 w-5 text-orange-600" />
+                              )
+                            ) : (
+                              <FlaskConical className="h-5 w-5 text-gray-600" />
+                            )}
+                          </div>
+                          <div>
+                            <p className="font-medium">{test.name}</p>
+                            <p className="text-sm text-muted-foreground">
+                              {test.experiment_folders?.name} • {test.total_photos} photos
+                            </p>
+                          </div>
+                        </div>
+                        
+                        <div className="flex items-center gap-6">
+                          {test.status === 'completed' && (
+                            <>
+                              <div className="text-center">
+                                <p className="text-2xl font-bold">{formatPercent(test.accuracy_rate)}</p>
+                                <p className="text-xs text-muted-foreground">Précision</p>
+                              </div>
+                              <div className="text-center">
+                                <p className="text-lg font-semibold">{formatPercent(test.avg_confidence)}</p>
+                                <p className="text-xs text-muted-foreground">Confiance</p>
+                              </div>
+                            </>
+                          )}
+                          <ChevronRight className="h-5 w-5 text-gray-400" />
+                        </div>
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </TabsContent>
+
+        {/* ============================================ */}
+        {/* TAB: MODÈLES */}
+        {/* ============================================ */}
+        <TabsContent value="models" className="space-y-6">
+          <Card className="p-6">
+            <div className="flex items-center gap-4 mb-4">
+              <div className="w-12 h-12 bg-teal-100 rounded-lg flex items-center justify-center">
+                <CheckCircle2 className="h-6 w-6 text-teal-600" />
+              </div>
+              <div>
+                <h3 className="font-semibold">Modèles promus</h3>
+                <p className="text-sm text-muted-foreground">
+                  Les modèles validés sont disponibles dans Compteurs &gt; Modèles
+                </p>
+              </div>
+            </div>
+            
+            {folders.filter(f => f.status === 'promoted').length === 0 ? (
+              <div className="text-center py-8">
+                <p className="text-muted-foreground mb-4">Aucun modèle promu depuis Experiments</p>
+                <Button variant="outline" onClick={() => setActiveTab('folders')}>
+                  Voir les dossiers
+                </Button>
               </div>
             ) : (
-              <div className="space-y-2">
-                {runs.slice(0, 5).map(run => (
-                  <div key={run.id} className="p-3 border rounded-lg flex items-center justify-between hover:bg-muted/50 cursor-pointer"
-                    onClick={() => { setSelectedRun(run); setShowRunModal(true) }}>
+              <div className="space-y-3">
+                {folders.filter(f => f.status === 'promoted').map(folder => (
+                  <div key={folder.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                     <div className="flex items-center gap-3">
-                      {run.is_correct === true ? <CheckCircle className="h-5 w-5 text-green-600" /> :
-                       run.is_correct === false ? <XCircle className="h-5 w-5 text-red-600" /> :
-                       <AlertTriangle className="h-5 w-5 text-yellow-600" />}
+                      {TYPE_ICONS[folder.detected_type]}
                       <div>
-                        <p className="font-medium text-sm">{run.experiment_configs?.name || 'Config'}</p>
-                        <p className="text-xs text-muted-foreground">{new Date(run.created_at).toLocaleString('fr-FR')}</p>
+                        <p className="font-medium">{folder.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Lié à: {folder.meter_models?.name || 'Nouveau modèle'}
+                        </p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-4">
-                      <Badge variant="outline">{formatPercent(run.confidence_score)}</Badge>
-                      <ChevronRight className="h-4 w-4" />
-                    </div>
+                    <Button variant="outline" size="sm" asChild>
+                      <a href="/dashboard/meters">
+                        <ExternalLink className="h-4 w-4 mr-2" />
+                        Voir dans Modèles
+                      </a>
+                    </Button>
                   </div>
                 ))}
               </div>
             )}
           </Card>
         </TabsContent>
-
-        {/* Test Tab */}
-        <TabsContent value="test" className="space-y-6">
-          <div className="grid md:grid-cols-2 gap-6">
-            <div className="space-y-4">
-              <Card className="p-4">
-                <h3 className="font-semibold mb-4 flex items-center gap-2"><Camera className="h-5 w-5" />Image</h3>
-                <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileSelect} />
-                {testImage ? (
-                  <div className="relative">
-                    <img src={testImage} alt="Test" className="w-full h-64 object-contain bg-gray-100 rounded-lg" />
-                    <Button size="sm" variant="outline" className="absolute top-2 right-2"
-                      onClick={() => { setTestImage(null); setTestResult(null) }}>
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="border-2 border-dashed rounded-lg p-8 text-center cursor-pointer hover:border-teal-500"
-                    onClick={() => fileInputRef.current?.click()}>
-                    <Upload className="h-10 w-10 mx-auto mb-3 text-muted-foreground" />
-                    <p className="text-sm text-muted-foreground">Cliquez pour uploader</p>
-                  </div>
-                )}
-              </Card>
-              <Card className="p-4">
-                <h3 className="font-semibold mb-4"><Settings2 className="h-5 w-5 inline mr-2" />Config</h3>
-                <Select value={testConfigId} onValueChange={setTestConfigId}>
-                  <SelectTrigger><SelectValue placeholder="Sélectionner" /></SelectTrigger>
-                  <SelectContent>
-                    {configs.map(c => (
-                      <SelectItem key={c.id} value={c.id}>{c.name} {c.is_baseline && '(Baseline)'}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button className="w-full mt-4" disabled={!testImage || !testConfigId || testing} onClick={handleRunTest}>
-                  {testing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Play className="h-4 w-4 mr-2" />}
-                  {testing ? 'Analyse...' : 'Lancer'}
-                </Button>
-              </Card>
-            </div>
-
-            <Card className="p-4">
-              <h3 className="font-semibold mb-4"><Microscope className="h-5 w-5 inline mr-2" />Résultat</h3>
-              {testResult ? (
-                <div className="space-y-4">
-                  <div className={`p-3 rounded-lg ${testResult.error ? 'bg-red-50' : testResult.actual_result?.matched_model_id ? 'bg-green-50' : 'bg-yellow-50'}`}>
-                    {testResult.error ? <XCircle className="h-5 w-5 text-red-600 inline mr-2" /> :
-                     testResult.actual_result?.matched_model_id ? <CheckCircle className="h-5 w-5 text-green-600 inline mr-2" /> :
-                     <AlertTriangle className="h-5 w-5 text-yellow-600 inline mr-2" />}
-                    <span className="font-medium">
-                      {testResult.error ? 'Erreur' : testResult.actual_result?.matched_model_id ? 'Modèle reconnu' : 'Non reconnu'}
-                    </span>
-                  </div>
-                  {!testResult.error && (
-                    <div className="grid grid-cols-3 gap-3">
-                      <div className="text-center p-3 bg-muted rounded-lg">
-                        <p className="text-xl font-bold text-teal-600">{formatPercent(testResult.confidence_score)}</p>
-                        <p className="text-xs text-muted-foreground">Confiance</p>
-                      </div>
-                      <div className="text-center p-3 bg-muted rounded-lg">
-                        <p className="text-xl font-bold">{formatDuration(testResult.processing_time_ms)}</p>
-                        <p className="text-xs text-muted-foreground">Temps</p>
-                      </div>
-                      <div className="text-center p-3 bg-muted rounded-lg">
-                        <p className="text-xl font-bold text-purple-600">{formatCost(testResult.api_cost_usd)}</p>
-                        <p className="text-xs text-muted-foreground">Coût</p>
-                      </div>
-                    </div>
-                  )}
-                  {testResult.actual_result && (
-                    <div className="space-y-2">
-                      {testResult.actual_result.reading && (
-                        <div className="flex justify-between p-2 bg-muted rounded">
-                          <span className="text-sm">Index</span>
-                          <span className="font-mono font-bold">{testResult.actual_result.reading}</span>
-                        </div>
-                      )}
-                      {testResult.actual_result.serial_number && (
-                        <div className="flex justify-between p-2 bg-muted rounded">
-                          <span className="text-sm">N° série</span>
-                          <span className="font-mono">{testResult.actual_result.serial_number}</span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  <details>
-                    <summary className="text-sm text-muted-foreground cursor-pointer">JSON brut</summary>
-                    <pre className="mt-2 p-3 bg-gray-900 text-gray-100 rounded text-xs overflow-x-auto max-h-40">
-                      {JSON.stringify(testResult.actual_result || testResult, null, 2)}
-                    </pre>
-                  </details>
-                </div>
-              ) : (
-                <div className="text-center py-12 text-muted-foreground">
-                  <Microscope className="h-12 w-12 mx-auto mb-3 opacity-30" />
-                  <p>Uploadez une image et lancez un test</p>
-                </div>
-              )}
-            </Card>
-          </div>
-        </TabsContent>
-
-        {/* Configs Tab */}
-        <TabsContent value="configs" className="space-y-6">
-          <div className="flex justify-between">
-            <h3 className="font-semibold">Configurations</h3>
-            <Button onClick={() => { setSelectedConfig(null); setShowConfigModal(true) }}>
-              <Plus className="h-4 w-4 mr-2" />Nouvelle
-            </Button>
-          </div>
-          <div className="grid md:grid-cols-3 gap-4">
-            {configs.map(config => {
-              const t = CONFIG_TYPE_LABELS[config.config_type]
-              return (
-                <Card key={config.id} className="p-4">
-                  <div className="flex justify-between mb-3">
-                    <Badge className={t.color}><t.icon className="h-3 w-3 mr-1" />{t.label}</Badge>
-                    {config.is_baseline && <Badge variant="outline">Baseline</Badge>}
-                  </div>
-                  <h4 className="font-semibold">{config.name}</h4>
-                  <p className="text-sm text-muted-foreground mb-4 line-clamp-2">{config.description || '-'}</p>
-                  <div className="flex gap-2">
-                    <Button size="sm" variant="outline" className="flex-1"
-                      onClick={() => { setSelectedConfig(config); setShowConfigModal(true) }}>
-                      <Edit className="h-3 w-3 mr-1" />Modifier
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => { setTestConfigId(config.id); setActiveTab('test') }}>
-                      <Play className="h-3 w-3" />
-                    </Button>
-                  </div>
-                </Card>
-              )
-            })}
-          </div>
-        </TabsContent>
-
-        {/* Batches Tab */}
-        <TabsContent value="batches" className="space-y-6">
-          <div className="flex justify-between">
-            <h3 className="font-semibold">Batches</h3>
-            <Button><Plus className="h-4 w-4 mr-2" />Nouveau batch</Button>
-          </div>
-          {batches.length === 0 ? (
-            <Card className="p-12 text-center">
-              <Database className="h-12 w-12 mx-auto mb-3 opacity-30" />
-              <p className="text-muted-foreground">Aucun batch</p>
-            </Card>
-          ) : (
-            <div className="space-y-4">
-              {batches.map(b => (
-                <Card key={b.id} className="p-4 flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <div className={`w-3 h-3 rounded-full ${b.status === 'completed' ? 'bg-green-500' : b.status === 'running' ? 'bg-blue-500 animate-pulse' : 'bg-yellow-500'}`} />
-                    <div>
-                      <h4 className="font-semibold">{b.name}</h4>
-                      <p className="text-sm text-muted-foreground">{b.total_runs} tests</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <span className="font-bold">{formatPercent(b.accuracy_rate)}</span>
-                    <Progress value={(b.completed_runs / b.total_runs) * 100} className="w-24" />
-                  </div>
-                </Card>
-              ))}
-            </div>
-          )}
-        </TabsContent>
-
-        {/* Images Tab */}
-        <TabsContent value="images" className="space-y-6">
-          <div className="flex justify-between">
-            <h3 className="font-semibold">Bibliothèque d'images</h3>
-            <Button><Upload className="h-4 w-4 mr-2" />Ajouter</Button>
-          </div>
-          {images.length === 0 ? (
-            <Card className="p-12 text-center">
-              <ImageIcon className="h-12 w-12 mx-auto mb-3 opacity-30" />
-              <p className="text-muted-foreground">Aucune image</p>
-            </Card>
-          ) : (
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-              {images.map(img => (
-                <Card key={img.id} className="overflow-hidden group cursor-pointer">
-                  <div className="aspect-square relative">
-                    <img src={img.thumbnail_url || img.image_url} alt="" className="w-full h-full object-cover" />
-                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                      <Button size="sm" variant="secondary"><Eye className="h-4 w-4" /></Button>
-                      <Button size="sm" variant="secondary" onClick={() => { setTestImage(img.image_url); setActiveTab('test') }}>
-                        <Play className="h-4 w-4" />
-                      </Button>
-                    </div>
-                    {img.ground_truth && <Badge className="absolute top-2 right-2 bg-green-500 text-white text-xs">GT</Badge>}
-                  </div>
-                  <div className="p-2 flex gap-1 flex-wrap">
-                    {img.meter_type && <Badge variant="outline" className="text-xs">{img.meter_type}</Badge>}
-                  </div>
-                </Card>
-              ))}
-            </div>
-          )}
-        </TabsContent>
       </Tabs>
 
-      {/* Run Modal */}
-      <Dialog open={showRunModal} onOpenChange={setShowRunModal}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader><DialogTitle>Détail du test</DialogTitle></DialogHeader>
-          {selectedRun && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-4 gap-3">
-                <div className="text-center p-3 bg-muted rounded-lg">
-                  <p className="text-lg font-bold">{formatPercent(selectedRun.confidence_score)}</p>
-                  <p className="text-xs text-muted-foreground">Confiance</p>
-                </div>
-                <div className="text-center p-3 bg-muted rounded-lg">
-                  <p className="text-lg font-bold">{formatDuration(selectedRun.processing_time_ms)}</p>
-                  <p className="text-xs text-muted-foreground">Temps</p>
-                </div>
-                <div className="text-center p-3 bg-muted rounded-lg">
-                  <p className="text-lg font-bold">{selectedRun.tokens_used || '-'}</p>
-                  <p className="text-xs text-muted-foreground">Tokens</p>
-                </div>
-                <div className="text-center p-3 bg-muted rounded-lg">
-                  <p className="text-lg font-bold">{formatCost(selectedRun.api_cost_usd)}</p>
-                  <p className="text-xs text-muted-foreground">Coût</p>
-                </div>
-              </div>
-              {selectedRun.actual_result && (
-                <pre className="p-3 bg-gray-900 text-gray-100 rounded text-xs overflow-x-auto max-h-48">
-                  {JSON.stringify(selectedRun.actual_result, null, 2)}
-                </pre>
-              )}
-              {selectedRun.is_correct === null && selectedRun.status === 'completed' && (
-                <div className="flex gap-3 pt-4 border-t">
-                  <Button className="flex-1 bg-green-600 hover:bg-green-700"><CheckCircle className="h-4 w-4 mr-2" />Correct</Button>
-                  <Button variant="destructive" className="flex-1"><XCircle className="h-4 w-4 mr-2" />Incorrect</Button>
-                </div>
-              )}
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      {/* Config Modal */}
+      {/* ============================================ */}
+      {/* MODAL: CONFIG EDITOR */}
+      {/* ============================================ */}
       <Dialog open={showConfigModal} onOpenChange={setShowConfigModal}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader><DialogTitle>{selectedConfig ? 'Modifier' : 'Nouvelle'} configuration</DialogTitle></DialogHeader>
-          <ConfigEditor config={selectedConfig} onSave={async () => { setShowConfigModal(false); await loadData() }} onCancel={() => setShowConfigModal(false)} />
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              {configModalLevel === 'universal' && '🌍 Configuration Universelle'}
+              {configModalLevel === 'type' && `📦 Configuration ${selectedConfigType?.name || 'Type'}`}
+              {configModalLevel === 'model' && `🎯 Configuration ${selectedConfigModel?.name || 'Nouveau modèle'}`}
+            </DialogTitle>
+          </DialogHeader>
+          
+          <ConfigEditor
+            level={configModalLevel}
+            universal={configs.universal}
+            type={selectedConfigType}
+            model={selectedConfigModel}
+            types={configs.types}
+            onSave={async () => {
+              await loadData()
+              setShowConfigModal(false)
+            }}
+            onCancel={() => setShowConfigModal(false)}
+          />
         </DialogContent>
       </Dialog>
     </div>
   )
 }
 
-function ConfigEditor({ config, onSave, onCancel }: { config: ExperimentConfig | null; onSave: () => Promise<void>; onCancel: () => void }) {
-  const [name, setName] = useState(config?.name || '')
-  const [description, setDescription] = useState(config?.description || '')
-  const [configType, setConfigType] = useState<string>(config?.config_type || 'prompt')
-  const [configData, setConfigData] = useState(JSON.stringify(config?.config_data || {}, null, 2))
-  const [isBaseline, setIsBaseline] = useState(config?.is_baseline || false)
+// ============================================
+// COMPOSANT: FOLDER DETAIL
+// ============================================
+
+function FolderDetail({ 
+  folder, 
+  folders,
+  onBack, 
+  onDeletePhoto, 
+  onMovePhoto,
+  onDeleteFolder,
+  onRunTest,
+  onPromote,
+  onRefresh
+}: {
+  folder: Folder
+  folders: Folder[]
+  onBack: () => void
+  onDeletePhoto: (id: string) => void
+  onMovePhoto: (photoId: string, targetFolderId: string) => void
+  onDeleteFolder: (id: string) => void
+  onRunTest: (folderId: string) => void
+  onPromote: (folderId: string) => void
+  onRefresh: () => void
+}) {
+  const photos = folder.experiment_photos || []
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" onClick={onBack}>
+            ← Retour
+          </Button>
+          <div className="flex items-center gap-3">
+            {TYPE_ICONS[folder.detected_type]}
+            <div>
+              <h2 className="text-xl font-bold">{folder.name}</h2>
+              <p className="text-sm text-muted-foreground">
+                {folder.photo_count} photo{folder.photo_count > 1 ? 's' : ''}
+              </p>
+            </div>
+          </div>
+          <Badge className={STATUS_COLORS[folder.status]}>
+            {STATUS_LABELS[folder.status]}
+          </Badge>
+        </div>
+        
+        <div className="flex items-center gap-2">
+          {folder.status === 'ready' && (
+            <Button onClick={() => onRunTest(folder.id)}>
+              <Play className="h-4 w-4 mr-2" />
+              Lancer test
+            </Button>
+          )}
+          {folder.status === 'validated' && (
+            <Button onClick={() => onPromote(folder.id)} className="bg-teal-600 hover:bg-teal-700">
+              <ArrowRight className="h-4 w-4 mr-2" />
+              Promouvoir
+            </Button>
+          )}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="icon">
+                <MoreVertical className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem 
+                onClick={() => onDeleteFolder(folder.id)}
+                className="text-red-600"
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Supprimer le dossier
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
+
+      {/* Progress si draft */}
+      {folder.status === 'draft' && (
+        <Card className="p-4 bg-orange-50 border-orange-200">
+          <div className="flex items-center gap-4">
+            <AlertTriangle className="h-5 w-5 text-orange-600" />
+            <div className="flex-1">
+              <p className="font-medium text-orange-800">
+                {folder.min_photos_required - folder.photo_count} photo(s) manquante(s)
+              </p>
+              <Progress 
+                value={(folder.photo_count / folder.min_photos_required) * 100} 
+                className="h-2 mt-2"
+              />
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* Grille de photos */}
+      <div>
+        <h3 className="font-semibold mb-3">Photos ({photos.length})</h3>
+        {photos.length === 0 ? (
+          <Card className="p-8 text-center">
+            <p className="text-muted-foreground">Aucune photo dans ce dossier</p>
+          </Card>
+        ) : (
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+            {photos.map(photo => (
+              <div key={photo.id} className="relative group">
+                <div className="aspect-square bg-gray-100 rounded-lg overflow-hidden">
+                  <img 
+                    src={photo.thumbnail_url || photo.image_url} 
+                    alt={photo.original_filename || 'Photo'}
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+                
+                {/* Overlay actions */}
+                <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center gap-2">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button size="sm" variant="secondary">
+                        <MoveRight className="h-4 w-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent>
+                      {folders.filter(f => f.id !== folder.id).map(f => (
+                        <DropdownMenuItem 
+                          key={f.id}
+                          onClick={() => onMovePhoto(photo.id, f.id)}
+                        >
+                          Vers {f.name}
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                  <Button 
+                    size="sm" 
+                    variant="destructive"
+                    onClick={() => onDeletePhoto(photo.id)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+
+                {/* Badge status */}
+                {photo.status !== 'pending' && (
+                  <Badge 
+                    className="absolute top-2 right-2 text-xs"
+                    variant={photo.status === 'validated' ? 'default' : 'secondary'}
+                  >
+                    {photo.status === 'tested' && 'Testé'}
+                    {photo.status === 'validated' && '✓'}
+                    {photo.status === 'reference' && '⭐'}
+                  </Badge>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ============================================
+// COMPOSANT: TEST DETAIL
+// ============================================
+
+function TestDetail({ 
+  test, 
+  onBack,
+  onRefresh
+}: {
+  test: Test
+  onBack: () => void
+  onRefresh: () => void
+}) {
+  const [loading, setLoading] = useState(false)
+  const [fullTest, setFullTest] = useState<Test | null>(null)
+
+  useEffect(() => {
+    const loadTest = async () => {
+      setLoading(true)
+      const res = await fetch(`/api/labs/experiments/tests?id=${test.id}`)
+      const data = await res.json()
+      setFullTest(data.test)
+      setLoading(false)
+    }
+    loadTest()
+  }, [test.id])
+
+  const results = fullTest?.experiment_test_results || []
+
+  const handleMarkCorrect = async (resultId: string, isCorrect: boolean) => {
+    await fetch('/api/labs/experiments/tests', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ result_id: resultId, is_correct: isCorrect })
+    })
+    // Reload test
+    const res = await fetch(`/api/labs/experiments/tests?id=${test.id}`)
+    const data = await res.json()
+    setFullTest(data.test)
+    onRefresh()
+  }
+
+  const formatPercent = (value: number | null) => {
+    if (value === null || value === undefined) return '-'
+    return `${(value * 100).toFixed(1)}%`
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-8 w-8 animate-spin text-teal-600" />
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" onClick={onBack}>
+            ← Retour
+          </Button>
+          <div>
+            <h2 className="text-xl font-bold">{test.name}</h2>
+            <p className="text-sm text-muted-foreground">
+              {test.total_photos} photos testées
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-4 gap-4">
+        <Card className="p-4 text-center">
+          <p className="text-3xl font-bold">{formatPercent(fullTest?.accuracy_rate ?? test.accuracy_rate)}</p>
+          <p className="text-sm text-muted-foreground">Précision</p>
+        </Card>
+        <Card className="p-4 text-center">
+          <p className="text-3xl font-bold">{formatPercent(fullTest?.avg_confidence ?? test.avg_confidence)}</p>
+          <p className="text-sm text-muted-foreground">Confiance moy.</p>
+        </Card>
+        <Card className="p-4 text-center">
+          <p className="text-3xl font-bold">{fullTest?.avg_processing_time_ms || test.avg_processing_time_ms || '-'}ms</p>
+          <p className="text-sm text-muted-foreground">Temps moy.</p>
+        </Card>
+        <Card className="p-4 text-center">
+          <p className="text-3xl font-bold">${(fullTest?.total_cost_usd ?? test.total_cost_usd ?? 0).toFixed(4)}</p>
+          <p className="text-sm text-muted-foreground">Coût total</p>
+        </Card>
+      </div>
+
+      {/* Résultats */}
+      <div>
+        <h3 className="font-semibold mb-3">Résultats détaillés</h3>
+        <div className="space-y-3">
+          {results.map(result => (
+            <Card key={result.id} className="p-4">
+              <div className="flex items-start gap-4">
+                {/* Image */}
+                <div className="w-20 h-20 bg-gray-100 rounded-lg overflow-hidden flex-shrink-0">
+                  {result.experiment_photos && (
+                    <img 
+                      src={result.experiment_photos.thumbnail_url || result.experiment_photos.image_url}
+                      alt="Photo"
+                      className="w-full h-full object-cover"
+                    />
+                  )}
+                </div>
+                
+                {/* Résultat */}
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-2">
+                    {result.is_correct === true && <Check className="h-5 w-5 text-green-600" />}
+                    {result.is_correct === false && <XCircle className="h-5 w-5 text-red-600" />}
+                    {result.is_correct === null && <AlertTriangle className="h-5 w-5 text-gray-400" />}
+                    <span className="font-medium">
+                      {(result.actual_result as { reading?: string })?.reading || 'Pas de lecture'}
+                    </span>
+                    <Badge variant="outline">
+                      {(result.confidence_score * 100).toFixed(0)}%
+                    </Badge>
+                  </div>
+                  
+                  {result.expected_result && (
+                    <p className="text-sm text-muted-foreground">
+                      Attendu: {(result.expected_result as { reading?: string })?.reading}
+                    </p>
+                  )}
+                </div>
+
+                {/* Actions */}
+                {result.is_correct === null && (
+                  <div className="flex gap-2">
+                    <Button 
+                      size="sm" 
+                      variant="outline"
+                      onClick={() => handleMarkCorrect(result.id, true)}
+                    >
+                      <Check className="h-4 w-4 text-green-600" />
+                    </Button>
+                    <Button 
+                      size="sm" 
+                      variant="outline"
+                      onClick={() => handleMarkCorrect(result.id, false)}
+                    >
+                      <XCircle className="h-4 w-4 text-red-600" />
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </Card>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ============================================
+// COMPOSANT: CONFIG EDITOR
+// ============================================
+
+function ConfigEditor({
+  level,
+  universal,
+  type,
+  model,
+  types,
+  onSave,
+  onCancel
+}: {
+  level: 'universal' | 'type' | 'model'
+  universal: ConfigUniversal | null
+  type: ConfigType | null
+  model: ConfigModel | null
+  types: ConfigType[]
+  onSave: () => void
+  onCancel: () => void
+}) {
   const [saving, setSaving] = useState(false)
+  
+  // Universal state
+  const [basePrompt, setBasePrompt] = useState(universal?.base_prompt || '')
+  const [minConfidence, setMinConfidence] = useState(universal?.min_confidence || 0.7)
+  
+  // Type state
+  const [additionalPrompt, setAdditionalPrompt] = useState(type?.additional_prompt || '')
+  
+  // Model state
+  const [modelName, setModelName] = useState(model?.name || '')
+  const [manufacturer, setManufacturer] = useState(model?.manufacturer || '')
+  const [specificPrompt, setSpecificPrompt] = useState(model?.specific_prompt || '')
+  const [typeConfigId, setTypeConfigId] = useState(model?.type_config_id || '')
 
   const handleSave = async () => {
     setSaving(true)
     try {
-      let parsed = {}
-      try { parsed = JSON.parse(configData) } catch { alert('JSON invalide'); return }
-      const method = config ? 'PUT' : 'POST'
-      const body = config 
-        ? { id: config.id, name, description, config_data: parsed, is_baseline: isBaseline }
-        : { name, description, config_type: configType, config_data: parsed, is_baseline: isBaseline }
-      await fetch('/api/labs/experiments/configs', { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      if (level === 'universal') {
+        await fetch('/api/labs/experiments/configs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            level: 'universal',
+            id: universal?.id,
+            base_prompt: basePrompt,
+            min_confidence: minConfidence
+          })
+        })
+      } else if (level === 'type') {
+        await fetch('/api/labs/experiments/configs', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            level: 'type',
+            id: type?.id,
+            additional_prompt: additionalPrompt
+          })
+        })
+      } else if (level === 'model') {
+        const method = model ? 'PUT' : 'POST'
+        await fetch('/api/labs/experiments/configs', {
+          method,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            level: 'model',
+            id: model?.id,
+            name: modelName,
+            manufacturer,
+            specific_prompt: specificPrompt,
+            type_config_id: typeConfigId || null
+          })
+        })
+      }
       await onSave()
-    } finally { setSaving(false) }
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
-    <div className="space-y-4">
-      <div><label className="text-sm font-medium">Nom</label><Input value={name} onChange={(e) => setName(e.target.value)} /></div>
-      <div><label className="text-sm font-medium">Description</label><Input value={description} onChange={(e) => setDescription(e.target.value)} /></div>
-      {!config && (
-        <div><label className="text-sm font-medium">Type</label>
-          <Select value={configType} onValueChange={setConfigType}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="prompt">Prompt</SelectItem>
-              <SelectItem value="preprocessing">Pré-traitement</SelectItem>
-              <SelectItem value="pipeline">Pipeline</SelectItem>
-              <SelectItem value="full">Complet</SelectItem>
-            </SelectContent>
-          </Select>
+    <div className="space-y-6">
+      {level === 'universal' && (
+        <>
+          <div>
+            <label className="text-sm font-medium mb-2 block">Prompt de base</label>
+            <Textarea 
+              value={basePrompt}
+              onChange={(e) => setBasePrompt(e.target.value)}
+              className="font-mono text-sm h-64"
+            />
+          </div>
+          <div>
+            <label className="text-sm font-medium mb-2 block">
+              Confiance minimum: {minConfidence}
+            </label>
+            <input 
+              type="range"
+              min="0"
+              max="1"
+              step="0.05"
+              value={minConfidence}
+              onChange={(e) => setMinConfidence(parseFloat(e.target.value))}
+              className="w-full"
+            />
+          </div>
+        </>
+      )}
+
+      {level === 'type' && (
+        <div>
+          <label className="text-sm font-medium mb-2 block">Prompt additionnel (s'ajoute au prompt universel)</label>
+          <Textarea 
+            value={additionalPrompt}
+            onChange={(e) => setAdditionalPrompt(e.target.value)}
+            className="font-mono text-sm h-48"
+          />
         </div>
       )}
-      <div><label className="text-sm font-medium">Config JSON</label><Textarea value={configData} onChange={(e) => setConfigData(e.target.value)} className="font-mono h-40" /></div>
-      <div className="flex items-center gap-2">
-        <input type="checkbox" id="bl" checked={isBaseline} onChange={(e) => setIsBaseline(e.target.checked)} />
-        <label htmlFor="bl" className="text-sm">Baseline</label>
-      </div>
+
+      {level === 'model' && (
+        <>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-sm font-medium mb-2 block">Nom</label>
+              <Input 
+                value={modelName}
+                onChange={(e) => setModelName(e.target.value)}
+                placeholder="Ex: ITRON G4"
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium mb-2 block">Fabricant</label>
+              <Input 
+                value={manufacturer}
+                onChange={(e) => setManufacturer(e.target.value)}
+                placeholder="Ex: Itron"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="text-sm font-medium mb-2 block">Type de compteur</label>
+            <Select value={typeConfigId} onValueChange={setTypeConfigId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Sélectionner un type" />
+              </SelectTrigger>
+              <SelectContent>
+                {types.map(t => (
+                  <SelectItem key={t.id} value={t.id}>
+                    {t.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-sm font-medium">Prompt spécifique</label>
+              <Button variant="outline" size="sm">
+                <Sparkles className="h-4 w-4 mr-2" />
+                Générer avec IA
+              </Button>
+            </div>
+            <Textarea 
+              value={specificPrompt}
+              onChange={(e) => setSpecificPrompt(e.target.value)}
+              className="font-mono text-sm h-32"
+              placeholder="Instructions spécifiques pour ce modèle de compteur..."
+            />
+          </div>
+        </>
+      )}
+
       <DialogFooter>
         <Button variant="outline" onClick={onCancel}>Annuler</Button>
-        <Button onClick={handleSave} disabled={saving || !name}>{saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}{config ? 'Modifier' : 'Créer'}</Button>
+        <Button onClick={handleSave} disabled={saving}>
+          {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+          Sauvegarder
+        </Button>
       </DialogFooter>
     </div>
   )
