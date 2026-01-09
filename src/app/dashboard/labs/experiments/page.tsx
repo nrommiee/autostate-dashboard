@@ -281,7 +281,7 @@ function TestPageInline({ folderId, onBack }: { folderId: string; onBack: () => 
   const [testing, setTesting] = useState(false)
   const [testProgress, setTestProgress] = useState({ current: 0, total: 0, status: '' })
   const [testResults, setTestResults] = useState<TestResult[]>([])
-  const [layerResults, setLayerResults] = useState(LAYER_DEFS.map(l => ({ layer: l.num, name: l.name, status: 'pending' as const, duration_ms: 0 })))
+  const [layerResults, setLayerResults] = useState<{ layer: number; name: string; status: 'pending' | 'running' | 'success' | 'error'; duration_ms: number }[]>(LAYER_DEFS.map(l => ({ layer: l.num, name: l.name, status: 'pending', duration_ms: 0 })))
   const [selectedResultIndex, setSelectedResultIndex] = useState(0)
   const [activeTab, setActiveTab] = useState('layers')
   const [selectedLayer, setSelectedLayer] = useState<number>(1)
@@ -327,7 +327,7 @@ function TestPageInline({ folderId, onBack }: { folderId: string; onBack: () => 
     setTesting(true)
     setTestResults([])
     setTestProgress({ current: 0, total: photos.length, status: 'Initialisation...' })
-    setLayerResults(LAYER_DEFS.map(l => ({ layer: l.num, name: l.name, status: 'pending' as const, duration_ms: 0 })))
+    setLayerResults(LAYER_DEFS.map(l => ({ layer: l.num, name: l.name, status: 'pending' as 'pending' | 'running' | 'success' | 'error', duration_ms: 0 })))
     try {
       await saveConfig()
       for (let i = 0; i < LAYER_DEFS.length; i++) {
