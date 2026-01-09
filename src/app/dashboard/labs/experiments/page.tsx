@@ -234,6 +234,7 @@ export default function ExperimentsPage() {
 
   // Alerts
   const [deleteAlert, setDeleteAlert] = useState<{ type: 'photo' | 'folder'; id: string; name?: string } | null>(null)
+  const [limitAlert, setLimitAlert] = useState(false)
 
   // Upload
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -289,8 +290,7 @@ export default function ExperimentsPage() {
     if (!files || files.length === 0) return
 
     if (files.length > 20) {
-      setDeleteAlert(null)
-      alert('Maximum 20 photos par upload. Veuillez réduire votre sélection.')
+      setLimitAlert(true)
       if (fileInputRef.current) fileInputRef.current.value = ''
       return
     }
@@ -310,7 +310,7 @@ export default function ExperimentsPage() {
         }
       }
 
-      setUploadProgress({ step: 'Analyse IA', current: 0, total: compressedFiles.length })
+      setUploadProgress({ step: 'Upload et analyse IA', current: 1, total: 1 })
 
       const formData = new FormData()
       for (const file of compressedFiles) {
@@ -352,7 +352,14 @@ export default function ExperimentsPage() {
   // ============================================
 
   const handleDeletePhoto = async (photoId: string) => {
-    await fetch(`/api/labs/experiments/photos?id=${photoId}`, { method: 'DELETE' })
+    try {
+      const res = await fetch(`/api/labs/experiments/photos?id=${photoId}`, { method: 'DELETE' })
+      if (!res.ok) {
+        console.error('Delete failed:', await res.text())
+      }
+    } catch (error) {
+      console.error('Delete error:', error)
+    }
     setDeleteAlert(null)
     await loadData()
   }
@@ -589,6 +596,7 @@ export default function ExperimentsPage() {
         <TabsContent value="folders" className="space-y-4">
           {selectedFolder ? (
             <FolderDetail 
+              key={selectedFolder.id + '-' + selectedFolder.photo_count}
               folderId={selectedFolder.id}
               folders={folders.filter(f => !f.is_unclassified)}
               onBack={() => setSelectedFolderId(null)}
@@ -598,6 +606,7 @@ export default function ExperimentsPage() {
               onDeletePhoto={(id) => setDeleteAlert({ type: 'photo', id })}
               onRunTest={handleRunTest}
               onPromote={handlePromote}
+              onRefresh={loadData}
             />
           ) : (
             <>
@@ -954,6 +963,21 @@ export default function ExperimentsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* ALERT: Limite 20 photos */}
+      <AlertDialog open={limitAlert} onOpenChange={setLimitAlert}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Limite dépassée</AlertDialogTitle>
+            <AlertDialogDescription>
+              Vous avez sélectionné plus de 20 photos. Veuillez réduire votre sélection pour continuer.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction>Compris</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
@@ -971,7 +995,8 @@ function FolderDetail({
   onMovePhotos,
   onDeletePhoto,
   onRunTest,
-  onPromote
+  onPromote,
+  onRefresh
 }: {
   folderId: string
   folders: Folder[]
@@ -982,6 +1007,7 @@ function FolderDetail({
   onDeletePhoto: (id: string) => void
   onRunTest: (id: string) => void
   onPromote: (id: string) => void
+  onRefresh: () => void
 }) {
   const [loading, setLoading] = useState(true)
   const [folder, setFolder] = useState<Folder | null>(null)
@@ -1011,11 +1037,13 @@ function FolderDetail({
     await onUpdateFolder(folder.id, { name: editName, detected_type: editType })
     setFolder({ ...folder, name: editName, detected_type: editType })
     setEditing(false)
+    onRefresh()
   }
 
   const handleMovePhoto = async (photoId: string, targetFolderId: string) => {
     await onMovePhotos([photoId], targetFolderId)
     setPhotos(photos.filter(p => p.id !== photoId))
+    onRefresh()
   }
 
   if (loading) {
