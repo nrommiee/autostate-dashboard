@@ -6,88 +6,112 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
-// GET - Liste des dossiers
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+}
+
+export async function OPTIONS() {
+  return new NextResponse(null, { status: 200, headers: corsHeaders })
+}
+
+// GET - Liste des dossiers ou un dossier spécifique
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const id = searchParams.get('id')
-    const status = searchParams.get('status')
-    const linkedModelId = searchParams.get('linked_model_id')
     const withPhotos = searchParams.get('with_photos') === 'true'
+    const status = searchParams.get('status')
+    const includeUnclassified = searchParams.get('include_unclassified') !== 'false'
 
     if (id) {
-      // Dossier spécifique avec photos
-      const { data: folder, error } = await supabase
+      // Récupérer un dossier spécifique avec ses photos
+      const { data, error } = await supabase
         .from('experiment_folders')
         .select(`
           *,
           meter_models(id, name, manufacturer),
-          experiment_config_model(id, name),
           experiment_photos(*)
         `)
         .eq('id', id)
         .single()
 
       if (error) throw error
-      return NextResponse.json({ folder })
+      return NextResponse.json({ folder: data }, { headers: corsHeaders })
     }
 
     // Liste des dossiers
     let query = supabase
       .from('experiment_folders')
-      .select(`
+      .select(withPhotos ? `
+        *,
+        meter_models(id, name, manufacturer),
+        experiment_photos(*)
+      ` : `
         *,
         meter_models(id, name, manufacturer)
-        ${withPhotos ? ', experiment_photos(id, image_url, thumbnail_url, status)' : ''}
       `)
-      .order('updated_at', { ascending: false })
+      .order('created_at', { ascending: false })
 
     if (status) {
       query = query.eq('status', status)
-    }
-    if (linkedModelId) {
-      query = query.eq('linked_meter_model_id', linkedModelId)
     }
 
     const { data, error } = await query
 
     if (error) throw error
 
-    return NextResponse.json({ folders: data })
+    // Calculer photo_count pour chaque dossier
+    const foldersWithCount = (data || []).map(folder => ({
+      ...folder,
+      photo_count: folder.experiment_photos?.length || 0,
+      min_photos_required: 5
+    }))
+
+    // Séparer le dossier "Non classé" et les autres
+    const unclassifiedFolder = foldersWithCount.find(f => f.is_unclassified)
+    const regularFolders = foldersWithCount.filter(f => !f.is_unclassified)
+
+    return NextResponse.json({ 
+      folders: includeUnclassified ? foldersWithCount : regularFolders,
+      unclassified: unclassifiedFolder || null
+    }, { headers: corsHeaders })
   } catch (error) {
     console.error('Error fetching folders:', error)
-    return NextResponse.json({ error: 'Failed to fetch folders' }, { status: 500 })
+    return NextResponse.json({ error: 'Failed to fetch folders' }, { status: 500, headers: corsHeaders })
   }
 }
 
-// POST - Créer un dossier
+// POST - Créer un nouveau dossier (manuellement)
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { name, description, detected_type, linked_meter_model_id } = body
+    const { name, detected_type, description } = body
 
     if (!name) {
-      return NextResponse.json({ error: 'name is required' }, { status: 400 })
+      return NextResponse.json({ error: 'name is required' }, { status: 400, headers: corsHeaders })
     }
 
     const { data, error } = await supabase
       .from('experiment_folders')
       .insert({
         name,
-        description,
         detected_type: detected_type || 'unknown',
-        linked_meter_model_id,
-        status: 'draft'
+        description: description || null,
+        status: 'draft',
+        is_unclassified: false,
+        cluster_signature: `manual_${Date.now()}`
       })
       .select()
       .single()
 
     if (error) throw error
 
-    return NextResponse.json({ folder: data })
+    return NextResponse.json({ folder: data }, { headers: corsHeaders })
   } catch (error) {
     console.error('Error creating folder:', error)
-    return NextResponse.json({ error: 'Failed to create folder' }, { status: 500 })
+    return NextResponse.json({ error: 'Failed to create folder' }, { status: 500, headers: corsHeaders })
   }
 }
 
@@ -98,22 +122,17 @@ export async function PUT(request: NextRequest) {
     const { id, ...updates } = body
 
     if (!id) {
-      return NextResponse.json({ error: 'id is required' }, { status: 400 })
+      return NextResponse.json({ error: 'id is required' }, { status: 400, headers: corsHeaders })
     }
 
-    // Champs autorisés
-    const allowedFields = [
-      'name', 'description', 'detected_type', 'linked_meter_model_id',
-      'config_model_id', 'status', 'min_photos_required'
-    ]
-
+    const allowedFields = ['name', 'description', 'status', 'linked_meter_model_id', 'config_model_id', 'detected_type']
     const filteredUpdates: Record<string, unknown> = {}
+    
     for (const field of allowedFields) {
       if (updates[field] !== undefined) {
         filteredUpdates[field] = updates[field]
       }
     }
-    filteredUpdates.updated_at = new Date().toISOString()
 
     const { data, error } = await supabase
       .from('experiment_folders')
@@ -124,24 +143,61 @@ export async function PUT(request: NextRequest) {
 
     if (error) throw error
 
-    return NextResponse.json({ folder: data })
+    return NextResponse.json({ folder: data }, { headers: corsHeaders })
   } catch (error) {
     console.error('Error updating folder:', error)
-    return NextResponse.json({ error: 'Failed to update folder' }, { status: 500 })
+    return NextResponse.json({ error: 'Failed to update folder' }, { status: 500, headers: corsHeaders })
   }
 }
 
-// DELETE - Supprimer un dossier (et ses photos)
+// DELETE - Supprimer un dossier
 export async function DELETE(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const id = searchParams.get('id')
 
     if (!id) {
-      return NextResponse.json({ error: 'id is required' }, { status: 400 })
+      return NextResponse.json({ error: 'id is required' }, { status: 400, headers: corsHeaders })
     }
 
-    // Les photos seront supprimées en cascade (ON DELETE CASCADE)
+    // Vérifier si c'est le dossier "Non classé"
+    const { data: folder } = await supabase
+      .from('experiment_folders')
+      .select('is_unclassified')
+      .eq('id', id)
+      .single()
+
+    if (folder?.is_unclassified) {
+      return NextResponse.json({ 
+        error: 'Cannot delete unclassified folder',
+        message: 'Le dossier "Non classé" ne peut pas être supprimé'
+      }, { status: 400, headers: corsHeaders })
+    }
+
+    // Récupérer les photos pour supprimer du storage
+    const { data: photos } = await supabase
+      .from('experiment_photos')
+      .select('image_url')
+      .eq('folder_id', id)
+
+    // Supprimer les photos du storage
+    if (photos && photos.length > 0) {
+      const paths = photos
+        .map(p => p.image_url?.split('/meter-photos/')[1])
+        .filter(Boolean)
+      
+      if (paths.length > 0) {
+        await supabase.storage.from('meter-photos').remove(paths as string[])
+      }
+    }
+
+    // Supprimer les photos de la DB (cascade devrait le faire, mais au cas où)
+    await supabase
+      .from('experiment_photos')
+      .delete()
+      .eq('folder_id', id)
+
+    // Supprimer le dossier
     const { error } = await supabase
       .from('experiment_folders')
       .delete()
@@ -149,9 +205,9 @@ export async function DELETE(request: NextRequest) {
 
     if (error) throw error
 
-    return NextResponse.json({ success: true })
+    return NextResponse.json({ success: true }, { headers: corsHeaders })
   } catch (error) {
     console.error('Error deleting folder:', error)
-    return NextResponse.json({ error: 'Failed to delete folder' }, { status: 500 })
+    return NextResponse.json({ error: 'Failed to delete folder' }, { status: 500, headers: corsHeaders })
   }
 }
