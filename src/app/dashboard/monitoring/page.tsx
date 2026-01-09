@@ -79,13 +79,13 @@ const LEVEL_CONFIG = {
   DEBUG: { icon: Bug, color: 'text-gray-600', bg: 'bg-gray-50', border: 'border-gray-200', badge: 'bg-gray-100 text-gray-700' }
 }
 
-const TABS = [
+const TABS: { id: string; label: string; icon: any; badge?: string }[] = [
   { id: 'overview', label: "Vue d'ensemble", icon: LayoutDashboard },
   { id: 'logs', label: 'Logs', icon: ScrollText },
   { id: 'performance', label: 'Performance', icon: Gauge },
   { id: 'security', label: 'Sécurité', icon: Shield },
   { id: 'analyzer', label: 'Code Analyzer', icon: FileCode, badge: 'Bientôt' }
-] as const
+]
 
 export default function MonitoringPage() {
   const [activeTab, setActiveTab] = useState<string>('overview')
