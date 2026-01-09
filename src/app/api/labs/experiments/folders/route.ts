@@ -68,7 +68,8 @@ export async function GET(request: NextRequest) {
     if (error) throw error
 
     // Pour chaque dossier, récupérer la photo de référence si elle existe
-    const foldersWithData = await Promise.all((data || []).map(async (folder: Record<string, unknown>) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const foldersWithData = await Promise.all((data || []).map(async (folder: any) => {
       let reference_photo = null
       if (folder.reference_photo_id) {
         const { data: refPhoto } = await supabase
@@ -79,11 +80,10 @@ export async function GET(request: NextRequest) {
         reference_photo = refPhoto
       }
       
-      const photos = folder.experiment_photos as unknown[] | undefined
       return {
         ...folder,
         reference_photo,
-        photo_count: photos?.length || folder.photo_count || 0,
+        photo_count: folder.experiment_photos?.length || folder.photo_count || 0,
         min_photos_required: 5
       }
     }))
@@ -157,8 +157,8 @@ export async function PUT(request: NextRequest) {
         .single()
       
       if (folder && !folder.is_unclassified) {
-        const photos = folder.experiment_photos as unknown[] | undefined
-        const photoCount = photos?.length || 0
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const photoCount = (folder.experiment_photos as any)?.length || 0
         if (folder.status === 'draft' && photoCount >= 5) {
           filteredUpdates.status = 'ready'
         }
