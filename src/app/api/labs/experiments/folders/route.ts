@@ -23,7 +23,6 @@ export async function GET(request: NextRequest) {
     const id = searchParams.get('id')
     const withPhotos = searchParams.get('with_photos') === 'true'
     const status = searchParams.get('status')
-    const includeUnclassified = searchParams.get('include_unclassified') !== 'false'
 
     if (id) {
       // Récupérer un dossier spécifique avec ses photos
@@ -32,7 +31,8 @@ export async function GET(request: NextRequest) {
         .select(`
           *,
           meter_models(id, name, manufacturer),
-          experiment_photos(*)
+          experiment_photos(*),
+          reference_photo:experiment_photos!experiment_folders_reference_photo_id_fkey(*)
         `)
         .eq('id', id)
         .single()
@@ -47,10 +47,12 @@ export async function GET(request: NextRequest) {
       .select(withPhotos ? `
         *,
         meter_models(id, name, manufacturer),
-        experiment_photos(*)
+        experiment_photos(*),
+        reference_photo:experiment_photos!experiment_folders_reference_photo_id_fkey(*)
       ` : `
         *,
-        meter_models(id, name, manufacturer)
+        meter_models(id, name, manufacturer),
+        reference_photo:experiment_photos!experiment_folders_reference_photo_id_fkey(id, image_url, thumbnail_url)
       `)
       .order('created_at', { ascending: false })
 
@@ -70,14 +72,7 @@ export async function GET(request: NextRequest) {
       min_photos_required: 5
     }))
 
-    // Séparer le dossier "Non classé" et les autres
-    const unclassifiedFolder = foldersWithCount.find(f => f.is_unclassified)
-    const regularFolders = foldersWithCount.filter(f => !f.is_unclassified)
-
-    return NextResponse.json({ 
-      folders: includeUnclassified ? foldersWithCount : regularFolders,
-      unclassified: unclassifiedFolder || null
-    }, { headers: corsHeaders })
+    return NextResponse.json({ folders: foldersWithCount }, { headers: corsHeaders })
   } catch (error) {
     console.error('Error fetching folders:', error)
     return NextResponse.json({ error: 'Failed to fetch folders' }, { status: 500, headers: corsHeaders })
@@ -102,7 +97,8 @@ export async function POST(request: NextRequest) {
         description: description || null,
         status: 'draft',
         is_unclassified: false,
-        cluster_signature: `manual_${Date.now()}`
+        cluster_signature: `manual_${Date.now()}`,
+        photos_since_last_test: 0
       })
       .select()
       .single()
@@ -126,12 +122,29 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'id is required' }, { status: 400, headers: corsHeaders })
     }
 
-    const allowedFields = ['name', 'description', 'status', 'linked_meter_model_id', 'config_model_id', 'detected_type']
+    const allowedFields = ['name', 'description', 'status', 'linked_meter_model_id', 'config_model_id', 'detected_type', 'reference_photo_id']
     const filteredUpdates: Record<string, unknown> = {}
     
     for (const field of allowedFields) {
       if (updates[field] !== undefined) {
         filteredUpdates[field] = updates[field]
+      }
+    }
+
+    // Mettre à jour automatiquement le status si nécessaire
+    if (filteredUpdates.status === undefined) {
+      // Vérifier le nombre de photos
+      const { data: folder } = await supabase
+        .from('experiment_folders')
+        .select('status, is_unclassified, experiment_photos(id)')
+        .eq('id', id)
+        .single()
+      
+      if (folder && !folder.is_unclassified) {
+        const photoCount = folder.experiment_photos?.length || 0
+        if (folder.status === 'draft' && photoCount >= 5) {
+          filteredUpdates.status = 'ready'
+        }
       }
     }
 
@@ -192,7 +205,7 @@ export async function DELETE(request: NextRequest) {
       }
     }
 
-    // Supprimer les photos de la DB (cascade devrait le faire, mais au cas où)
+    // Supprimer les photos de la DB
     await supabase
       .from('experiment_photos')
       .delete()
