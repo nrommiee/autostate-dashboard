@@ -210,7 +210,7 @@ export default function MonitoringPage() {
   
   const formatDuration = (ms: number) => ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(2)}s`
   
-  const uniqueSources = [...new Set(logs.map(l => l.source))].sort()
+  const uniqueSources = Array.from(new Set(logs.map(l => l.source))).sort()
 
   if (loading) {
     return (
