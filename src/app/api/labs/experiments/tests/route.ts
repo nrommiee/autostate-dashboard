@@ -142,22 +142,30 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'folder_id is required' }, { status: 400, headers: corsHeaders })
     }
     
-    // Récupérer le dossier et ses photos
+    // Récupérer le dossier (requête séparée, plus fiable)
     const { data: folder, error: folderError } = await supabase
       .from('experiment_folders')
-      .select(`
-        *,
-        experiment_photos(*)
-      `)
+      .select('*')
       .eq('id', folder_id)
       .single()
     
     if (folderError || !folder) {
-      return NextResponse.json({ error: 'Folder not found' }, { status: 404, headers: corsHeaders })
+      console.error('Folder error:', folderError)
+      return NextResponse.json({ error: 'Folder not found', details: folderError?.message }, { status: 404, headers: corsHeaders })
     }
     
-    const photos = folder.experiment_photos || []
-    if (photos.length === 0) {
+    // Récupérer les photos séparément
+    const { data: photos, error: photosError } = await supabase
+      .from('experiment_photos')
+      .select('*')
+      .eq('folder_id', folder_id)
+    
+    if (photosError) {
+      console.error('Photos error:', photosError)
+      return NextResponse.json({ error: 'Failed to fetch photos', details: photosError?.message }, { status: 500, headers: corsHeaders })
+    }
+    
+    if (!photos || photos.length === 0) {
       return NextResponse.json({ error: 'No photos in folder' }, { status: 400, headers: corsHeaders })
     }
     
@@ -273,7 +281,7 @@ async function executeTestsInBackground(
       totalCost += result.api_cost_usd
       
     } catch (error) {
-     console.error(`Error testing photo ${photo.id}:`, error)
+      console.error(`Error testing photo ${photo.id}:`, error)
       failCount++
     }
   }
