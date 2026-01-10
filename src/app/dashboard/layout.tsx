@@ -70,6 +70,10 @@ const navItems: NavItem[] = [
     title: 'Objets',
     href: '/dashboard/objects',
     icon: <Boxes className="h-4 w-4" />,
+    children: [
+      { title: 'Référentiel', href: '/dashboard/objects', icon: <Boxes className="h-4 w-4" /> },
+      { title: 'Importer', href: '/dashboard/objects/import', icon: <FileText className="h-4 w-4" /> },
+    ]
   },
   {
     title: 'Suggestions',
