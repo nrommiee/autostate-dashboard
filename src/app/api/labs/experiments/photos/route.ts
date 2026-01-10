@@ -38,6 +38,9 @@ async function analyzePhotoForClustering(imageBase64: string): Promise<{
   model: string | null
   confidence: number
   signature: string
+  tokens_input: number
+  tokens_output: number
+  cost_usd: number
 }> {
   try {
     const response = await anthropic.messages.create({
@@ -80,6 +83,13 @@ Réponds UNIQUEMENT en JSON:
       ]
     })
 
+    // Extraire les tokens utilisés
+    const tokensInput = response.usage?.input_tokens || 0
+    const tokensOutput = response.usage?.output_tokens || 0
+    
+    // Calculer le coût (Claude Sonnet 4: $3/M input, $15/M output)
+    const costUsd = (tokensInput / 1000000) * 3 + (tokensOutput / 1000000) * 15
+
     const textContent = response.content.find(c => c.type === 'text')
     const responseText = textContent?.type === 'text' ? textContent.text : '{}'
     
@@ -95,8 +105,11 @@ Réponds UNIQUEMENT en JSON:
         meter_type: parsed.type || 'unknown',
         manufacturer: parsed.manufacturer || null,
         model: parsed.model || null,
-        confidence: parsed.confidence || 0,
-        signature
+        confidence: Math.round(parsed.confidence || 0),
+        signature,
+        tokens_input: tokensInput,
+        tokens_output: tokensOutput,
+        cost_usd: costUsd
       }
     }
   } catch (error) {
@@ -108,7 +121,10 @@ Réponds UNIQUEMENT en JSON:
     manufacturer: null,
     model: null,
     confidence: 0,
-    signature: 'unknown_unknown_unknown'
+    signature: 'unknown_unknown_unknown',
+    tokens_input: 0,
+    tokens_output: 0,
+    cost_usd: 0
   }
 }
 
@@ -400,6 +416,10 @@ export async function POST(request: NextRequest) {
               model: analysis.model,
               confidence: analysis.confidence,
               signature: analysis.signature,
+              tokens_input: analysis.tokens_input,
+              tokens_output: analysis.tokens_output,
+              tokens_total: analysis.tokens_input + analysis.tokens_output,
+              cost_usd: analysis.cost_usd,
               analyzed_at: new Date().toISOString()
             } : null
           })
