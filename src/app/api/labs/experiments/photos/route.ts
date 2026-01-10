@@ -394,14 +394,14 @@ export async function POST(request: NextRequest) {
             detected_brand: analysis?.manufacturer || null,
             detected_model: analysis?.model || null,
             ai_confidence: analysis?.confidence || null,
-            ai_analysis: analysis ? JSON.stringify({
+            ai_analysis: analysis ? {
               type: analysis.meter_type,
               manufacturer: analysis.manufacturer,
               model: analysis.model,
               confidence: analysis.confidence,
               signature: analysis.signature,
               analyzed_at: new Date().toISOString()
-            }) : null
+            } : null
           })
           .select()
           .single()
