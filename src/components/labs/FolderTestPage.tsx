@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -8,6 +8,13 @@ import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { 
   ChevronLeft, 
   Save, 
@@ -20,11 +27,10 @@ import {
   Bolt,
   AlertTriangle,
   Star,
-  Lock,
-  Unlock,
-  Check
+  Check,
+  CheckCircle2
 } from 'lucide-react'
-import { ROIEditor, type ROIZone, type IndexConfig } from '@/components/labs/ROIEditor'
+import { ROIEditor, type ROIZone } from '@/components/labs/ROIEditor'
 import { PreprocessingEditor, type PreprocessingConfig } from '@/components/labs/PreprocessingEditor'
 
 // ============================================
@@ -71,6 +77,11 @@ interface ConfigType {
   typical_unit: string
 }
 
+interface IndexConfig {
+  integerDigits: number
+  decimalDigits: number
+}
+
 interface SavedConfig {
   id: string
   name: string
@@ -80,7 +91,6 @@ interface SavedConfig {
   zones: ROIZone[]
   index_config: IndexConfig
   prompt_model: string
-  prompt_levels: { universal: boolean; type: boolean; model: boolean }
   created_at: string
   test_results?: {
     accuracy_rate: number
@@ -171,13 +181,6 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
   const [indexConfig, setIndexConfig] = useState<IndexConfig>(DEFAULT_INDEX_CONFIG)
   const [promptModel, setPromptModel] = useState('')
   
-  // Prompt levels (locked/unlocked)
-  const [promptLevels, setPromptLevels] = useState({
-    universal: true,
-    type: true,
-    model: true,
-  })
-  
   // UI state
   const [activeTab, setActiveTab] = useState<'config' | 'results'>('config')
   const [selectedLayer, setSelectedLayer] = useState(1)
@@ -191,7 +194,6 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
     setZones(config.zones || [])
     setIndexConfig(config.index_config || DEFAULT_INDEX_CONFIG)
     setPromptModel(config.prompt_model || '')
-    setPromptLevels(config.prompt_levels || { universal: true, type: true, model: true })
   }, [])
 
   // Load data
@@ -278,7 +280,6 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
           zones,
           index_config: indexConfig,
           prompt_model: promptModel,
-          prompt_levels: promptLevels,
         }),
       })
       
@@ -306,34 +307,6 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
       alert('Erreur lors de la sauvegarde')
     } finally {
       setSaving(false)
-    }
-  }
-
-  // Activate a saved config
-  const handleActivateConfig = async (configId: string) => {
-    try {
-      await fetch('/api/labs/experiments/configs', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          config_id: configId,
-          folder_id: folderId,
-          action: 'activate',
-        }),
-      })
-      
-      // Reload configs
-      const savedRes = await fetch(`/api/labs/experiments/configs?folder_id=${folderId}`)
-      const savedData = await savedRes.json()
-      if (savedData.configs) {
-        setSavedConfigs(savedData.configs)
-        const activeConfig = savedData.configs.find((c: SavedConfig) => c.id === configId)
-        if (activeConfig) {
-          loadConfigValues(activeConfig)
-        }
-      }
-    } catch (error) {
-      console.error('Error activating config:', error)
     }
   }
 
@@ -371,7 +344,6 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
               zones,
               index_config: indexConfig,
               prompt_model: promptModel,
-              prompt_levels: promptLevels,
             },
           }),
         })
@@ -398,6 +370,11 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
     setTimeout(() => setSaveSuccess(false), 2000)
   }
 
+  // Check what's configured
+  const hasUniversalPrompt = !!configUniversal?.base_prompt
+  const hasTypePrompt = !!configType?.additional_prompt
+  const hasModelPrompt = !!promptModel.trim()
+
   if (loading) {
     return (
       <div className="p-6 flex items-center justify-center min-h-[400px]">
@@ -416,6 +393,10 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
       </div>
     )
   }
+
+  // Format preview for index
+  const formatPreview = 'X'.repeat(indexConfig.integerDigits) + 
+    (indexConfig.decimalDigits > 0 ? ',' + 'X'.repeat(indexConfig.decimalDigits) : '')
 
   return (
     <div className="p-6 space-y-6">
@@ -493,59 +474,51 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
         </div>
       </div>
 
-      {/* Config Name & Prompt Levels Card */}
+      {/* Config Name Card - avec bouton save dédié */}
       <Card className="p-4">
         <div className="flex items-center gap-4">
           <div className="flex-1">
             <label className="text-sm font-medium mb-1 block">Nom de la configuration</label>
-            <Input 
-              value={configName}
-              onChange={(e) => setConfigName(e.target.value)}
-              placeholder="Ex: Config v1 - Zones précises"
-              className="max-w-md"
-            />
+            <div className="flex gap-2">
+              <Input 
+                value={configName}
+                onChange={(e) => setConfigName(e.target.value)}
+                placeholder="Ex: Config v1 - Zones précises"
+                className="max-w-md"
+              />
+              <Button 
+                variant="outline" 
+                size="sm"
+                onClick={handleSave}
+                disabled={saving || !configName.trim()}
+              >
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              </Button>
+            </div>
           </div>
           
-          {/* Prompt Levels Toggle */}
+          {/* Niveaux configurés (lecture seule) */}
           <div className="flex items-center gap-4 border-l pl-4">
-            <span className="text-sm font-medium">Niveaux actifs :</span>
+            <span className="text-sm font-medium">Niveaux configurés :</span>
             <div className="flex items-center gap-2">
-              <button
-                onClick={() => setPromptLevels(p => ({ ...p, universal: !p.universal }))}
-                className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors ${
-                  promptLevels.universal 
-                    ? 'bg-blue-100 text-blue-700' 
-                    : 'bg-gray-100 text-gray-400 line-through'
-                }`}
-                title={promptLevels.universal ? 'Cliquer pour désactiver' : 'Cliquer pour activer'}
-              >
-                {promptLevels.universal ? <Lock className="h-3 w-3" /> : <Unlock className="h-3 w-3" />}
+              <span className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium ${
+                hasUniversalPrompt ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-400'
+              }`}>
+                {hasUniversalPrompt && <CheckCircle2 className="h-3 w-3" />}
                 Universel
-              </button>
-              <button
-                onClick={() => setPromptLevels(p => ({ ...p, type: !p.type }))}
-                className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors ${
-                  promptLevels.type 
-                    ? 'bg-green-100 text-green-700' 
-                    : 'bg-gray-100 text-gray-400 line-through'
-                }`}
-                title={promptLevels.type ? 'Cliquer pour désactiver' : 'Cliquer pour activer'}
-              >
-                {promptLevels.type ? <Lock className="h-3 w-3" /> : <Unlock className="h-3 w-3" />}
+              </span>
+              <span className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium ${
+                hasTypePrompt ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-400'
+              }`}>
+                {hasTypePrompt && <CheckCircle2 className="h-3 w-3" />}
                 Type
-              </button>
-              <button
-                onClick={() => setPromptLevels(p => ({ ...p, model: !p.model }))}
-                className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors ${
-                  promptLevels.model 
-                    ? 'bg-teal-100 text-teal-700' 
-                    : 'bg-gray-100 text-gray-400 line-through'
-                }`}
-                title={promptLevels.model ? 'Cliquer pour désactiver' : 'Cliquer pour activer'}
-              >
-                {promptLevels.model ? <Lock className="h-3 w-3" /> : <Unlock className="h-3 w-3" />}
+              </span>
+              <span className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium ${
+                hasModelPrompt ? 'bg-teal-100 text-teal-700' : 'bg-gray-100 text-gray-400'
+              }`}>
+                {hasModelPrompt && <CheckCircle2 className="h-3 w-3" />}
                 Modèle
-              </button>
+              </span>
             </div>
           </div>
         </div>
@@ -639,14 +612,12 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
                 </div>
               )}
 
-              {/* Layer 4: ROI Zones */}
+              {/* Layer 4: ROI Zones - sans Index de consommation */}
               {selectedLayer === 4 && referencePhoto && (
                 <ROIEditor
                   imageUrl={referencePhoto.image_url}
                   zones={zones}
-                  indexConfig={indexConfig}
                   onZonesChange={setZones}
-                  onIndexConfigChange={setIndexConfig}
                   onSave={handleZonesSave}
                 />
               )}
@@ -661,40 +632,26 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
                     </p>
                   </div>
 
-                  {/* Universal prompt */}
-                  <div className={`border rounded-lg p-3 transition-opacity ${!promptLevels.universal ? 'opacity-40' : ''}`}>
+                  {/* Universal prompt (read-only) */}
+                  <div className="border rounded-lg p-3">
                     <div className="flex items-center gap-2 mb-2">
                       <Badge variant="outline">Niveau 1 - Universel</Badge>
                       <Badge variant="secondary">Lecture seule</Badge>
-                      <div className="flex-1" />
-                      <button
-                        onClick={() => setPromptLevels(p => ({ ...p, universal: !p.universal }))}
-                        className="p-1 rounded hover:bg-gray-100"
-                        title={promptLevels.universal ? 'Désactiver ce niveau' : 'Activer ce niveau'}
-                      >
-                        {promptLevels.universal ? <Lock className="h-4 w-4 text-blue-600" /> : <Unlock className="h-4 w-4 text-gray-400" />}
-                      </button>
+                      {hasUniversalPrompt && <CheckCircle2 className="h-4 w-4 text-blue-600" />}
                     </div>
                     <pre className="text-xs bg-gray-50 p-2 rounded max-h-32 overflow-y-auto whitespace-pre-wrap">
                       {configUniversal?.base_prompt || 'Non configuré'}
                     </pre>
                   </div>
 
-                  {/* Type prompt */}
-                  <div className={`border rounded-lg p-3 transition-opacity ${!promptLevels.type ? 'opacity-40' : ''}`}>
+                  {/* Type prompt (read-only) */}
+                  <div className="border rounded-lg p-3">
                     <div className="flex items-center gap-2 mb-2">
                       <Badge variant="outline">Niveau 2 - Type</Badge>
                       {TYPE_ICONS[folder.detected_type]}
                       <span className="text-sm capitalize">{folder.detected_type}</span>
                       <Badge variant="secondary">Lecture seule</Badge>
-                      <div className="flex-1" />
-                      <button
-                        onClick={() => setPromptLevels(p => ({ ...p, type: !p.type }))}
-                        className="p-1 rounded hover:bg-gray-100"
-                        title={promptLevels.type ? 'Désactiver ce niveau' : 'Activer ce niveau'}
-                      >
-                        {promptLevels.type ? <Lock className="h-4 w-4 text-green-600" /> : <Unlock className="h-4 w-4 text-gray-400" />}
-                      </button>
+                      {hasTypePrompt && <CheckCircle2 className="h-4 w-4 text-green-600" />}
                     </div>
                     <pre className="text-xs bg-gray-50 p-2 rounded max-h-24 overflow-y-auto whitespace-pre-wrap">
                       {configType?.additional_prompt || 'Non configuré'}
@@ -702,25 +659,17 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
                   </div>
 
                   {/* Model prompt (editable) */}
-                  <div className={`border rounded-lg p-3 border-teal-200 bg-teal-50/30 transition-opacity ${!promptLevels.model ? 'opacity-40' : ''}`}>
+                  <div className="border rounded-lg p-3 border-teal-200 bg-teal-50/30">
                     <div className="flex items-center gap-2 mb-2">
                       <Badge className="bg-teal-600">Niveau 3 - Modèle</Badge>
                       <Badge className="bg-teal-100 text-teal-700">Éditable</Badge>
-                      <div className="flex-1" />
-                      <button
-                        onClick={() => setPromptLevels(p => ({ ...p, model: !p.model }))}
-                        className="p-1 rounded hover:bg-gray-100"
-                        title={promptLevels.model ? 'Désactiver ce niveau' : 'Activer ce niveau'}
-                      >
-                        {promptLevels.model ? <Lock className="h-4 w-4 text-teal-600" /> : <Unlock className="h-4 w-4 text-gray-400" />}
-                      </button>
+                      {hasModelPrompt && <CheckCircle2 className="h-4 w-4 text-teal-600" />}
                     </div>
                     <Textarea
                       value={promptModel}
                       onChange={(e) => setPromptModel(e.target.value)}
                       placeholder="Instructions spécifiques pour ce modèle de compteur..."
                       className="font-mono text-sm min-h-28"
-                      disabled={!promptLevels.model}
                     />
                   </div>
                 </Card>
@@ -737,50 +686,98 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
                 </Card>
               )}
 
-              {/* Layer 8: Validation - Read-only, shows format from ROI */}
+              {/* Layer 8: Cohérence - Index de consommation avec photo de référence */}
               {selectedLayer === 8 && (
-                <Card className="p-6 space-y-4">
-                  <div>
-                    <h3 className="font-semibold">Couche 8 : Validation & Cohérence</h3>
-                    <p className="text-sm text-muted-foreground">
-                      Vérifie que la lecture correspond au format attendu
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* Photo de référence */}
+                  <Card className="p-4">
+                    <h4 className="font-medium mb-3">Photo de référence</h4>
+                    {referencePhoto ? (
+                      <div className="bg-gray-100 rounded-lg overflow-hidden">
+                        <img 
+                          src={referencePhoto.image_url} 
+                          alt="Photo de référence" 
+                          className="w-full h-auto max-h-[400px] object-contain"
+                        />
+                      </div>
+                    ) : (
+                      <div className="bg-gray-100 rounded-lg h-64 flex items-center justify-center">
+                        <p className="text-muted-foreground">Aucune photo de référence</p>
+                      </div>
+                    )}
+                    <p className="text-xs text-muted-foreground mt-2">
+                      📷 {folder.name}
                     </p>
-                  </div>
-                  
-                  <div className="p-4 bg-gray-50 rounded-lg">
-                    <p className="text-sm text-muted-foreground mb-2">
-                      Format configuré dans{' '}
-                      <button 
-                        onClick={() => setSelectedLayer(4)} 
-                        className="text-teal-600 hover:underline font-medium"
-                      >
-                        Zones ROI (couche 4)
-                      </button>
-                    </p>
-                    <div className="p-4 bg-white rounded-lg border text-center">
-                      <p className="text-xs text-muted-foreground mb-1">Format attendu</p>
-                      <p className="font-mono text-3xl font-bold tracking-wider">
-                        {'X'.repeat(indexConfig.integerDigits)}
-                        {indexConfig.decimalDigits > 0 && (
-                          <span className="text-red-500">
-                            ,{'X'.repeat(indexConfig.decimalDigits)}
-                          </span>
-                        )}
+                  </Card>
+
+                  {/* Index de consommation config */}
+                  <Card className="p-4 space-y-4">
+                    <div>
+                      <h3 className="font-semibold">Couche 8 : Cohérence</h3>
+                      <p className="text-sm text-muted-foreground">
+                        Format attendu pour l'index de consommation
                       </p>
                     </div>
-                  </div>
-                  
-                  <div className="p-4 bg-blue-50 rounded-lg text-sm text-blue-700">
-                    <p className="font-medium mb-1">Règles de validation :</p>
-                    <ul className="list-disc list-inside space-y-1 text-blue-600">
-                      <li>La lecture doit avoir {indexConfig.integerDigits} chiffres entiers</li>
-                      {indexConfig.decimalDigits > 0 && (
-                        <li>Suivi de {indexConfig.decimalDigits} décimale(s)</li>
-                      )}
-                      <li>Les valeurs incohérentes seront signalées</li>
-                    </ul>
-                  </div>
-                </Card>
+
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-sm text-muted-foreground mb-1 block">Chiffres entiers</label>
+                          <Select 
+                            value={indexConfig.integerDigits.toString()} 
+                            onValueChange={(v) => setIndexConfig({ ...indexConfig, integerDigits: parseInt(v) })}
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {[3, 4, 5, 6, 7, 8].map(n => (
+                                <SelectItem key={n} value={n.toString()}>{n}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div>
+                          <label className="text-sm text-muted-foreground mb-1 block">Décimales</label>
+                          <Select 
+                            value={indexConfig.decimalDigits.toString()} 
+                            onValueChange={(v) => setIndexConfig({ ...indexConfig, decimalDigits: parseInt(v) })}
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {[0, 1, 2, 3].map(n => (
+                                <SelectItem key={n} value={n.toString()}>{n}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+
+                      <div className="p-4 bg-gray-50 rounded-lg text-center">
+                        <p className="text-xs text-muted-foreground mb-1">Format attendu</p>
+                        <p className="font-mono text-3xl font-bold tracking-wider">
+                          {formatPreview.split(',')[0]}
+                          {indexConfig.decimalDigits > 0 && (
+                            <span className="text-red-500">,{formatPreview.split(',')[1]}</span>
+                          )}
+                        </p>
+                      </div>
+
+                      <div className="p-3 bg-blue-50 rounded-lg text-sm text-blue-700">
+                        <p className="font-medium mb-1">Règles de validation :</p>
+                        <ul className="list-disc list-inside space-y-1 text-blue-600">
+                          <li>La lecture doit avoir {indexConfig.integerDigits} chiffres entiers</li>
+                          {indexConfig.decimalDigits > 0 && (
+                            <li>Suivi de {indexConfig.decimalDigits} décimale(s) en rouge</li>
+                          )}
+                          <li>Les valeurs incohérentes seront signalées</li>
+                        </ul>
+                      </div>
+                    </div>
+                  </Card>
+                </div>
               )}
 
               {/* Layer 9: Multi-pass */}
