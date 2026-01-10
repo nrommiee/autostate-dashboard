@@ -596,7 +596,7 @@ export default function CreateObjectPage() {
                 <div>
                   <Label>Type d'attribut</Label>
                   <Select 
-                    value={editingAttribute.attribute_type_id} 
+                    value={editingAttribute.attribute_type_id || ''} 
                     onValueChange={(v) => setEditingAttribute({ ...editingAttribute, attribute_type_id: v })}
                   >
                     <SelectTrigger className="mt-1">
