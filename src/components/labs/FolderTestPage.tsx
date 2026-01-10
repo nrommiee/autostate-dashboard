@@ -28,7 +28,8 @@ import {
   AlertTriangle,
   Star,
   Check,
-  CheckCircle2
+  CheckCircle2,
+  Pencil
 } from 'lucide-react'
 import { ROIEditor, type ROIZone } from '@/components/labs/ROIEditor'
 import { PreprocessingEditor, type PreprocessingConfig } from '@/components/labs/PreprocessingEditor'
@@ -165,6 +166,7 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   const [saveSuccess, setSaveSuccess] = useState(false)
+  const [isEditingName, setIsEditingName] = useState(true) // true = editing mode, false = saved/locked
   
   // Data
   const [folder, setFolder] = useState<Folder | null>(null)
@@ -285,6 +287,7 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
       
       if (res.ok) {
         setSaveSuccess(true)
+        setIsEditingName(false) // Lock the name after save
         setTimeout(() => setSaveSuccess(false), 3000)
         
         // Reload saved configs
@@ -292,12 +295,6 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
         const savedData = await savedRes.json()
         if (savedData.configs) {
           setSavedConfigs(savedData.configs)
-        }
-        
-        // Increment config name for next save
-        const match = configName.match(/v(\d+)/)
-        if (match) {
-          setConfigName(`Config v${parseInt(match[1]) + 1}`)
         }
       } else {
         console.error('Save failed')
@@ -308,6 +305,17 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
     } finally {
       setSaving(false)
     }
+  }
+
+  // Start new config (unlock name for editing)
+  const handleNewConfig = () => {
+    const match = configName.match(/v(\d+)/)
+    if (match) {
+      setConfigName(`Config v${parseInt(match[1]) + 1}`)
+    } else {
+      setConfigName(`${configName} - copie`)
+    }
+    setIsEditingName(true)
   }
 
   // Run test
@@ -474,26 +482,54 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
         </div>
       </div>
 
-      {/* Config Name Card - avec bouton save dédié */}
+      {/* Config Name Card - avec mode lecture/édition */}
       <Card className="p-4">
         <div className="flex items-center gap-4">
           <div className="flex-1">
             <label className="text-sm font-medium mb-1 block">Nom de la configuration</label>
-            <div className="flex gap-2">
-              <Input 
-                value={configName}
-                onChange={(e) => setConfigName(e.target.value)}
-                placeholder="Ex: Config v1 - Zones précises"
-                className="max-w-md"
-              />
-              <Button 
-                variant="outline" 
-                size="sm"
-                onClick={handleSave}
-                disabled={saving || !configName.trim()}
-              >
-                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-              </Button>
+            <div className="flex gap-2 items-center">
+              {isEditingName ? (
+                <>
+                  <Input 
+                    value={configName}
+                    onChange={(e) => setConfigName(e.target.value)}
+                    placeholder="Ex: Config v1 - Zones précises"
+                    className="max-w-md"
+                  />
+                  <Button 
+                    variant="outline" 
+                    size="icon"
+                    onClick={handleSave}
+                    disabled={saving || !configName.trim()}
+                    title="Enregistrer"
+                  >
+                    {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg border max-w-md flex-1">
+                    <span className="font-medium">{configName}</span>
+                    <CheckCircle2 className="h-4 w-4 text-green-600" />
+                  </div>
+                  <Button 
+                    variant="outline" 
+                    size="icon"
+                    onClick={() => setIsEditingName(true)}
+                    title="Modifier le nom"
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={handleNewConfig}
+                    title="Nouvelle config"
+                  >
+                    + Nouvelle
+                  </Button>
+                </>
+              )}
             </div>
           </div>
           
