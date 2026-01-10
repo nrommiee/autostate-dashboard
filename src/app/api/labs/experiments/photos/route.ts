@@ -391,7 +391,17 @@ export async function POST(request: NextRequest) {
             file_size_bytes: file.size,
             status: 'pending',
             detected_type: analysis?.meter_type || 'unknown',
-            ai_confidence: analysis?.confidence || null
+            detected_brand: analysis?.manufacturer || null,
+            detected_model: analysis?.model || null,
+            ai_confidence: analysis?.confidence || null,
+            ai_analysis: analysis ? JSON.stringify({
+              type: analysis.meter_type,
+              manufacturer: analysis.manufacturer,
+              model: analysis.model,
+              confidence: analysis.confidence,
+              signature: analysis.signature,
+              analyzed_at: new Date().toISOString()
+            }) : null
           })
           .select()
           .single()
