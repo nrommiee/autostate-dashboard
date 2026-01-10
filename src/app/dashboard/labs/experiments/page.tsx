@@ -14,6 +14,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Upload, FolderOpen, Settings2, FlaskConical, CheckCircle2, Trash2, MoreVertical, ChevronRight, Loader2, AlertTriangle, Play, Eye, RefreshCw, Plus, Flame, Droplets, Bolt, Check, Sparkles, ArrowRight, XCircle, MoveRight, ExternalLink, Pencil, Image, X, Filter, Star, ImagePlus, Save } from 'lucide-react'
+import { FolderTestPage } from '@/components/labs'
 
 interface Folder { id: string; name: string; description: string | null; detected_type: string; status: string; photo_count: number; min_photos_required: number; is_unclassified?: boolean; reference_photo_id?: string | null; reference_photo?: Photo | null; photos_since_last_test?: number; last_test_at?: string | null; experiment_photos?: Photo[]; config_model_id?: string }
 interface Photo { id: string; folder_id: string; image_url: string; thumbnail_url: string | null; original_filename: string | null; detected_type: string; ai_confidence: number | null; status: string; created_at?: string; detected_brand?: string | null }
@@ -121,7 +122,7 @@ export default function ExperimentsPage() {
   const statusStats = { draft: regularFolders.filter(f => f.status === 'draft').length, ready: regularFolders.filter(f => f.status === 'ready').length, validated: regularFolders.filter(f => f.status === 'validated').length, promoted: regularFolders.filter(f => f.status === 'promoted').length }
 
   if (loading) return <div className="p-6 flex items-center justify-center min-h-[400px]"><Loader2 className="h-8 w-8 animate-spin text-teal-600" /></div>
-  if (testingFolderId) return <div className="p-6"><TestPageInline folderId={testingFolderId} onBack={() => { setTestingFolderId(null); loadData() }} /></div>
+  if (testingFolderId) return <FolderTestPage folderId={testingFolderId} onBack={() => { setTestingFolderId(null); loadData() }} />
 
   return (
     <div className="p-6 space-y-6">
