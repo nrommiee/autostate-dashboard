@@ -50,9 +50,7 @@ export interface IndexConfig {
 interface ROIEditorProps {
   imageUrl: string
   zones: ROIZone[]
-  indexConfig: IndexConfig
   onZonesChange: (zones: ROIZone[]) => void
-  onIndexConfigChange: (config: IndexConfig) => void
   onSave: () => void
 }
 
@@ -74,9 +72,7 @@ const ZONE_CONFIG: Record<ZoneType, { label: string; color: string; icon: React.
 export function ROIEditor({ 
   imageUrl, 
   zones, 
-  indexConfig,
   onZonesChange, 
-  onIndexConfigChange,
   onSave 
 }: ROIEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -163,10 +159,6 @@ export function ROIEditor({
   const meterZone = zones.find(z => z.type === 'meter')
   const serialZone = zones.find(z => z.type === 'serial')
   const indexZone = zones.find(z => z.type === 'index')
-
-  // Format attendu
-  const formatPreview = 'X'.repeat(indexConfig.integerDigits) + 
-    (indexConfig.decimalDigits > 0 ? ',' + 'X'.repeat(indexConfig.decimalDigits) : '')
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -384,49 +376,6 @@ export function ROIEditor({
               </div>
             )}
           </div>
-
-          {/* Index format configuration */}
-          <Card className="p-4 bg-gray-50">
-            <h4 className="font-medium mb-3">Index de consommation</h4>
-            <div className="grid grid-cols-2 gap-4 mb-4">
-              <div>
-                <label className="text-sm text-muted-foreground mb-1 block">Chiffres entiers</label>
-                <Select 
-                  value={indexConfig.integerDigits.toString()} 
-                  onValueChange={(v) => onIndexConfigChange({ ...indexConfig, integerDigits: parseInt(v) })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {[3, 4, 5, 6, 7, 8].map(n => (
-                      <SelectItem key={n} value={n.toString()}>{n}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <label className="text-sm text-muted-foreground mb-1 block">Décimales</label>
-                <Select 
-                  value={indexConfig.decimalDigits.toString()} 
-                  onValueChange={(v) => onIndexConfigChange({ ...indexConfig, decimalDigits: parseInt(v) })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {[0, 1, 2, 3].map(n => (
-                      <SelectItem key={n} value={n.toString()}>{n}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="p-3 bg-white rounded-lg border text-center">
-              <p className="text-xs text-muted-foreground mb-1">Format attendu</p>
-              <p className="font-mono text-xl font-bold tracking-wider">{formatPreview}</p>
-            </div>
-          </Card>
         </Card>
 
         {/* Actions */}
