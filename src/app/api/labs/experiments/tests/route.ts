@@ -273,7 +273,7 @@ async function executeTestsInBackground(
       totalCost += result.api_cost_usd
       
     } catch (error) {
-      console.error(`Error testing photo ${photo.id}:`, error)
+     console.error(`Error testing photo ${photo.id}:`, error)
       failCount++
     }
   }
