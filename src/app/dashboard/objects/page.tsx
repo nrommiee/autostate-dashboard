@@ -454,10 +454,14 @@ export default function ObjectsPage() {
                           {obj.canonical_name}
                         </Link>
                         {obj.is_common && (
-                          <Sparkles className="h-3 w-3 text-yellow-500" title="Objet fréquent" />
+                          <span title="Objet fréquent">
+                            <Sparkles className="h-3 w-3 text-yellow-500" />
+                          </span>
                         )}
                         {!obj.is_active && (
-                          <EyeOff className="h-3 w-3 text-gray-400" title="Inactif" />
+                          <span title="Inactif">
+                            <EyeOff className="h-3 w-3 text-gray-400" />
+                          </span>
                         )}
                       </div>
                       {obj.description && (
