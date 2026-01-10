@@ -302,7 +302,7 @@ export interface ObjectTemplateFormData {
 
 export interface ObjectAttributeFormData {
   name: string
-  attribute_type_id: string | null
+  attribute_type_id: string
   data_type: AttributeDataType
   enum_values: string[]
   is_required: boolean
