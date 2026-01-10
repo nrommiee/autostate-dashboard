@@ -1,9 +1,11 @@
 'use client'
 
 import { useRef, useState, useEffect, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { 
@@ -17,17 +19,13 @@ import {
   Droplets,
   Bolt,
   AlertTriangle,
-  Star
+  Star,
+  Lock,
+  Unlock,
+  Check
 } from 'lucide-react'
-import { Breadcrumb } from '@/components/labs/Breadcrumb'
 import { ROIEditor, type ROIZone, type IndexConfig } from '@/components/labs/ROIEditor'
 import { PreprocessingEditor, type PreprocessingConfig } from '@/components/labs/PreprocessingEditor'
-import { 
-  ConfigHistoryPanel, 
-  PhotoResultsDetail,
-  type TestResult,
-  type PhotoResult 
-} from '@/components/labs/ConfigHistoryPanel'
 
 // ============================================
 // TYPES
@@ -71,6 +69,24 @@ interface ConfigType {
   name: string
   additional_prompt: string | null
   typical_unit: string
+}
+
+interface SavedConfig {
+  id: string
+  name: string
+  folder_id: string
+  is_active: boolean
+  preprocessing: PreprocessingConfig
+  zones: ROIZone[]
+  index_config: IndexConfig
+  prompt_model: string
+  prompt_levels: { universal: boolean; type: boolean; model: boolean }
+  created_at: string
+  test_results?: {
+    accuracy_rate: number
+    total_photos: number
+    success_count: number
+  }
 }
 
 interface TestResultAPI {
@@ -132,10 +148,13 @@ interface FolderTestPageProps {
 // ============================================
 
 export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
+  const router = useRouter()
+  
   // State
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
+  const [saveSuccess, setSaveSuccess] = useState(false)
   
   // Data
   const [folder, setFolder] = useState<Folder | null>(null)
@@ -143,20 +162,37 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
   const [referencePhoto, setReferencePhoto] = useState<Photo | null>(null)
   const [configUniversal, setConfigUniversal] = useState<ConfigUniversal | null>(null)
   const [configType, setConfigType] = useState<ConfigType | null>(null)
+  const [savedConfigs, setSavedConfigs] = useState<SavedConfig[]>([])
   
   // Config state
+  const [configName, setConfigName] = useState('')
   const [preprocessing, setPreprocessing] = useState<PreprocessingConfig>(DEFAULT_PREPROCESSING)
-  const [inheritPreprocessing, setInheritPreprocessing] = useState(true)
   const [zones, setZones] = useState<ROIZone[]>([])
   const [indexConfig, setIndexConfig] = useState<IndexConfig>(DEFAULT_INDEX_CONFIG)
   const [promptModel, setPromptModel] = useState('')
+  
+  // Prompt levels (locked/unlocked)
+  const [promptLevels, setPromptLevels] = useState({
+    universal: true,
+    type: true,
+    model: true,
+  })
   
   // UI state
   const [activeTab, setActiveTab] = useState<'config' | 'results'>('config')
   const [selectedLayer, setSelectedLayer] = useState(1)
   const [testResults, setTestResults] = useState<TestResultAPI[]>([])
   const [testProgress, setTestProgress] = useState({ status: '', current: 0, total: 0 })
-  const [selectedResultDetail, setSelectedResultDetail] = useState<TestResult | null>(null)
+
+  // Load config values into state
+  const loadConfigValues = useCallback((config: SavedConfig) => {
+    setConfigName(config.name)
+    setPreprocessing(config.preprocessing || DEFAULT_PREPROCESSING)
+    setZones(config.zones || [])
+    setIndexConfig(config.index_config || DEFAULT_INDEX_CONFIG)
+    setPromptModel(config.prompt_model || '')
+    setPromptLevels(config.prompt_levels || { universal: true, type: true, model: true })
+  }, [])
 
   // Load data
   const loadData = useCallback(async () => {
@@ -188,12 +224,34 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
       const universalData = await universalRes.json()
       setConfigUniversal(universalData.universal || null)
       
+      // Load saved configs for this folder
+      try {
+        const savedRes = await fetch(`/api/labs/experiments/configs?folder_id=${folderId}`)
+        const savedData = await savedRes.json()
+        if (savedData.configs) {
+          setSavedConfigs(savedData.configs)
+          
+          // Load active config if exists
+          const activeConfig = savedData.configs.find((c: SavedConfig) => c.is_active)
+          if (activeConfig) {
+            loadConfigValues(activeConfig)
+          } else {
+            // Generate default config name
+            setConfigName(`Config v${savedData.configs.length + 1}`)
+          }
+        } else {
+          setConfigName('Config v1')
+        }
+      } catch (e) {
+        setConfigName('Config v1')
+      }
+      
     } catch (error) {
       console.error('Error loading data:', error)
     } finally {
       setLoading(false)
     }
-  }, [folderId])
+  }, [folderId, loadConfigValues])
 
   useEffect(() => {
     loadData()
@@ -201,28 +259,91 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
 
   // Save config
   const handleSave = async () => {
+    if (!configName.trim()) {
+      alert('Veuillez donner un nom à la configuration')
+      return
+    }
+    
     setSaving(true)
+    setSaveSuccess(false)
+    
     try {
-      await fetch('/api/labs/experiments/configs', {
-        method: 'PUT',
+      const res = await fetch('/api/labs/experiments/configs', {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           folder_id: folderId,
+          name: configName,
           preprocessing,
           zones,
           index_config: indexConfig,
           prompt_model: promptModel,
+          prompt_levels: promptLevels,
         }),
       })
+      
+      if (res.ok) {
+        setSaveSuccess(true)
+        setTimeout(() => setSaveSuccess(false), 3000)
+        
+        // Reload saved configs
+        const savedRes = await fetch(`/api/labs/experiments/configs?folder_id=${folderId}`)
+        const savedData = await savedRes.json()
+        if (savedData.configs) {
+          setSavedConfigs(savedData.configs)
+        }
+        
+        // Increment config name for next save
+        const match = configName.match(/v(\d+)/)
+        if (match) {
+          setConfigName(`Config v${parseInt(match[1]) + 1}`)
+        }
+      } else {
+        console.error('Save failed')
+      }
     } catch (error) {
       console.error('Error saving config:', error)
+      alert('Erreur lors de la sauvegarde')
     } finally {
       setSaving(false)
     }
   }
 
+  // Activate a saved config
+  const handleActivateConfig = async (configId: string) => {
+    try {
+      await fetch('/api/labs/experiments/configs', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          config_id: configId,
+          folder_id: folderId,
+          action: 'activate',
+        }),
+      })
+      
+      // Reload configs
+      const savedRes = await fetch(`/api/labs/experiments/configs?folder_id=${folderId}`)
+      const savedData = await savedRes.json()
+      if (savedData.configs) {
+        setSavedConfigs(savedData.configs)
+        const activeConfig = savedData.configs.find((c: SavedConfig) => c.id === configId)
+        if (activeConfig) {
+          loadConfigValues(activeConfig)
+        }
+      }
+    } catch (error) {
+      console.error('Error activating config:', error)
+    }
+  }
+
   // Run test
   const handleRunTest = async () => {
+    // Save config first if name is set
+    if (configName.trim()) {
+      await handleSave()
+    }
+    
     setTesting(true)
     setTestResults([])
     setActiveTab('results')
@@ -250,6 +371,7 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
               zones,
               index_config: indexConfig,
               prompt_model: promptModel,
+              prompt_levels: promptLevels,
             },
           }),
         })
@@ -272,8 +394,8 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
 
   // Handle zone save
   const handleZonesSave = () => {
-    // Zones are already updated via onZonesChange
-    // Could show a toast or notification here
+    setSaveSuccess(true)
+    setTimeout(() => setSaveSuccess(false), 2000)
   }
 
   if (loading) {
@@ -297,14 +419,34 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
 
   return (
     <div className="p-6 space-y-6">
-      {/* Breadcrumb */}
-      <Breadcrumb 
-        items={[
-          { label: 'Experiments', href: '/dashboard/labs/experiments' },
-          { label: 'Dossiers', href: '/dashboard/labs/experiments?tab=folders' },
-          { label: folder.name, icon: TYPE_ICONS[folder.detected_type] },
-        ]}
-      />
+      {/* Breadcrumb - Now with working buttons */}
+      <nav className="flex items-center gap-1 text-sm text-muted-foreground">
+        <button 
+          onClick={() => router.push('/dashboard/labs')}
+          className="flex items-center gap-1 hover:text-foreground transition-colors"
+        >
+          🏠 Labs
+        </button>
+        <span className="text-gray-300 mx-1">›</span>
+        <button 
+          onClick={onBack}
+          className="hover:text-foreground transition-colors"
+        >
+          Experiments
+        </button>
+        <span className="text-gray-300 mx-1">›</span>
+        <button 
+          onClick={onBack}
+          className="hover:text-foreground transition-colors"
+        >
+          Dossiers
+        </button>
+        <span className="text-gray-300 mx-1">›</span>
+        <span className="flex items-center gap-1 text-foreground font-medium">
+          {TYPE_ICONS[folder.detected_type]}
+          {folder.name}
+        </span>
+      </nav>
 
       {/* Header */}
       <div className="flex items-center justify-between">
@@ -325,13 +467,20 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
         </div>
         
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={handleSave} disabled={saving}>
+          <Button 
+            variant="outline" 
+            onClick={handleSave} 
+            disabled={saving || !configName.trim()}
+            className={saveSuccess ? 'border-green-500 text-green-600' : ''}
+          >
             {saving ? (
               <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : saveSuccess ? (
+              <Check className="h-4 w-4 mr-2 text-green-600" />
             ) : (
               <Save className="h-4 w-4 mr-2" />
             )}
-            Sauvegarder
+            {saveSuccess ? 'Sauvegardé !' : 'Sauvegarder'}
           </Button>
           <Button onClick={handleRunTest} disabled={testing}>
             {testing ? (
@@ -343,6 +492,64 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
           </Button>
         </div>
       </div>
+
+      {/* Config Name & Prompt Levels Card */}
+      <Card className="p-4">
+        <div className="flex items-center gap-4">
+          <div className="flex-1">
+            <label className="text-sm font-medium mb-1 block">Nom de la configuration</label>
+            <Input 
+              value={configName}
+              onChange={(e) => setConfigName(e.target.value)}
+              placeholder="Ex: Config v1 - Zones précises"
+              className="max-w-md"
+            />
+          </div>
+          
+          {/* Prompt Levels Toggle */}
+          <div className="flex items-center gap-4 border-l pl-4">
+            <span className="text-sm font-medium">Niveaux actifs :</span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setPromptLevels(p => ({ ...p, universal: !p.universal }))}
+                className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors ${
+                  promptLevels.universal 
+                    ? 'bg-blue-100 text-blue-700' 
+                    : 'bg-gray-100 text-gray-400 line-through'
+                }`}
+                title={promptLevels.universal ? 'Cliquer pour désactiver' : 'Cliquer pour activer'}
+              >
+                {promptLevels.universal ? <Lock className="h-3 w-3" /> : <Unlock className="h-3 w-3" />}
+                Universel
+              </button>
+              <button
+                onClick={() => setPromptLevels(p => ({ ...p, type: !p.type }))}
+                className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors ${
+                  promptLevels.type 
+                    ? 'bg-green-100 text-green-700' 
+                    : 'bg-gray-100 text-gray-400 line-through'
+                }`}
+                title={promptLevels.type ? 'Cliquer pour désactiver' : 'Cliquer pour activer'}
+              >
+                {promptLevels.type ? <Lock className="h-3 w-3" /> : <Unlock className="h-3 w-3" />}
+                Type
+              </button>
+              <button
+                onClick={() => setPromptLevels(p => ({ ...p, model: !p.model }))}
+                className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors ${
+                  promptLevels.model 
+                    ? 'bg-teal-100 text-teal-700' 
+                    : 'bg-gray-100 text-gray-400 line-through'
+                }`}
+                title={promptLevels.model ? 'Cliquer pour désactiver' : 'Cliquer pour activer'}
+              >
+                {promptLevels.model ? <Lock className="h-3 w-3" /> : <Unlock className="h-3 w-3" />}
+                Modèle
+              </button>
+            </div>
+          </div>
+        </div>
+      </Card>
 
       {/* Main content */}
       <div className="grid grid-cols-12 gap-6">
@@ -393,15 +600,43 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
             </TabsList>
 
             <TabsContent value="config" className="mt-4">
-              {/* Layer 1: Preprocessing */}
+              {/* Layer 1: Preprocessing with saved configs */}
               {selectedLayer === 1 && referencePhoto && (
-                <PreprocessingEditor
-                  imageUrl={referencePhoto.image_url}
-                  config={preprocessing}
-                  onChange={setPreprocessing}
-                  inheritFromType={inheritPreprocessing}
-                  onInheritChange={setInheritPreprocessing}
-                />
+                <div className="space-y-4">
+                  <PreprocessingEditor
+                    imageUrl={referencePhoto.image_url}
+                    config={preprocessing}
+                    onChange={setPreprocessing}
+                  />
+                  
+                  {/* Saved Configs Section */}
+                  {savedConfigs.length > 0 && (
+                    <Card className="p-4">
+                      <h4 className="font-medium mb-3">Configurations enregistrées</h4>
+                      <div className="flex flex-wrap gap-2">
+                        {savedConfigs.map((cfg) => (
+                          <button
+                            key={cfg.id}
+                            onClick={() => loadConfigValues(cfg)}
+                            className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-colors ${
+                              cfg.is_active 
+                                ? 'bg-teal-50 border-teal-300 text-teal-700' 
+                                : 'hover:bg-gray-50 border-gray-200'
+                            }`}
+                          >
+                            {cfg.is_active && <Star className="h-3 w-3 text-teal-600" />}
+                            <span className="font-medium">{cfg.name}</span>
+                            {cfg.test_results && (
+                              <Badge variant="outline" className="ml-1">
+                                {Math.round(cfg.test_results.accuracy_rate * 100)}%
+                              </Badge>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    </Card>
+                  )}
+                </div>
               )}
 
               {/* Layer 4: ROI Zones */}
@@ -426,24 +661,40 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
                     </p>
                   </div>
 
-                  {/* Universal prompt (read-only) */}
-                  <div className="border rounded-lg p-3">
+                  {/* Universal prompt */}
+                  <div className={`border rounded-lg p-3 transition-opacity ${!promptLevels.universal ? 'opacity-40' : ''}`}>
                     <div className="flex items-center gap-2 mb-2">
                       <Badge variant="outline">Niveau 1 - Universel</Badge>
                       <Badge variant="secondary">Lecture seule</Badge>
+                      <div className="flex-1" />
+                      <button
+                        onClick={() => setPromptLevels(p => ({ ...p, universal: !p.universal }))}
+                        className="p-1 rounded hover:bg-gray-100"
+                        title={promptLevels.universal ? 'Désactiver ce niveau' : 'Activer ce niveau'}
+                      >
+                        {promptLevels.universal ? <Lock className="h-4 w-4 text-blue-600" /> : <Unlock className="h-4 w-4 text-gray-400" />}
+                      </button>
                     </div>
                     <pre className="text-xs bg-gray-50 p-2 rounded max-h-32 overflow-y-auto whitespace-pre-wrap">
                       {configUniversal?.base_prompt || 'Non configuré'}
                     </pre>
                   </div>
 
-                  {/* Type prompt (read-only) */}
-                  <div className="border rounded-lg p-3">
+                  {/* Type prompt */}
+                  <div className={`border rounded-lg p-3 transition-opacity ${!promptLevels.type ? 'opacity-40' : ''}`}>
                     <div className="flex items-center gap-2 mb-2">
                       <Badge variant="outline">Niveau 2 - Type</Badge>
                       {TYPE_ICONS[folder.detected_type]}
                       <span className="text-sm capitalize">{folder.detected_type}</span>
                       <Badge variant="secondary">Lecture seule</Badge>
+                      <div className="flex-1" />
+                      <button
+                        onClick={() => setPromptLevels(p => ({ ...p, type: !p.type }))}
+                        className="p-1 rounded hover:bg-gray-100"
+                        title={promptLevels.type ? 'Désactiver ce niveau' : 'Activer ce niveau'}
+                      >
+                        {promptLevels.type ? <Lock className="h-4 w-4 text-green-600" /> : <Unlock className="h-4 w-4 text-gray-400" />}
+                      </button>
                     </div>
                     <pre className="text-xs bg-gray-50 p-2 rounded max-h-24 overflow-y-auto whitespace-pre-wrap">
                       {configType?.additional_prompt || 'Non configuré'}
@@ -451,16 +702,25 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
                   </div>
 
                   {/* Model prompt (editable) */}
-                  <div className="border rounded-lg p-3 border-teal-200 bg-teal-50/30">
+                  <div className={`border rounded-lg p-3 border-teal-200 bg-teal-50/30 transition-opacity ${!promptLevels.model ? 'opacity-40' : ''}`}>
                     <div className="flex items-center gap-2 mb-2">
                       <Badge className="bg-teal-600">Niveau 3 - Modèle</Badge>
                       <Badge className="bg-teal-100 text-teal-700">Éditable</Badge>
+                      <div className="flex-1" />
+                      <button
+                        onClick={() => setPromptLevels(p => ({ ...p, model: !p.model }))}
+                        className="p-1 rounded hover:bg-gray-100"
+                        title={promptLevels.model ? 'Désactiver ce niveau' : 'Activer ce niveau'}
+                      >
+                        {promptLevels.model ? <Lock className="h-4 w-4 text-teal-600" /> : <Unlock className="h-4 w-4 text-gray-400" />}
+                      </button>
                     </div>
                     <Textarea
                       value={promptModel}
                       onChange={(e) => setPromptModel(e.target.value)}
                       placeholder="Instructions spécifiques pour ce modèle de compteur..."
                       className="font-mono text-sm min-h-28"
+                      disabled={!promptLevels.model}
                     />
                   </div>
                 </Card>
@@ -477,21 +737,48 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
                 </Card>
               )}
 
-              {/* Layer 8: Validation */}
+              {/* Layer 8: Validation - Read-only, shows format from ROI */}
               {selectedLayer === 8 && (
                 <Card className="p-6 space-y-4">
                   <div>
                     <h3 className="font-semibold">Couche 8 : Validation & Cohérence</h3>
                     <p className="text-sm text-muted-foreground">
-                      Format attendu pour la lecture
+                      Vérifie que la lecture correspond au format attendu
                     </p>
                   </div>
-                  <div className="p-4 bg-gray-50 rounded-lg text-center">
-                    <p className="text-sm text-muted-foreground mb-2">Format configuré dans Zones ROI</p>
-                    <p className="font-mono text-2xl font-bold">
-                      {'X'.repeat(indexConfig.integerDigits)}
-                      {indexConfig.decimalDigits > 0 && ',' + 'X'.repeat(indexConfig.decimalDigits)}
+                  
+                  <div className="p-4 bg-gray-50 rounded-lg">
+                    <p className="text-sm text-muted-foreground mb-2">
+                      Format configuré dans{' '}
+                      <button 
+                        onClick={() => setSelectedLayer(4)} 
+                        className="text-teal-600 hover:underline font-medium"
+                      >
+                        Zones ROI (couche 4)
+                      </button>
                     </p>
+                    <div className="p-4 bg-white rounded-lg border text-center">
+                      <p className="text-xs text-muted-foreground mb-1">Format attendu</p>
+                      <p className="font-mono text-3xl font-bold tracking-wider">
+                        {'X'.repeat(indexConfig.integerDigits)}
+                        {indexConfig.decimalDigits > 0 && (
+                          <span className="text-red-500">
+                            ,{'X'.repeat(indexConfig.decimalDigits)}
+                          </span>
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                  
+                  <div className="p-4 bg-blue-50 rounded-lg text-sm text-blue-700">
+                    <p className="font-medium mb-1">Règles de validation :</p>
+                    <ul className="list-disc list-inside space-y-1 text-blue-600">
+                      <li>La lecture doit avoir {indexConfig.integerDigits} chiffres entiers</li>
+                      {indexConfig.decimalDigits > 0 && (
+                        <li>Suivi de {indexConfig.decimalDigits} décimale(s)</li>
+                      )}
+                      <li>Les valeurs incohérentes seront signalées</li>
+                    </ul>
                   </div>
                 </Card>
               )}
