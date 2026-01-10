@@ -216,23 +216,30 @@ async function findOrCreateFolder(
 
 // Mettre à jour le status du dossier après ajout/suppression de photos
 async function updateFolderStatus(folderId: string) {
+  // Récupérer le dossier
   const { data: folder } = await supabase
     .from('experiment_folders')
-    .select('status, is_unclassified, experiment_photos(id)')
+    .select('status, is_unclassified')
     .eq('id', folderId)
     .single()
 
   if (!folder || folder.is_unclassified) return
 
-  const photoCount = folder.experiment_photos?.length || 0
+  // Compter les photos avec une requête séparée (plus fiable)
+  const { count: photoCount } = await supabase
+    .from('experiment_photos')
+    .select('*', { count: 'exact', head: true })
+    .eq('folder_id', folderId)
+
+  const count = photoCount || 0
   let newStatus = folder.status
 
   // Si draft et >= 5 photos, passer à ready
-  if (folder.status === 'draft' && photoCount >= 5) {
+  if (folder.status === 'draft' && count >= 5) {
     newStatus = 'ready'
   }
   // Si ready/validated/promoted et < 5 photos, repasser à draft
-  else if (['ready', 'validated', 'promoted'].includes(folder.status) && photoCount < 5) {
+  else if (['ready', 'validated', 'promoted'].includes(folder.status) && count < 5) {
     newStatus = 'draft'
   }
 
