@@ -15,6 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Upload, FolderOpen, Settings2, FlaskConical, CheckCircle2, Trash2, MoreVertical, ChevronRight, Loader2, AlertTriangle, Play, Eye, RefreshCw, Plus, Flame, Droplets, Bolt, Check, Sparkles, ArrowRight, XCircle, MoveRight, ExternalLink, Pencil, Image, X, Filter, Star, ImagePlus, Save } from 'lucide-react'
 import { FolderTestPage } from '@/components/labs'
+import { UploadProgressModal, useUploadManager } from '@/components/labs/UploadProgressModal'
 
 interface Folder { id: string; name: string; description: string | null; detected_type: string; status: string; photo_count: number; min_photos_required: number; is_unclassified?: boolean; reference_photo_id?: string | null; reference_photo?: Photo | null; photos_since_last_test?: number; last_test_at?: string | null; experiment_photos?: Photo[]; config_model_id?: string }
 interface Photo { id: string; folder_id: string; image_url: string; thumbnail_url: string | null; original_filename: string | null; detected_type: string; ai_confidence: number | null; status: string; created_at?: string; detected_brand?: string | null }
@@ -66,11 +67,19 @@ export default function ExperimentsPage() {
   const [newFolderName, setNewFolderName] = useState('')
   const [newFolderType, setNewFolderType] = useState('unknown')
   const [deleteAlert, setDeleteAlert] = useState<{ type: 'photo' | 'photos' | 'folder'; ids: string[]; name?: string } | null>(null)
-  const [limitAlert, setLimitAlert] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [uploading, setUploading] = useState(false)
-  const [uploadProgress, setUploadProgress] = useState({ step: '', current: 0, total: 0 })
   const [testingFolderId, setTestingFolderId] = useState<string | null>(null)
+
+  // Upload manager with progress modal
+  const uploadManager = useUploadManager({
+    onComplete: () => {
+      loadData()
+      setActiveTab('folders')
+    },
+    onError: (error) => {
+      alert(error)
+    }
+  })
 
   const loadData = useCallback(async () => {
     try {
@@ -85,16 +94,14 @@ export default function ExperimentsPage() {
   const handleRefresh = async () => { setRefreshing(true); await loadData(); setRefreshing(false) }
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files; if (!files || files.length === 0) return
-    if (files.length > 20) { setLimitAlert(true); if (fileInputRef.current) fileInputRef.current.value = ''; return }
-    setUploading(true); const total = files.length
-    try {
-      const compressed: File[] = []
-      for (let i = 0; i < files.length; i++) { setUploadProgress({ step: 'Compression', current: i + 1, total }); try { compressed.push(await compressImage(files[i])) } catch { compressed.push(files[i]) } }
-      let success = 0, errors = 0
-      for (let i = 0; i < compressed.length; i++) { setUploadProgress({ step: 'Upload + Analyse IA', current: i + 1, total }); const fd = new FormData(); fd.append('files', compressed[i]); fd.append('auto_cluster', 'true'); try { const res = await fetch('/api/labs/experiments/photos', { method: 'POST', body: fd }); if (res.ok) { const d = await res.json(); success += d.success_count || 0; errors += d.error_count || 0 } else errors++ } catch { errors++ } }
-      if (errors > 0) alert(`${success} photos importées, ${errors} erreurs`); await loadData(); setActiveTab('folders')
-    } catch (e) { console.error(e); alert('Erreur') } finally { setUploading(false); setUploadProgress({ step: '', current: 0, total: 0 }); if (fileInputRef.current) fileInputRef.current.value = '' }
+    const files = e.target.files
+    if (!files || files.length === 0) return
+    
+    // Reset input
+    if (fileInputRef.current) fileInputRef.current.value = ''
+    
+    // Start upload with progress modal
+    uploadManager.startUpload(files)
   }
 
   const handleDeletePhotos = async (ids: string[]) => { await fetch(`/api/labs/experiments/photos?ids=${ids.join(',')}`, { method: 'DELETE' }); setDeleteAlert(null); await loadData() }
@@ -139,7 +146,7 @@ export default function ExperimentsPage() {
           <TabsTrigger value="models"><CheckCircle2 className="h-4 w-4 mr-2" />Modèles</TabsTrigger>
         </TabsList>
         <TabsContent value="import" className="space-y-6">
-          <Card className="p-8"><input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFileSelect} /><div className={`border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-colors ${uploading ? 'border-teal-500 bg-teal-50' : 'border-gray-300 hover:border-teal-500 hover:bg-teal-50/50'}`} onClick={() => !uploading && fileInputRef.current?.click()}>{uploading ? <div className="space-y-4"><Loader2 className="h-12 w-12 mx-auto text-teal-600 animate-spin" /><p className="text-lg font-medium">{uploadProgress.step} {uploadProgress.current}/{uploadProgress.total}</p><Progress value={(uploadProgress.current / uploadProgress.total) * 100} className="max-w-xs mx-auto" /></div> : <><Upload className="h-12 w-12 mx-auto text-gray-400 mb-4" /><p className="text-lg font-medium mb-2">Glissez vos photos ici</p><p className="text-sm text-muted-foreground mb-4">ou cliquez pour sélectionner (max 20)</p><div className="flex items-center justify-center gap-4 text-xs text-muted-foreground"><span>🤖 Analyse IA</span><span>📁 Classement intelligent</span></div></>}</div></Card>
+          <Card className="p-8"><input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFileSelect} /><div className="border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-colors border-gray-300 hover:border-teal-500 hover:bg-teal-50/50" onClick={() => fileInputRef.current?.click()}><Upload className="h-12 w-12 mx-auto text-gray-400 mb-4" /><p className="text-lg font-medium mb-2">Glissez vos photos ici</p><p className="text-sm text-muted-foreground mb-4">ou cliquez pour sélectionner (max 50 photos)</p><div className="flex items-center justify-center gap-4 text-xs text-muted-foreground"><span>🤖 Analyse IA automatique</span><span>📁 Classement intelligent</span><span>⚡ Upload parallèle</span></div></div></Card>
           <div className="grid grid-cols-4 gap-4">{[{ icon: FolderOpen, bg: 'bg-gray-100', color: 'text-gray-600', value: regularFolders.length, label: 'Dossiers' }, { icon: AlertTriangle, bg: 'bg-orange-100', color: 'text-orange-600', value: unclassifiedFolder?.photo_count || 0, label: 'Non classées' }, { icon: Check, bg: 'bg-green-100', color: 'text-green-600', value: regularFolders.filter(f => f.status === 'ready').length, label: 'Prêts' }, { icon: CheckCircle2, bg: 'bg-teal-100', color: 'text-teal-600', value: regularFolders.filter(f => f.status === 'promoted').length, label: 'Promus' }].map((s, i) => <Card key={i} className="p-4"><div className="flex items-center gap-3"><div className={`w-10 h-10 ${s.bg} rounded-lg flex items-center justify-center`}><s.icon className={`h-5 w-5 ${s.color}`} /></div><div><p className="text-2xl font-bold">{s.value}</p><p className="text-xs text-muted-foreground">{s.label}</p></div></div></Card>)}</div>
         </TabsContent>
         <TabsContent value="folders" className="space-y-4">
@@ -161,7 +168,7 @@ export default function ExperimentsPage() {
       <Dialog open={showNewFolderModal} onOpenChange={setShowNewFolderModal}><DialogContent><DialogHeader><DialogTitle>Nouveau dossier</DialogTitle><DialogDescription>Créez un dossier vide</DialogDescription></DialogHeader><div className="space-y-4"><div><label className="text-sm font-medium mb-2 block">Nom</label><Input value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)} placeholder="Ex: ITRON G4" /></div><div><label className="text-sm font-medium mb-2 block">Type</label><Select value={newFolderType} onValueChange={setNewFolderType}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="gas">🔥 Gaz</SelectItem><SelectItem value="water">💧 Eau</SelectItem><SelectItem value="electricity">⚡ Électricité</SelectItem><SelectItem value="unknown">❓ Non défini</SelectItem></SelectContent></Select></div></div><DialogFooter><Button variant="outline" onClick={() => setShowNewFolderModal(false)}>Annuler</Button><Button onClick={handleCreateFolder} disabled={!newFolderName.trim()}>Créer</Button></DialogFooter></DialogContent></Dialog>
       <Dialog open={showConfigModal} onOpenChange={setShowConfigModal}><DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto"><DialogHeader><DialogTitle>{configModalLevel === 'universal' ? '🌍 Configuration Universelle' : configModalLevel === 'type' ? `📦 ${selectedConfigType?.name}` : `🎯 ${selectedConfigModel?.name || 'Nouveau'}`}</DialogTitle></DialogHeader><ConfigEditor level={configModalLevel} universal={configs.universal} type={selectedConfigType} model={selectedConfigModel} types={configs.types} onSave={async () => { await loadData(); setShowConfigModal(false) }} onCancel={() => setShowConfigModal(false)} /></DialogContent></Dialog>
       <AlertDialog open={!!deleteAlert} onOpenChange={(o) => !o && setDeleteAlert(null)}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Confirmer la suppression</AlertDialogTitle><AlertDialogDescription>{deleteAlert?.type === 'photos' ? `${deleteAlert.ids.length} photo(s) seront supprimées.` : deleteAlert?.type === 'folder' ? `Le dossier "${deleteAlert?.name}" sera supprimé.` : 'Cette photo sera supprimée.'}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Annuler</AlertDialogCancel><AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => deleteAlert?.type === 'folder' ? handleDeleteFolder(deleteAlert.ids[0]) : handleDeletePhotos(deleteAlert?.ids || [])}>Supprimer</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
-      <AlertDialog open={limitAlert} onOpenChange={setLimitAlert}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Limite dépassée</AlertDialogTitle><AlertDialogDescription>Maximum 20 photos par upload.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogAction>Compris</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+      <UploadProgressModal open={uploadManager.isModalOpen} state={uploadManager.state} onClose={uploadManager.closeModal} onCancel={uploadManager.cancelUpload} onRetryErrors={uploadManager.retryErrors} />
     </div>
   )
 }
