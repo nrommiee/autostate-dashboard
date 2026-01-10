@@ -23,8 +23,6 @@ interface PreprocessingEditorProps {
   imageUrl: string
   config: PreprocessingConfig
   onChange: (config: PreprocessingConfig) => void
-  inheritFromType?: boolean
-  onInheritChange?: (inherit: boolean) => void
 }
 
 const DEFAULT_CONFIG: PreprocessingConfig = {
@@ -91,8 +89,6 @@ export function PreprocessingEditor({
   imageUrl,
   config,
   onChange,
-  inheritFromType = true,
-  onInheritChange,
 }: PreprocessingEditorProps) {
   const [showComparison, setShowComparison] = useState(false)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -268,20 +264,9 @@ export function PreprocessingEditor({
 
       {/* Controls */}
       <Card className="p-4 space-y-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="font-semibold">Couche 1 : Pré-traitement Image</h3>
-            <p className="text-sm text-muted-foreground">Améliore la qualité avant analyse</p>
-          </div>
-          {onInheritChange && (
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-muted-foreground">Hériter du type</span>
-              <Switch 
-                checked={inheritFromType} 
-                onCheckedChange={onInheritChange}
-              />
-            </div>
-          )}
+        <div>
+          <h3 className="font-semibold">Couche 1 : Pré-traitement Image</h3>
+          <p className="text-sm text-muted-foreground">Améliore la qualité avant analyse</p>
         </div>
 
         {/* Grayscale toggle */}
@@ -338,40 +323,6 @@ export function PreprocessingEditor({
           </Button>
         )}
 
-        {/* Quick presets */}
-        <div>
-          <p className="text-sm font-medium mb-2">Préréglages rapides</p>
-          <div className="flex flex-wrap gap-2">
-            <Badge 
-              variant="outline" 
-              className="cursor-pointer hover:bg-gray-100"
-              onClick={() => onChange({ ...DEFAULT_CONFIG, contrast: 30, sharpness: 20 })}
-            >
-              📷 Photo normale
-            </Badge>
-            <Badge 
-              variant="outline" 
-              className="cursor-pointer hover:bg-gray-100"
-              onClick={() => onChange({ ...DEFAULT_CONFIG, brightness: 30, contrast: 40 })}
-            >
-              🌙 Photo sombre
-            </Badge>
-            <Badge 
-              variant="outline" 
-              className="cursor-pointer hover:bg-gray-100"
-              onClick={() => onChange({ ...DEFAULT_CONFIG, brightness: -20, contrast: 20 })}
-            >
-              ☀️ Surexposée
-            </Badge>
-            <Badge 
-              variant="outline" 
-              className="cursor-pointer hover:bg-gray-100"
-              onClick={() => onChange({ ...DEFAULT_CONFIG, grayscale: true, contrast: 40, sharpness: 30 })}
-            >
-              🔍 OCR optimisé
-            </Badge>
-          </div>
-        </div>
       </Card>
     </div>
   )
