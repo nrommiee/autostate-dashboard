@@ -320,53 +320,96 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
 
   // Run test
   const handleRunTest = async () => {
-    // Save config first if name is set
-    if (configName.trim()) {
+    // Save config first if name is set and in editing mode
+    if (configName.trim() && isEditingName) {
       await handleSave()
     }
     
     setTesting(true)
     setTestResults([])
     setActiveTab('results')
+    setTestProgress({ status: 'Lancement du test...', current: 0, total: photos.length })
     
     try {
-      const total = photos.length
-      const results: TestResultAPI[] = []
+      // Call API to create and run test for the entire folder
+      const res = await fetch('/api/labs/experiments/tests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          folder_id: folderId,
+          run_immediately: true,
+          multi_pass: true,
+          config: {
+            preprocessing,
+            zones,
+            index_config: indexConfig,
+            prompt_model: promptModel,
+          },
+        }),
+      })
       
-      for (let i = 0; i < photos.length; i++) {
-        const photo = photos[i]
-        setTestProgress({
-          status: `Analyse photo ${i + 1}/${total}`,
-          current: i + 1,
-          total,
-        })
+      const data = await res.json()
+      
+      if (data.test) {
+        // Poll for results
+        const testId = data.test.id
+        let completed = false
+        let pollCount = 0
+        const maxPolls = 60 // 60 * 2s = 2 minutes max
         
-        const res = await fetch('/api/labs/experiments/tests', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            folder_id: folderId,
-            photo_id: photo.id,
-            config: {
-              preprocessing,
-              zones,
-              index_config: indexConfig,
-              prompt_model: promptModel,
-            },
-          }),
-        })
-        
-        const data = await res.json()
-        if (data.result) {
-          results.push(data.result)
-          setTestResults([...results])
+        while (!completed && pollCount < maxPolls) {
+          await new Promise(resolve => setTimeout(resolve, 2000)) // Wait 2 seconds
+          
+          const statusRes = await fetch(`/api/labs/experiments/tests?id=${testId}`)
+          const statusData = await statusRes.json()
+          
+          if (statusData.test) {
+            const test = statusData.test
+            const results = test.experiment_test_results || []
+            
+            // Update progress
+            setTestProgress({
+              status: test.status === 'completed' ? 'Terminé' : `Analyse en cours...`,
+              current: results.length,
+              total: test.total_photos || photos.length,
+            })
+            
+            // Convert results to our format
+            const convertedResults: TestResultAPI[] = results.map((r: any) => ({
+              id: r.id,
+              photo_id: r.photo_id,
+              actual_result: r.actual_result || {},
+              confidence_score: r.confidence_score || 0,
+              is_correct: r.is_correct,
+              processing_time_ms: r.processing_time_ms,
+            }))
+            
+            setTestResults(convertedResults)
+            
+            if (test.status === 'completed' || test.status === 'failed') {
+              completed = true
+              setTestProgress({ 
+                status: test.status === 'completed' ? 'Terminé ✓' : 'Erreur', 
+                current: results.length, 
+                total: test.total_photos || photos.length 
+              })
+            }
+          }
+          
+          pollCount++
         }
+        
+        if (!completed) {
+          setTestProgress({ status: 'Timeout - vérifiez les résultats plus tard', current: 0, total: 0 })
+        }
+      } else {
+        console.error('Failed to create test:', data.error)
+        setTestProgress({ status: 'Erreur: ' + (data.error || 'Échec'), current: 0, total: 0 })
       }
-      
-      setTestProgress({ status: 'Terminé', current: total, total })
       
     } catch (error) {
       console.error('Error running test:', error)
+      setTestProgress({ status: 'Erreur de connexion', current: 0, total: 0 })
     } finally {
       setTesting(false)
     }
