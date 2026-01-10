@@ -9,3 +9,4 @@ export {
   type PhotoResult 
 } from './ConfigHistoryPanel'
 export { FolderTestPage } from './FolderTestPage'
+export { UploadProgressModal, useUploadManager, type UploadState } from './UploadProgressModal'
