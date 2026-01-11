@@ -138,11 +138,11 @@ const LAYER_DEFS = [
   { num: 2, name: 'Détection', configurable: false },
   { num: 3, name: 'Classification', configurable: false },
   { num: 4, name: 'Zones ROI', configurable: true },
-  { num: 5, name: 'Prompts', configurable: true },
+  { num: 5, name: 'Index Config', configurable: true },
   { num: 6, name: 'OCR Claude', configurable: false },
   { num: 7, name: 'Validation croisée', configurable: false },
   { num: 8, name: 'Cohérence', configurable: true },
-  { num: 9, name: 'Multi-pass', configurable: true },
+  { num: 9, name: 'Prompts', configurable: true }, // Dernière couche configurable
 ]
 
 // ============================================
@@ -506,7 +506,8 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
   // Check what's configured
   const hasUniversalPrompt = !!configUniversal?.base_prompt
   const hasTypePrompt = !!configType?.additional_prompt
-  const hasModelPrompt = !!promptModel.trim() || zones.length > 0 || indexConfig.integerDigits > 0
+  // Niveau 3 est configuré seulement si le dossier a une config_model_id liée
+  const hasModelPrompt = !!folder?.config_model_id && (!!promptModel.trim() || zones.length > 0)
 
   if (loading) {
     return (
@@ -783,11 +784,58 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
                 />
               )}
 
-              {/* Layer 5: Prompts */}
+              {/* Layer 5: Index Config */}
               {selectedLayer === 5 && (
                 <Card className="p-6 space-y-4">
                   <div>
-                    <h3 className="font-semibold">Couche 5 : Prompts</h3>
+                    <h3 className="font-semibold">Couche 5 : Configuration Index</h3>
+                    <p className="text-sm text-muted-foreground">
+                      Format de l'index du compteur
+                    </p>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-sm font-medium mb-2 block">Chiffres entiers</label>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={10}
+                        value={indexConfig.integerDigits}
+                        onChange={(e) => setIndexConfig({ ...indexConfig, integerDigits: parseInt(e.target.value) || 5 })}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium mb-2 block">Décimales</label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={5}
+                        value={indexConfig.decimalDigits}
+                        onChange={(e) => setIndexConfig({ ...indexConfig, decimalDigits: parseInt(e.target.value) || 0 })}
+                      />
+                    </div>
+                  </div>
+                  
+                  <div className="p-3 bg-gray-50 rounded">
+                    <p className="text-sm font-medium">Format attendu :</p>
+                    <p className="font-mono text-lg mt-1">
+                      {'X'.repeat(indexConfig.integerDigits)}
+                      {indexConfig.decimalDigits > 0 && `,${('X'.repeat(indexConfig.decimalDigits))}`}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Ex: {String(Math.floor(Math.random() * Math.pow(10, indexConfig.integerDigits))).padStart(indexConfig.integerDigits, '0')}
+                      {indexConfig.decimalDigits > 0 && `,${String(Math.floor(Math.random() * Math.pow(10, indexConfig.decimalDigits))).padStart(indexConfig.decimalDigits, '0')}`}
+                    </p>
+                  </div>
+                </Card>
+              )}
+
+              {/* Layer 9: Prompts (dernière couche) */}
+              {selectedLayer === 9 && (
+                <Card className="p-6 space-y-4">
+                  <div>
+                    <h3 className="font-semibold">Couche 9 : Prompts</h3>
                     <p className="text-sm text-muted-foreground">
                       3 niveaux de prompts combinés
                     </p>
@@ -961,22 +1009,6 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
               )}
 
               {/* Layer 9: Multi-pass */}
-              {selectedLayer === 9 && (
-                <Card className="p-6 space-y-4">
-                  <div>
-                    <h3 className="font-semibold">Couche 9 : Multi-pass</h3>
-                    <p className="text-sm text-muted-foreground">
-                      Analyse multiple pour augmenter la confiance
-                    </p>
-                  </div>
-                  <div className="p-4 bg-orange-50 rounded-lg">
-                    <p className="text-orange-700 text-sm">
-                      <AlertTriangle className="h-4 w-4 inline mr-2" />
-                      Fonctionnalité avancée - disponible prochainement
-                    </p>
-                  </div>
-                </Card>
-              )}
             </TabsContent>
 
             <TabsContent value="results" className="mt-4">
