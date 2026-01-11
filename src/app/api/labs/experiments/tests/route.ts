@@ -787,6 +787,89 @@ function calculateCost(inputTokens: number, outputTokens: number): number {
   return inputCost + outputCost
 }
 
+// PUT - Mettre à jour un résultat de test (alias de PATCH pour compatibilité)
+export async function PUT(request: NextRequest) {
+  try {
+    const body = await request.json()
+    const { result_id, is_correct, corrected_result, error_type, error_details } = body
+    
+    if (!result_id) {
+      return NextResponse.json({ error: 'result_id is required' }, { status: 400, headers: corsHeaders })
+    }
+    
+    const updateData: Record<string, unknown> = {
+      is_correct,
+      corrected_at: new Date().toISOString()
+    }
+    
+    if (corrected_result) {
+      updateData.corrected_result = corrected_result
+    }
+    if (error_type) {
+      updateData.error_type = error_type
+    }
+    if (error_details) {
+      updateData.error_details = error_details
+    }
+    
+    const { data, error } = await supabase
+      .from('experiment_test_results')
+      .update(updateData)
+      .eq('id', result_id)
+      .select()
+      .single()
+    
+    if (error) throw error
+    
+    // Recalculer les stats du test parent
+    const { data: result } = await supabase
+      .from('experiment_test_results')
+      .select('test_id')
+      .eq('id', result_id)
+      .single()
+    
+    if (result?.test_id) {
+      // Recalculer manuellement les stats
+      const { data: allResults } = await supabase
+        .from('experiment_test_results')
+        .select('is_correct, confidence_score, processing_time_ms, api_cost_usd')
+        .eq('test_id', result.test_id)
+      
+      if (allResults) {
+        const validated = allResults.filter(r => r.is_correct === true).length
+        const rejected = allResults.filter(r => r.is_correct === false).length
+        const total = validated + rejected
+        const accuracy = total > 0 ? validated / total : null
+        const avgConfidence = allResults.length > 0 
+          ? allResults.reduce((sum, r) => sum + (r.confidence_score || 0), 0) / allResults.length 
+          : null
+        const avgTime = allResults.length > 0
+          ? allResults.reduce((sum, r) => sum + (r.processing_time_ms || 0), 0) / allResults.length
+          : null
+        const totalCost = allResults.reduce((sum, r) => sum + (r.api_cost_usd || 0), 0)
+        
+        await supabase
+          .from('experiment_tests')
+          .update({
+            successful_count: validated,
+            failed_count: rejected,
+            accuracy_rate: accuracy,
+            avg_confidence: avgConfidence,
+            avg_processing_time_ms: avgTime,
+            total_cost_usd: totalCost,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', result.test_id)
+      }
+    }
+    
+    return NextResponse.json({ result: data }, { headers: corsHeaders })
+  } catch (error) {
+    console.error('Error updating test result:', error)
+    return NextResponse.json({ error: 'Failed to update' }, { status: 500, headers: corsHeaders })
+  }
+}
+
 // PATCH - Mettre à jour un résultat de test (correction)
 export async function PATCH(request: NextRequest) {
   try {
