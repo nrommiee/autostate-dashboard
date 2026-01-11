@@ -60,6 +60,7 @@ interface Folder {
   reference_photo_id?: string | null
   reference_photo?: Photo | null
   experiment_photos?: Photo[]
+  config_model_id?: string | null
 }
 
 interface ConfigUniversal {
