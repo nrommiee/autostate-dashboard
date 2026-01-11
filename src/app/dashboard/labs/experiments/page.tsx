@@ -201,7 +201,7 @@ export default function ExperimentsPage() {
           <div><h3 className="text-lg font-semibold mb-3">📦 Par Type</h3><div className="grid md:grid-cols-3 gap-4">{configs.types.map(type => <Card key={type.id} className="p-4"><div className="flex items-center gap-3 mb-3">{TYPE_ICONS[type.meter_type]}<span className="font-medium">{type.name}</span></div><Button variant="outline" size="sm" className="w-full" onClick={() => { setSelectedConfigType(type); setConfigModalLevel('type'); setShowConfigModal(true) }}><Eye className="h-4 w-4 mr-2" />Éditer</Button></Card>)}</div></div>
           <div><div className="flex items-center justify-between mb-3"><h3 className="text-lg font-semibold">🎯 Par Modèle</h3><Button size="sm" onClick={() => { setSelectedConfigModel(null); setConfigModalLevel('model'); setShowConfigModal(true) }}><Plus className="h-4 w-4 mr-2" />Nouvelle config</Button></div>{configs.models.length === 0 ? <Card className="p-8 text-center"><p className="text-muted-foreground">Aucune config spécifique</p></Card> : <div className="grid md:grid-cols-2 gap-4">{configs.models.map(model => <Card key={model.id} className="p-4"><div className="flex items-center justify-between"><div><p className="font-medium">{model.name}</p><p className="text-xs text-muted-foreground">{model.manufacturer || 'Inconnu'}</p></div><Button variant="outline" size="sm" onClick={() => { setSelectedConfigModel(model); setConfigModalLevel('model'); setShowConfigModal(true) }}><Eye className="h-4 w-4 mr-2" />Éditer</Button></div></Card>)}</div>}</div>
         </TabsContent>
-        <TabsContent value="tests" className="space-y-6">{selectedTest ? <TestDetail test={selectedTest} onBack={() => setSelectedTest(null)} onRefresh={loadData} /> : tests.length === 0 ? <Card className="p-12 text-center"><FlaskConical className="h-12 w-12 mx-auto mb-4 text-gray-300" /><p className="text-lg font-medium text-gray-600 mb-2">Aucun test</p></Card> : <div className="space-y-4">{tests.map(test => <Card key={test.id} className="p-4 hover:shadow-md cursor-pointer" onClick={() => setSelectedTest(test)}><div className="flex items-center justify-between"><div className="flex items-center gap-4"><div className={`w-12 h-12 rounded-lg flex items-center justify-center ${test.status === 'completed' ? (test.accuracy_rate && test.accuracy_rate >= 0.8 ? 'bg-green-100' : 'bg-orange-100') : test.status === 'running' ? 'bg-blue-100' : 'bg-gray-100'}`}>{test.status === 'running' ? <Loader2 className="h-5 w-5 text-blue-600 animate-spin" /> : test.status === 'completed' ? (test.accuracy_rate && test.accuracy_rate >= 0.8 ? <Check className="h-5 w-5 text-green-600" /> : <AlertTriangle className="h-5 w-5 text-orange-600" />) : <FlaskConical className="h-5 w-5 text-gray-600" />}</div><div><p className="font-medium">{test.name}</p><p className="text-sm text-muted-foreground">{test.experiment_folders?.name} • {test.total_photos} photos</p></div></div><div className="flex items-center gap-6">{test.status === 'completed' && <><div className="text-center"><p className="text-2xl font-bold">{formatPercent(test.accuracy_rate)}</p><p className="text-xs text-muted-foreground">Précision</p></div><div className="text-center"><p className="text-lg font-semibold">{formatPercent(test.avg_confidence)}</p><p className="text-xs text-muted-foreground">Confiance</p></div></>}<ChevronRight className="h-5 w-5 text-gray-400" /></div></div></Card>)}</div>}</TabsContent>
+        <TabsContent value="tests" className="space-y-6">{selectedTest ? <TestDetail test={selectedTest} onBack={() => setSelectedTest(null)} onRefresh={loadData} onGoToFolder={(fid) => { setSelectedTest(null); setActiveTab('dossiers'); setSelectedFolderId(fid) }} /> : tests.length === 0 ? <Card className="p-12 text-center"><FlaskConical className="h-12 w-12 mx-auto mb-4 text-gray-300" /><p className="text-lg font-medium text-gray-600 mb-2">Aucun test</p></Card> : <div className="space-y-4">{tests.map(test => <Card key={test.id} className="p-4 hover:shadow-md cursor-pointer" onClick={() => setSelectedTest(test)}><div className="flex items-center justify-between"><div className="flex items-center gap-4"><div className={`w-12 h-12 rounded-lg flex items-center justify-center ${test.status === 'completed' ? (test.accuracy_rate && test.accuracy_rate >= 0.8 ? 'bg-green-100' : 'bg-orange-100') : test.status === 'running' ? 'bg-blue-100' : 'bg-gray-100'}`}>{test.status === 'running' ? <Loader2 className="h-5 w-5 text-blue-600 animate-spin" /> : test.status === 'completed' ? (test.accuracy_rate && test.accuracy_rate >= 0.8 ? <Check className="h-5 w-5 text-green-600" /> : <AlertTriangle className="h-5 w-5 text-orange-600" />) : <FlaskConical className="h-5 w-5 text-gray-600" />}</div><div><p className="font-medium">{test.name}</p><p className="text-sm text-muted-foreground">{test.experiment_folders?.name} • {test.total_photos} photos</p></div></div><div className="flex items-center gap-6">{test.status === 'completed' && <><div className="text-center"><p className="text-2xl font-bold">{formatPercent(test.accuracy_rate)}</p><p className="text-xs text-muted-foreground">Précision</p></div><div className="text-center"><p className="text-lg font-semibold">{formatPercent(test.avg_confidence)}</p><p className="text-xs text-muted-foreground">Confiance</p></div></>}<ChevronRight className="h-5 w-5 text-gray-400" /></div></div></Card>)}</div>}</TabsContent>
         <TabsContent value="models" className="space-y-6"><Card className="p-6"><div className="flex items-center gap-4 mb-4"><div className="w-12 h-12 bg-teal-100 rounded-lg flex items-center justify-center"><CheckCircle2 className="h-6 w-6 text-teal-600" /></div><div><h3 className="font-semibold">Modèles promus</h3><p className="text-sm text-muted-foreground">Disponibles dans Compteurs &gt; Modèles</p></div></div>{regularFolders.filter(f => f.status === 'promoted').length === 0 ? <div className="text-center py-8"><p className="text-muted-foreground">Aucun modèle promu</p></div> : <div className="space-y-3">{regularFolders.filter(f => f.status === 'promoted').map(folder => <div key={folder.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"><div className="flex items-center gap-3">{folder.reference_photo?.image_url ? <img src={folder.reference_photo.thumbnail_url || folder.reference_photo.image_url} alt="" className="w-10 h-10 rounded object-cover" /> : TYPE_ICONS[folder.detected_type]}<span className="font-medium">{folder.name}</span></div><Button variant="outline" size="sm" asChild><a href="/dashboard/meters"><ExternalLink className="h-4 w-4 mr-2" />Voir</a></Button></div>)}</div>}</Card></TabsContent>
       </Tabs>
       <Dialog open={showNewFolderModal} onOpenChange={setShowNewFolderModal}><DialogContent><DialogHeader><DialogTitle>Nouveau dossier</DialogTitle><DialogDescription>Créez un dossier vide</DialogDescription></DialogHeader><div className="space-y-4"><div><label className="text-sm font-medium mb-2 block">Nom</label><Input value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)} placeholder="Ex: ITRON G4" /></div><div><label className="text-sm font-medium mb-2 block">Type</label><Select value={newFolderType} onValueChange={setNewFolderType}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="gas">🔥 Gaz</SelectItem><SelectItem value="water">💧 Eau</SelectItem><SelectItem value="electricity">⚡ Électricité</SelectItem><SelectItem value="unknown">❓ Non défini</SelectItem></SelectContent></Select></div></div><DialogFooter><Button variant="outline" onClick={() => setShowNewFolderModal(false)}>Annuler</Button><Button onClick={handleCreateFolder} disabled={!newFolderName.trim()}>Créer</Button></DialogFooter></DialogContent></Dialog>
@@ -253,14 +253,45 @@ function UnclassifiedSortingCenter({ folder, folders, onBack, onDeletePhotos, on
 }
 
 function FolderDetail({ folderId, folders, onBack, onDelete, onDeletePhotos, onUpdateFolder, onMovePhotos, onSetReferencePhoto, onRunTest, onPromote, onRefresh }: { folderId: string; folders: Folder[]; onBack: () => void; onDelete: (id: string, name: string) => void; onDeletePhotos: (ids: string[]) => void; onUpdateFolder: (id: string, u: { name?: string; detected_type?: string }) => void; onMovePhotos: (ids: string[], fid: string) => void; onSetReferencePhoto: (fid: string, pid: string) => void; onRunTest: (id: string) => void; onPromote: (id: string) => void; onRefresh: () => void }) {
-  const [loading, setLoading] = useState(true); const [folder, setFolder] = useState<Folder | null>(null); const [photos, setPhotos] = useState<Photo[]>([]); const [editing, setEditing] = useState(false); const [editName, setEditName] = useState(''); const [editType, setEditType] = useState(''); const [selectionMode, setSelectionMode] = useState(false); const [selectedPhotos, setSelectedPhotos] = useState<Set<string>>(new Set()); const [deleting, setDeleting] = useState(false)
-  useEffect(() => { (async () => { setLoading(true); const res = await fetch(`/api/labs/experiments/folders?id=${folderId}`); const data = await res.json(); if (data.folder) { setFolder(data.folder); setPhotos(data.folder.experiment_photos || []); setEditName(data.folder.name); setEditType(data.folder.detected_type) }; setLoading(false) })() }, [folderId])
+  const [loading, setLoading] = useState(true); const [folder, setFolder] = useState<Folder | null>(null); const [photos, setPhotos] = useState<Photo[]>([]); const [editing, setEditing] = useState(false); const [editName, setEditName] = useState(''); const [editType, setEditType] = useState(''); const [selectionMode, setSelectionMode] = useState(false); const [selectedPhotos, setSelectedPhotos] = useState<Set<string>>(new Set()); const [deleting, setDeleting] = useState(false); const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  
+  const loadFolderData = async () => {
+    setLoading(true)
+    const res = await fetch(`/api/labs/experiments/folders?id=${folderId}`)
+    const data = await res.json()
+    if (data.folder) {
+      setFolder(data.folder)
+      setPhotos(data.folder.experiment_photos || [])
+      setEditName(data.folder.name)
+      setEditType(data.folder.detected_type)
+    }
+    setLoading(false)
+  }
+  
+  useEffect(() => { loadFolderData() }, [folderId])
+  
   const handleSave = async () => { if (!folder) return; await onUpdateFolder(folder.id, { name: editName, detected_type: editType }); setFolder({ ...folder, name: editName, detected_type: editType }); setEditing(false); onRefresh() }
   const handleMovePhoto = async (pid: string, tid: string) => { await onMovePhotos([pid], tid); setPhotos(photos.filter(p => p.id !== pid)); onRefresh() }
   const toggleSelect = (id: string) => setSelectedPhotos(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
   const selectAll = () => setSelectedPhotos(selectedPhotos.size === photos.length ? new Set() : new Set(photos.map(p => p.id)))
-  const deleteSelected = async () => { if (selectedPhotos.size > 0) { setDeleting(true); await onDeletePhotos(Array.from(selectedPhotos)); setSelectedPhotos(new Set()); setSelectionMode(false); setDeleting(false) } }
+  const deleteSelected = async () => { 
+    if (selectedPhotos.size > 0) { 
+      setDeleting(true)
+      await onDeletePhotos(Array.from(selectedPhotos))
+      setPhotos(photos.filter(p => !selectedPhotos.has(p.id)))
+      setSelectedPhotos(new Set())
+      setSelectionMode(false)
+      setDeleting(false)
+      setShowDeleteConfirm(false)
+    } 
+  }
   const cancelSelection = () => { setSelectedPhotos(new Set()); setSelectionMode(false) }
+  
+  const handleSetReference = async (photoId: string) => {
+    await onSetReferencePhoto(folderId, photoId)
+    // Recharger les données locales
+    await loadFolderData()
+  }
   if (loading) return <div className="flex justify-center py-12"><Loader2 className="h-8 w-8 animate-spin" /></div>
   if (!folder) return null
   const isUnclassified = folder.is_unclassified; const newPhotosCount = folder.photos_since_last_test || 0; const hasNewPhotos = newPhotosCount > 0 && ['validated', 'promoted'].includes(folder.status); const referencePhoto = photos.find(p => p.id === folder.reference_photo_id) || photos[0]; const otherPhotos = referencePhoto ? photos.filter(p => p.id !== referencePhoto.id) : photos
@@ -283,32 +314,53 @@ function FolderDetail({ folderId, folders, onBack, onDelete, onDeletePhotos, onU
       {/* Preview des 3 niveaux de prompts pour les dossiers validés/promus */}
       {!isUnclassified && ['validated', 'promoted', 'ready'].includes(folder.status) && <PromptPreview folderId={folderId} meterType={folder.detected_type} />}
       
-      <div className="flex items-center justify-between"><h3 className="font-semibold">Photos ({photos.length})</h3><div className="flex items-center gap-2">{selectionMode ? <><Button variant="outline" size="sm" onClick={selectAll} disabled={deleting}>{selectedPhotos.size === photos.length ? 'Désélectionner tout' : 'Tout sélectionner'}</Button><span className="text-sm text-muted-foreground">{selectedPhotos.size} sélectionnée(s)</span><Button variant="destructive" size="sm" onClick={deleteSelected} disabled={selectedPhotos.size === 0 || deleting}>{deleting ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Trash2 className="h-4 w-4 mr-1" />}{deleting ? 'Suppression...' : 'Supprimer'}</Button><Button variant="outline" size="sm" onClick={cancelSelection} disabled={deleting}>Annuler</Button></> : photos.length > 0 && <Button variant="outline" size="sm" onClick={() => setSelectionMode(true)}>Sélectionner</Button>}</div></div>
+      <div className="flex items-center justify-between"><h3 className="font-semibold">Photos ({photos.length})</h3><div className="flex items-center gap-2">{selectionMode ? <><Button variant="outline" size="sm" onClick={selectAll} disabled={deleting}>{selectedPhotos.size === photos.length ? 'Désélectionner tout' : 'Tout sélectionner'}</Button><span className="text-sm text-muted-foreground">{selectedPhotos.size} sélectionnée(s)</span><Button variant="destructive" size="sm" onClick={() => setShowDeleteConfirm(true)} disabled={selectedPhotos.size === 0 || deleting}>{deleting ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Trash2 className="h-4 w-4 mr-1" />}{deleting ? 'Suppression...' : 'Supprimer'}</Button><Button variant="outline" size="sm" onClick={cancelSelection} disabled={deleting}>Annuler</Button></> : photos.length > 0 && <Button variant="outline" size="sm" onClick={() => setSelectionMode(true)}>Sélectionner</Button>}</div></div>
       {!isUnclassified && hasNewPhotos && <Card className="p-4 border-orange-200 bg-orange-50/50"><div className="flex items-center justify-between"><div className="flex items-center gap-3"><ImagePlus className="h-5 w-5 text-orange-600" /><div><p className="font-medium text-orange-800">{newPhotosCount} nouvelle(s) photo(s) ajoutée(s) depuis le dernier test</p><p className="text-sm text-orange-600">Relancez un test pour valider ces nouvelles photos</p></div></div><Button variant="outline" className="border-orange-300 text-orange-600 hover:bg-orange-100" onClick={() => onRunTest(folder.id)}><Play className="h-4 w-4 mr-2" />Relancer le test</Button></div></Card>}
-      {photos.length === 0 ? <Card className="p-8 text-center"><Image className="h-12 w-12 mx-auto mb-4 text-gray-300" /><p className="text-muted-foreground">Aucune photo</p></Card> : !isUnclassified && referencePhoto ? <div className="grid grid-cols-1 lg:grid-cols-3 gap-6"><div className="lg:col-span-1"><p className="text-sm font-medium mb-2 flex items-center gap-2"><Star className="h-4 w-4 text-yellow-500" />Photo de référence</p><div className="relative group"><div className="aspect-square bg-gray-100 rounded-xl overflow-hidden border-2 border-yellow-400"><img src={referencePhoto.image_url} alt="" className="w-full h-full object-cover" /></div>{selectionMode && <div className="absolute top-2 left-2"><Checkbox checked={selectedPhotos.has(referencePhoto.id)} onCheckedChange={() => toggleSelect(referencePhoto.id)} className="h-6 w-6 bg-white" /></div>}{referencePhoto.ai_confidence !== null && <div className="absolute bottom-2 right-2 bg-black/60 text-white text-sm px-2 py-1 rounded">{referencePhoto.ai_confidence}%</div>}</div></div><div className="lg:col-span-2"><p className="text-sm font-medium mb-2">Autres photos ({otherPhotos.length})</p><div className="grid grid-cols-3 md:grid-cols-4 gap-3">{otherPhotos.map(photo => <div key={photo.id} className="relative group"><div className="aspect-square bg-gray-100 rounded-lg overflow-hidden"><img src={photo.thumbnail_url || photo.image_url} alt="" className="w-full h-full object-cover" /></div>{selectionMode ? <div className="absolute top-1 left-1"><Checkbox checked={selectedPhotos.has(photo.id)} onCheckedChange={() => toggleSelect(photo.id)} className="h-5 w-5 bg-white" /></div> : <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center gap-1"><Button size="sm" variant="secondary" onClick={() => onSetReferencePhoto(folder.id, photo.id)} title="Définir comme référence"><Star className="h-4 w-4" /></Button><DropdownMenu><DropdownMenuTrigger asChild><Button size="sm" variant="secondary"><MoveRight className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent>{folders.filter(f => f.id !== folder.id).map(f => <DropdownMenuItem key={f.id} onClick={() => handleMovePhoto(photo.id, f.id)}>{TYPE_ICONS[f.detected_type]}<span className="ml-2">{f.name}</span></DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu><Button size="sm" variant="destructive" onClick={() => onDeletePhotos([photo.id])}><Trash2 className="h-4 w-4" /></Button></div>}{photo.ai_confidence !== null && <div className="absolute bottom-1 right-1 bg-black/60 text-white text-xs px-1 rounded">{photo.ai_confidence}%</div>}</div>)}</div></div></div> : <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">{photos.map(photo => <div key={photo.id} className="relative group"><div className="aspect-square bg-gray-100 rounded-lg overflow-hidden"><img src={photo.thumbnail_url || photo.image_url} alt="" className="w-full h-full object-cover" /></div>{selectionMode ? <div className="absolute top-1 left-1"><Checkbox checked={selectedPhotos.has(photo.id)} onCheckedChange={() => toggleSelect(photo.id)} className="h-5 w-5 bg-white" /></div> : <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center gap-1"><DropdownMenu><DropdownMenuTrigger asChild><Button size="sm" variant="secondary"><MoveRight className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent>{folders.filter(f => f.id !== folder.id).map(f => <DropdownMenuItem key={f.id} onClick={() => handleMovePhoto(photo.id, f.id)}>{TYPE_ICONS[f.detected_type]}<span className="ml-2">{f.name}</span></DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu><Button size="sm" variant="destructive" onClick={() => onDeletePhotos([photo.id])}><Trash2 className="h-4 w-4" /></Button></div>}{photo.ai_confidence !== null && <div className="absolute bottom-1 right-1 bg-black/60 text-white text-xs px-1 rounded">{photo.ai_confidence}%</div>}</div>)}</div>}
+      {photos.length === 0 ? <Card className="p-8 text-center"><Image className="h-12 w-12 mx-auto mb-4 text-gray-300" /><p className="text-muted-foreground">Aucune photo</p></Card> : !isUnclassified && referencePhoto ? <div className="grid grid-cols-1 lg:grid-cols-3 gap-6"><div className="lg:col-span-1"><p className="text-sm font-medium mb-2 flex items-center gap-2"><Star className="h-4 w-4 text-yellow-500" />Photo de référence</p><div className="relative group"><div className="aspect-square bg-gray-100 rounded-xl overflow-hidden border-2 border-yellow-400"><img src={referencePhoto.image_url} alt="" className="w-full h-full object-cover" /></div>{selectionMode && <div className="absolute top-2 left-2"><Checkbox checked={selectedPhotos.has(referencePhoto.id)} onCheckedChange={() => toggleSelect(referencePhoto.id)} className="h-6 w-6 bg-white" /></div>}{referencePhoto.ai_confidence !== null && <div className="absolute bottom-2 right-2 bg-black/60 text-white text-sm px-2 py-1 rounded">{referencePhoto.ai_confidence}%</div>}</div></div><div className="lg:col-span-2"><p className="text-sm font-medium mb-2">Autres photos ({otherPhotos.length})</p><div className="grid grid-cols-3 md:grid-cols-4 gap-3">{otherPhotos.map(photo => <div key={photo.id} className="relative group"><div className="aspect-square bg-gray-100 rounded-lg overflow-hidden"><img src={photo.thumbnail_url || photo.image_url} alt="" className="w-full h-full object-cover" /></div>{selectionMode ? <div className="absolute top-1 left-1"><Checkbox checked={selectedPhotos.has(photo.id)} onCheckedChange={() => toggleSelect(photo.id)} className="h-5 w-5 bg-white" /></div> : <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center gap-1"><Button size="sm" variant="secondary" onClick={() => handleSetReference(photo.id)} title="Définir comme référence"><Star className="h-4 w-4" /></Button><DropdownMenu><DropdownMenuTrigger asChild><Button size="sm" variant="secondary"><MoveRight className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent>{folders.filter(f => f.id !== folder.id).map(f => <DropdownMenuItem key={f.id} onClick={() => handleMovePhoto(photo.id, f.id)}>{TYPE_ICONS[f.detected_type]}<span className="ml-2">{f.name}</span></DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu><Button size="sm" variant="destructive" onClick={() => onDeletePhotos([photo.id])}><Trash2 className="h-4 w-4" /></Button></div>}{photo.ai_confidence !== null && <div className="absolute bottom-1 right-1 bg-black/60 text-white text-xs px-1 rounded">{photo.ai_confidence}%</div>}</div>)}</div></div></div> : <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">{photos.map(photo => <div key={photo.id} className="relative group"><div className="aspect-square bg-gray-100 rounded-lg overflow-hidden"><img src={photo.thumbnail_url || photo.image_url} alt="" className="w-full h-full object-cover" /></div>{selectionMode ? <div className="absolute top-1 left-1"><Checkbox checked={selectedPhotos.has(photo.id)} onCheckedChange={() => toggleSelect(photo.id)} className="h-5 w-5 bg-white" /></div> : <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center gap-1"><DropdownMenu><DropdownMenuTrigger asChild><Button size="sm" variant="secondary"><MoveRight className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent>{folders.filter(f => f.id !== folder.id).map(f => <DropdownMenuItem key={f.id} onClick={() => handleMovePhoto(photo.id, f.id)}>{TYPE_ICONS[f.detected_type]}<span className="ml-2">{f.name}</span></DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu><Button size="sm" variant="destructive" onClick={() => onDeletePhotos([photo.id])}><Trash2 className="h-4 w-4" /></Button></div>}{photo.ai_confidence !== null && <div className="absolute bottom-1 right-1 bg-black/60 text-white text-xs px-1 rounded">{photo.ai_confidence}%</div>}</div>)}</div>}
+      
+      {/* Dialog confirmation suppression */}
+      <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Supprimer {selectedPhotos.size} photo(s) ?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Cette action est irréversible. Les photos seront définitivement supprimées.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Annuler</AlertDialogCancel>
+            <AlertDialogAction onClick={deleteSelected} className="bg-red-600 hover:bg-red-700">
+              {deleting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Trash2 className="h-4 w-4 mr-2" />}
+              Supprimer
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
 
-// Composant pour afficher la preview des 3 niveaux de prompts
-function PromptPreview({ folderId, meterType }: { folderId: string; meterType: string }) {
+// Composant pour afficher la preview des 3 niveaux de prompts et les tests liés
+function PromptPreview({ folderId, meterType, onSelectTest }: { folderId: string; meterType: string; onSelectTest?: (test: Test) => void }) {
   const [expanded, setExpanded] = useState(false)
   const [loading, setLoading] = useState(false)
   const [configs, setConfigs] = useState<{ universal: any; type: any; model: any } | null>(null)
+  const [tests, setTests] = useState<Test[]>([])
   
   useEffect(() => {
     if (expanded && !configs) {
       setLoading(true)
-      fetch(`/api/labs/experiments/configs?folder_id=${folderId}`)
-        .then(res => res.json())
-        .then(data => {
-          setConfigs({
-            universal: data.universal,
-            type: data.type,
-            model: data.model
-          })
+      Promise.all([
+        fetch(`/api/labs/experiments/configs?folder_id=${folderId}`).then(r => r.json()),
+        fetch(`/api/labs/experiments/tests?folder_id=${folderId}`).then(r => r.json())
+      ]).then(([configData, testData]) => {
+        setConfigs({
+          universal: configData.universal,
+          type: configData.type,
+          model: configData.model
         })
-        .finally(() => setLoading(false))
+        setTests(testData.tests || [])
+      }).finally(() => setLoading(false))
     }
   }, [expanded, folderId, configs])
   
@@ -320,24 +372,55 @@ function PromptPreview({ folderId, meterType }: { folderId: string; meterType: s
       >
         <div className="flex items-center gap-2">
           <Settings2 className="h-4 w-4 text-teal-600" />
-          <span className="font-medium">Configuration des prompts</span>
+          <span className="font-medium">Configuration & Tests</span>
           <div className="flex gap-1 ml-2">
-            <Badge variant="outline" className="text-xs">Niveau 1</Badge>
-            <Badge variant="outline" className="text-xs">Niveau 2</Badge>
-            <Badge variant="outline" className="text-xs">Niveau 3</Badge>
+            <Badge variant="outline" className="text-xs">Prompts</Badge>
+            <Badge variant="outline" className="text-xs">Tests</Badge>
           </div>
         </div>
         <ChevronRight className={`h-4 w-4 transition-transform ${expanded ? 'rotate-90' : ''}`} />
       </button>
       
       {expanded && (
-        <div className="mt-4 space-y-3">
+        <div className="mt-4 space-y-4">
           {loading ? (
             <div className="flex justify-center py-4">
               <Loader2 className="h-5 w-5 animate-spin" />
             </div>
           ) : (
             <>
+              {/* Tests liés */}
+              {tests.length > 0 && (
+                <div className="border rounded-lg p-3 bg-gray-50">
+                  <div className="flex items-center gap-2 mb-2">
+                    <FlaskConical className="h-4 w-4 text-purple-600" />
+                    <span className="font-medium text-sm">Tests ({tests.length})</span>
+                  </div>
+                  <div className="space-y-2">
+                    {tests.slice(0, 3).map(test => (
+                      <div 
+                        key={test.id} 
+                        className="flex items-center justify-between bg-white p-2 rounded border cursor-pointer hover:bg-gray-50"
+                        onClick={() => onSelectTest?.(test)}
+                      >
+                        <div className="flex items-center gap-2">
+                          {test.accuracy_rate !== null && test.accuracy_rate >= 0.8 ? (
+                            <Check className="h-4 w-4 text-green-600" />
+                          ) : (
+                            <AlertTriangle className="h-4 w-4 text-orange-500" />
+                          )}
+                          <span className="text-sm">{new Date(test.created_at || '').toLocaleDateString('fr-FR')}</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="text-sm font-medium">{test.accuracy_rate !== null ? `${(test.accuracy_rate * 100).toFixed(0)}%` : '-'}</span>
+                          <ChevronRight className="h-4 w-4 text-gray-400" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              
               {/* Niveau 1 - Universel */}
               <div className="border rounded-lg p-3">
                 <div className="flex items-center gap-2 mb-2">
@@ -358,6 +441,8 @@ function PromptPreview({ folderId, meterType }: { folderId: string; meterType: s
                 </div>
                 <pre className="text-xs bg-gray-50 p-2 rounded max-h-24 overflow-y-auto whitespace-pre-wrap">
                   {configs?.type?.additional_prompt || 'Non configuré'}
+                </pre>
+              </div>
                 </pre>
               </div>
               
@@ -406,7 +491,7 @@ function PromptPreview({ folderId, meterType }: { folderId: string; meterType: s
   )
 }
 
-function TestDetail({ test, onBack, onRefresh }: { test: Test; onBack: () => void; onRefresh: () => void }) {
+function TestDetail({ test, onBack, onRefresh, onGoToFolder }: { test: Test; onBack: () => void; onRefresh: () => void; onGoToFolder?: (folderId: string) => void }) {
   const [loading, setLoading] = useState(false)
   const [fullTest, setFullTest] = useState<Test | null>(null)
   const [selectedPhoto, setSelectedPhoto] = useState<{ url: string; result: TestResult } | null>(null)
@@ -444,18 +529,29 @@ function TestDetail({ test, onBack, onRefresh }: { test: Test; onBack: () => voi
   
   if (loading) return <div className="flex justify-center py-12"><Loader2 className="h-8 w-8 animate-spin" /></div>
   
+  const folderName = fullTest?.experiment_folders?.name || test.experiment_folders?.name
+  const folderId = fullTest?.folder_id || test.folder_id
+  
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" onClick={onBack}>← Retour</Button>
-        <div>
-          <h2 className="text-xl font-bold">{test.name}</h2>
-          <p className="text-sm text-muted-foreground">{test.total_photos} photos testées</p>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" onClick={onBack}>← Retour</Button>
+          <div>
+            <h2 className="text-xl font-bold">{test.name}</h2>
+            <p className="text-sm text-muted-foreground">{test.total_photos} photos testées</p>
+          </div>
         </div>
+        {onGoToFolder && folderId && (
+          <Button variant="outline" onClick={() => onGoToFolder(folderId)}>
+            <FolderOpen className="h-4 w-4 mr-2" />
+            Voir le dossier {folderName}
+          </Button>
+        )}
       </div>
       
-      {/* Stats */}
+      {/* Stats - Calculées localement pour être à jour */}
       <div className="grid grid-cols-4 gap-4">
         <Card className="p-4 text-center">
           <p className="text-3xl font-bold">{precision}%</p>
