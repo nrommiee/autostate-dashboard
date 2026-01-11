@@ -20,23 +20,27 @@ export async function OPTIONS() {
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
-    const type = searchParams.get('type') // 'universal', 'type', 'model'
+    const level = searchParams.get('level') // 'universal', 'type', 'model', 'all'
+    const type = searchParams.get('type') // alias pour level (legacy)
     const meterType = searchParams.get('meter_type') // 'gas', 'water', 'electricity'
     const id = searchParams.get('id')
+    const folderId = searchParams.get('folder_id')
+    
+    const queryLevel = level || type
     
     // Config universelle
-    if (type === 'universal') {
+    if (queryLevel === 'universal') {
       const { data, error } = await supabase
         .from('experiment_config_universal')
         .select('*')
         .single()
       
       if (error) throw error
-      return NextResponse.json({ config: data }, { headers: corsHeaders })
+      return NextResponse.json({ universal: data, config: data }, { headers: corsHeaders })
     }
     
     // Config par type
-    if (type === 'type') {
+    if (queryLevel === 'type') {
       let query = supabase
         .from('experiment_config_type')
         .select('*')
@@ -51,11 +55,11 @@ export async function GET(request: NextRequest) {
         : await query
       
       if (error && error.code !== 'PGRST116') throw error
-      return NextResponse.json({ config: data, configs: Array.isArray(data) ? data : [data] }, { headers: corsHeaders })
+      return NextResponse.json({ type: data, config: data, configs: Array.isArray(data) ? data : [data] }, { headers: corsHeaders })
     }
     
     // Config par modèle
-    if (type === 'model') {
+    if (queryLevel === 'model') {
       if (id) {
         const { data, error } = await supabase
           .from('experiment_config_model')
@@ -64,7 +68,7 @@ export async function GET(request: NextRequest) {
           .single()
         
         if (error) throw error
-        return NextResponse.json({ config: data }, { headers: corsHeaders })
+        return NextResponse.json({ model: data, config: data }, { headers: corsHeaders })
       }
       
       const { data, error } = await supabase
@@ -74,10 +78,69 @@ export async function GET(request: NextRequest) {
         .order('name')
       
       if (error) throw error
-      return NextResponse.json({ configs: data }, { headers: corsHeaders })
+      return NextResponse.json({ models: data, configs: data }, { headers: corsHeaders })
     }
     
-    // Toutes les configs
+    // Toutes les configs (level=all)
+    if (queryLevel === 'all') {
+      const [universal, types, models] = await Promise.all([
+        supabase.from('experiment_config_universal').select('*').single(),
+        supabase.from('experiment_config_type').select('*').eq('is_active', true),
+        supabase.from('experiment_config_model').select('*').eq('is_active', true).order('name')
+      ])
+      
+      return NextResponse.json({
+        universal: universal.data,
+        types: types.data,
+        models: models.data
+      }, { headers: corsHeaders })
+    }
+    
+    // Par folder_id - récupérer la config liée au dossier
+    if (folderId) {
+      // Récupérer le dossier avec son config_model_id
+      const { data: folder, error: folderError } = await supabase
+        .from('experiment_folders')
+        .select('id, name, detected_type, config_model_id')
+        .eq('id', folderId)
+        .single()
+      
+      if (folderError) throw folderError
+      
+      // Récupérer la config universelle
+      const { data: universal } = await supabase
+        .from('experiment_config_universal')
+        .select('*')
+        .single()
+      
+      // Récupérer la config type correspondante
+      const { data: typeConfig } = await supabase
+        .from('experiment_config_type')
+        .select('*')
+        .eq('meter_type', folder.detected_type)
+        .eq('is_active', true)
+        .single()
+      
+      // Récupérer la config modèle si elle existe
+      let modelConfig = null
+      if (folder.config_model_id) {
+        const { data } = await supabase
+          .from('experiment_config_model')
+          .select('*')
+          .eq('id', folder.config_model_id)
+          .single()
+        modelConfig = data
+      }
+      
+      return NextResponse.json({
+        folder,
+        universal,
+        type: typeConfig,
+        model: modelConfig,
+        // Pour compatibilité avec l'ancien format
+        configs: modelConfig ? [modelConfig] : []
+      }, { headers: corsHeaders })
+    }
     const [universal, types, models] = await Promise.all([
       supabase.from('experiment_config_universal').select('*').single(),
       supabase.from('experiment_config_type').select('*').eq('is_active', true),
@@ -96,11 +159,18 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST - Créer une nouvelle config modèle
+// POST - Créer une nouvelle config modèle (depuis le dashboard FolderTestPage)
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
     const {
+      // Nouveau format depuis FolderTestPage
+      folder_id,
+      preprocessing,
+      zones,
+      index_config,
+      prompt_model,
+      // Ancien format direct
       name,
       manufacturer,
       type_config_id,
@@ -112,6 +182,89 @@ export async function POST(request: NextRequest) {
       reading_format_regex
     } = body
     
+    // ═══════════════════════════════════════════════════════════════
+    // NOUVEAU FORMAT: Depuis le dashboard FolderTestPage
+    // ═══════════════════════════════════════════════════════════════
+    if (folder_id) {
+      // Récupérer le dossier pour avoir le nom et type
+      const { data: folder, error: folderError } = await supabase
+        .from('experiment_folders')
+        .select('id, name, detected_type, config_model_id')
+        .eq('id', folder_id)
+        .single()
+      
+      if (folderError || !folder) {
+        return NextResponse.json({ error: 'Folder not found' }, { status: 404, headers: corsHeaders })
+      }
+      
+      // Récupérer le type_config_id correspondant au detected_type
+      const { data: typeConfig } = await supabase
+        .from('experiment_config_type')
+        .select('id')
+        .eq('meter_type', folder.detected_type)
+        .eq('is_active', true)
+        .single()
+      
+      // Convertir les données du dashboard en format config_model
+      const configData = {
+        name: folder.name, // Utilise le nom du dossier
+        manufacturer: folder.name.split(' ')[0], // Premier mot = fabricant (APATOR, ITRON, etc.)
+        type_config_id: typeConfig?.id || null,
+        specific_prompt: prompt_model || null,
+        preprocessing_override: preprocessing || null,
+        extraction_zones: zones || [],
+        visual_characteristics: index_config ? {
+          num_digits: index_config.integerDigits,
+          num_decimals: index_config.decimalDigits,
+          display_type: 'mechanical' // Par défaut
+        } : null,
+        is_active: true
+      }
+      
+      let configId = folder.config_model_id
+      
+      if (configId) {
+        // Mettre à jour la config existante
+        const { data: updatedConfig, error: updateError } = await supabase
+          .from('experiment_config_model')
+          .update({
+            ...configData,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', configId)
+          .select()
+          .single()
+        
+        if (updateError) throw updateError
+        return NextResponse.json({ config: updatedConfig, updated: true }, { headers: corsHeaders })
+        
+      } else {
+        // Créer une nouvelle config
+        const { data: newConfig, error: insertError } = await supabase
+          .from('experiment_config_model')
+          .insert(configData)
+          .select()
+          .single()
+        
+        if (insertError) throw insertError
+        
+        // Lier la config au dossier
+        const { error: linkError } = await supabase
+          .from('experiment_folders')
+          .update({ config_model_id: newConfig.id })
+          .eq('id', folder_id)
+        
+        if (linkError) {
+          console.error('Error linking config to folder:', linkError)
+        }
+        
+        return NextResponse.json({ config: newConfig, created: true, linked: !linkError }, { headers: corsHeaders })
+      }
+    }
+    
+    // ═══════════════════════════════════════════════════════════════
+    // ANCIEN FORMAT: Création directe
+    // ═══════════════════════════════════════════════════════════════
     if (!name) {
       return NextResponse.json({ error: 'name is required' }, { status: 400, headers: corsHeaders })
     }
