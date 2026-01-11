@@ -206,19 +206,21 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
     if (zones.length > 0) {
       preview += '=== ZONES D\'INTÉRÊT (ROI) ===\n'
       for (const zone of zones) {
-        const zoneType = zone.type || zone.name
-        switch (zoneType) {
+        switch (zone.type) {
           case 'index':
             preview += `• ZONE INDEX: [${Math.round(zone.x)}%, ${Math.round(zone.y)}%] - ${Math.round(zone.width)}x${Math.round(zone.height)}%\n`
             break
           case 'serial':
             preview += `• ZONE N° SÉRIE: [${Math.round(zone.x)}%, ${Math.round(zone.y)}%] - ${Math.round(zone.width)}x${Math.round(zone.height)}%\n`
             break
-          case 'unit':
-            preview += `• ZONE UNITÉ: [${Math.round(zone.x)}%, ${Math.round(zone.y)}%]\n`
+          case 'ean':
+            preview += `• ZONE EAN: [${Math.round(zone.x)}%, ${Math.round(zone.y)}%]\n`
+            break
+          case 'meter':
+            preview += `• ZONE COMPTEUR: [${Math.round(zone.x)}%, ${Math.round(zone.y)}%]\n`
             break
           default:
-            preview += `• ZONE ${zone.name}: [${Math.round(zone.x)}%, ${Math.round(zone.y)}%]\n`
+            preview += `• ZONE ${zone.label}: [${Math.round(zone.x)}%, ${Math.round(zone.y)}%]\n`
         }
       }
     }
@@ -229,7 +231,7 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
       preview += '=== FORMAT INDEX ===\n'
       preview += `• Chiffres entiers: ${indexConfig.integerDigits}\n`
       preview += `• Décimales: ${indexConfig.decimalDigits}\n`
-      preview += `• Format attendu: ${'X'.repeat(indexConfig.integerDigits)},${indexConfig.decimalDigits > 0 ? 'X'.repeat(indexConfig.decimalDigits) : ''}\n`
+      preview += `• Format attendu: ${'X'.repeat(indexConfig.integerDigits)}${indexConfig.decimalDigits > 0 ? ',' + 'X'.repeat(indexConfig.decimalDigits) : ''}\n`
     }
     
     // Preprocessing
