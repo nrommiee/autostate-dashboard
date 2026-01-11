@@ -207,8 +207,8 @@ export async function POST(request: NextRequest) {
       
       // Convertir les données du dashboard en format config_model
       const configData = {
-        name: folder.name, // Utilise le nom du dossier
-        manufacturer: folder.name.split(' ')[0], // Premier mot = fabricant (APATOR, ITRON, etc.)
+        name: name || folder.name, // Utilise le nom passé, sinon le nom du dossier
+        manufacturer: (name || folder.name).split(' ')[0], // Premier mot = fabricant
         type_config_id: typeConfig?.id || null,
         specific_prompt: prompt_model || null,
         preprocessing_override: preprocessing || null,
