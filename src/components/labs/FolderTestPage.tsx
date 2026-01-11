@@ -198,6 +198,58 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
     setPromptModel(config.prompt_model || '')
   }, [])
 
+  // Generate Level 3 prompt preview from current config
+  const generateLevel3Preview = useCallback(() => {
+    let preview = ''
+    
+    // Zones ROI
+    if (zones.length > 0) {
+      preview += '=== ZONES D\'INTÉRÊT (ROI) ===\n'
+      for (const zone of zones) {
+        const zoneType = zone.type || zone.name
+        switch (zoneType) {
+          case 'index':
+            preview += `• ZONE INDEX: [${Math.round(zone.x)}%, ${Math.round(zone.y)}%] - ${Math.round(zone.width)}x${Math.round(zone.height)}%\n`
+            break
+          case 'serial':
+            preview += `• ZONE N° SÉRIE: [${Math.round(zone.x)}%, ${Math.round(zone.y)}%] - ${Math.round(zone.width)}x${Math.round(zone.height)}%\n`
+            break
+          case 'unit':
+            preview += `• ZONE UNITÉ: [${Math.round(zone.x)}%, ${Math.round(zone.y)}%]\n`
+            break
+          default:
+            preview += `• ZONE ${zone.name}: [${Math.round(zone.x)}%, ${Math.round(zone.y)}%]\n`
+        }
+      }
+    }
+    
+    // Index config
+    if (indexConfig.integerDigits || indexConfig.decimalDigits) {
+      if (preview) preview += '\n'
+      preview += '=== FORMAT INDEX ===\n'
+      preview += `• Chiffres entiers: ${indexConfig.integerDigits}\n`
+      preview += `• Décimales: ${indexConfig.decimalDigits}\n`
+      preview += `• Format attendu: ${'X'.repeat(indexConfig.integerDigits)},${indexConfig.decimalDigits > 0 ? 'X'.repeat(indexConfig.decimalDigits) : ''}\n`
+    }
+    
+    // Preprocessing
+    const hasPreprocessing = preprocessing.grayscale || 
+      preprocessing.contrast !== 30 || 
+      preprocessing.brightness !== 0 || 
+      preprocessing.sharpness !== 20
+    
+    if (hasPreprocessing) {
+      if (preview) preview += '\n'
+      preview += '=== PRÉTRAITEMENT ===\n'
+      if (preprocessing.grayscale) preview += '• Niveaux de gris: activé\n'
+      if (preprocessing.contrast !== 30) preview += `• Contraste: ${preprocessing.contrast}%\n`
+      if (preprocessing.brightness !== 0) preview += `• Luminosité: ${preprocessing.brightness}\n`
+      if (preprocessing.sharpness !== 20) preview += `• Netteté: ${preprocessing.sharpness}%\n`
+    }
+    
+    return preview || 'Aucune configuration définie'
+  }, [zones, indexConfig, preprocessing])
+
   // Load data
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -219,35 +271,63 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
         if (folderData.folder.detected_type) {
           const configRes = await fetch(`/api/labs/experiments/configs?level=type&meter_type=${folderData.folder.detected_type}`)
           const configData = await configRes.json()
-          setConfigType(configData.type || null)
+          setConfigType(configData.type || configData.config || null)
+        }
+        
+        // Load model config if linked to folder
+        if (folderData.folder.config_model_id) {
+          const modelRes = await fetch(`/api/labs/experiments/configs?level=model&id=${folderData.folder.config_model_id}`)
+          const modelData = await modelRes.json()
+          const modelConfig = modelData.model || modelData.config
+          if (modelConfig) {
+            // Charger les valeurs de la config modèle
+            if (modelConfig.preprocessing_override) {
+              setPreprocessing(modelConfig.preprocessing_override)
+            }
+            if (modelConfig.extraction_zones) {
+              setZones(modelConfig.extraction_zones)
+            }
+            if (modelConfig.specific_prompt) {
+              setPromptModel(modelConfig.specific_prompt)
+            }
+            if (modelConfig.visual_characteristics) {
+              setIndexConfig({
+                integerDigits: modelConfig.visual_characteristics.num_digits || 5,
+                decimalDigits: modelConfig.visual_characteristics.num_decimals || 3
+              })
+            }
+            setConfigName(modelConfig.name || folderData.folder.name)
+          }
         }
       }
       
       // Load universal config
       const universalRes = await fetch('/api/labs/experiments/configs?level=universal')
       const universalData = await universalRes.json()
-      setConfigUniversal(universalData.universal || null)
+      setConfigUniversal(universalData.universal || universalData.config || null)
       
       // Load saved configs for this folder
       try {
         const savedRes = await fetch(`/api/labs/experiments/configs?folder_id=${folderId}`)
         const savedData = await savedRes.json()
-        if (savedData.configs) {
+        if (savedData.configs && savedData.configs.length > 0) {
           setSavedConfigs(savedData.configs)
           
           // Load active config if exists
           const activeConfig = savedData.configs.find((c: SavedConfig) => c.is_active)
           if (activeConfig) {
             loadConfigValues(activeConfig)
-          } else {
-            // Generate default config name
+          } else if (!folderData?.folder?.config_model_id) {
+            // Generate default config name only if no model config
             setConfigName(`Config v${savedData.configs.length + 1}`)
           }
-        } else {
+        } else if (!folderData?.folder?.config_model_id) {
           setConfigName('Config v1')
         }
       } catch (e) {
-        setConfigName('Config v1')
+        if (!folderData?.folder?.config_model_id) {
+          setConfigName('Config v1')
+        }
       }
       
     } catch (error) {
@@ -424,7 +504,7 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
   // Check what's configured
   const hasUniversalPrompt = !!configUniversal?.base_prompt
   const hasTypePrompt = !!configType?.additional_prompt
-  const hasModelPrompt = !!promptModel.trim()
+  const hasModelPrompt = !!promptModel.trim() || zones.length > 0 || indexConfig.integerDigits > 0
 
   if (loading) {
     return (
@@ -716,7 +796,7 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
                     <div className="flex items-center gap-2 mb-2">
                       <Badge variant="outline">Niveau 1 - Universel</Badge>
                       <Badge variant="secondary">Lecture seule</Badge>
-                      {hasUniversalPrompt && <CheckCircle2 className="h-4 w-4 text-blue-600" />}
+                      {configUniversal?.base_prompt && <CheckCircle2 className="h-4 w-4 text-blue-600" />}
                     </div>
                     <pre className="text-xs bg-gray-50 p-2 rounded max-h-32 overflow-y-auto whitespace-pre-wrap">
                       {configUniversal?.base_prompt || 'Non configuré'}
@@ -730,27 +810,46 @@ export function FolderTestPage({ folderId, onBack }: FolderTestPageProps) {
                       {TYPE_ICONS[folder.detected_type]}
                       <span className="text-sm capitalize">{folder.detected_type}</span>
                       <Badge variant="secondary">Lecture seule</Badge>
-                      {hasTypePrompt && <CheckCircle2 className="h-4 w-4 text-green-600" />}
+                      {configType?.additional_prompt && <CheckCircle2 className="h-4 w-4 text-green-600" />}
                     </div>
                     <pre className="text-xs bg-gray-50 p-2 rounded max-h-24 overflow-y-auto whitespace-pre-wrap">
-                      {configType?.additional_prompt || 'Non configuré'}
+                      {configType?.additional_prompt || 'Aucun prompt spécifique pour ce type'}
                     </pre>
                   </div>
 
-                  {/* Model prompt (editable) */}
+                  {/* Model prompt (editable + auto-generated preview) */}
                   <div className="border rounded-lg p-3 border-teal-200 bg-teal-50/30">
                     <div className="flex items-center gap-2 mb-2">
                       <Badge className="bg-teal-600">Niveau 3 - Modèle</Badge>
                       <Badge className="bg-teal-100 text-teal-700">Éditable</Badge>
-                      {hasModelPrompt && <CheckCircle2 className="h-4 w-4 text-teal-600" />}
+                      {(promptModel || zones.length > 0) && <CheckCircle2 className="h-4 w-4 text-teal-600" />}
                     </div>
+                    
+                    {/* Manual prompt textarea */}
                     <Textarea
                       value={promptModel}
                       onChange={(e) => setPromptModel(e.target.value)}
                       placeholder="Instructions spécifiques pour ce modèle de compteur..."
-                      className="font-mono text-sm min-h-28"
+                      className="font-mono text-sm min-h-20 mb-3"
                     />
+                    
+                    {/* Auto-generated preview */}
+                    {(zones.length > 0 || indexConfig.integerDigits || indexConfig.decimalDigits) && (
+                      <div className="border-t pt-3 mt-2">
+                        <p className="text-xs font-medium text-teal-700 mb-2">
+                          ✨ Prompt auto-généré depuis vos configurations :
+                        </p>
+                        <pre className="text-xs bg-white p-2 rounded border border-teal-100 max-h-32 overflow-y-auto whitespace-pre-wrap">
+                          {generateLevel3Preview()}
+                        </pre>
+                      </div>
+                    )}
                   </div>
+                  
+                  {/* Hint */}
+                  <p className="text-xs text-muted-foreground">
+                    💡 Le Niveau 3 combine vos instructions manuelles + les zones ROI (Couche 4) + la config index (Couche 8)
+                  </p>
                 </Card>
               )}
 
