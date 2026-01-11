@@ -443,8 +443,6 @@ function PromptPreview({ folderId, meterType, onSelectTest }: { folderId: string
                   {configs?.type?.additional_prompt || 'Non configuré'}
                 </pre>
               </div>
-                </pre>
-              </div>
               
               {/* Niveau 3 - Modèle */}
               <div className="border rounded-lg p-3 border-teal-200 bg-teal-50/30">
