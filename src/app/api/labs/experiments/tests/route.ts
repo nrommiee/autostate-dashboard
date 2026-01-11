@@ -94,18 +94,36 @@ export async function GET(request: NextRequest) {
     const folderId = searchParams.get('folder_id')
     
     if (id) {
-      // Récupérer un test spécifique avec ses résultats
+      // Récupérer un test spécifique avec ses résultats ET les photos
       const { data: test, error } = await supabase
         .from('experiment_tests')
         .select(`
           *,
           experiment_folders(name, detected_type),
-          experiment_test_results(*)
+          experiment_test_results(
+            *,
+            experiment_photos(id, image_url, thumbnail_url, original_filename)
+          )
         `)
         .eq('id', id)
         .single()
       
       if (error) throw error
+      
+      // Si les photos ne sont pas chargées via la relation, les récupérer séparément
+      if (test?.experiment_test_results) {
+        for (const result of test.experiment_test_results) {
+          if (!result.experiment_photos && result.photo_id) {
+            const { data: photo } = await supabase
+              .from('experiment_photos')
+              .select('id, image_url, thumbnail_url, original_filename')
+              .eq('id', result.photo_id)
+              .single()
+            result.experiment_photos = photo
+          }
+        }
+      }
+      
       return NextResponse.json({ test }, { headers: corsHeaders })
     }
     
