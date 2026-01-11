@@ -525,29 +525,114 @@ async function executePhotoTest(
 function buildCombinedPrompt(configs: any): string {
   let prompt = ''
   
-  // 1. Prompt universel
+  // ═══════════════════════════════════════════════════════════════
+  // NIVEAU 1: Prompt Universel
+  // ═══════════════════════════════════════════════════════════════
   if (configs.universalConfig?.base_prompt) {
     prompt += configs.universalConfig.base_prompt
   }
   
-  // 2. Prompt type
+  // ═══════════════════════════════════════════════════════════════
+  // NIVEAU 2: Prompt Type (gaz, eau, électricité)
+  // ═══════════════════════════════════════════════════════════════
   if (configs.typeConfig?.additional_prompt) {
     prompt += '\n\n' + configs.typeConfig.additional_prompt
   }
   
-  // 3. Prompt modèle
+  // ═══════════════════════════════════════════════════════════════
+  // NIVEAU 3: Prompt Modèle (généré automatiquement depuis les couches)
+  // ═══════════════════════════════════════════════════════════════
+  
+  // 3a. Prompt spécifique manuel (si défini)
   if (configs.modelConfig?.specific_prompt) {
-    prompt += '\n\n' + configs.modelConfig.specific_prompt
+    prompt += '\n\n=== INSTRUCTIONS SPÉCIFIQUES AU MODÈLE ===\n'
+    prompt += configs.modelConfig.specific_prompt
   }
   
-  // 4. Ajouter les caractéristiques visuelles si définies
+  // 3b. Zones ROI (généré automatiquement depuis extraction_zones)
+  if (configs.modelConfig?.extraction_zones && configs.modelConfig.extraction_zones.length > 0) {
+    prompt += '\n\n=== ZONES D\'INTÉRÊT (ROI) ===\n'
+    prompt += 'Les zones suivantes ont été identifiées sur ce modèle de compteur:\n'
+    
+    for (const zone of configs.modelConfig.extraction_zones) {
+      const zoneType = zone.type || zone.name
+      let instruction = ''
+      
+      switch (zoneType) {
+        case 'index':
+          instruction = `- ZONE INDEX: Position [${zone.x}%, ${zone.y}%], Taille [${zone.width}% x ${zone.height}%]. C'est ici que se trouve l'affichage principal de l'index.`
+          break
+        case 'serial':
+          instruction = `- ZONE NUMÉRO DE SÉRIE: Position [${zone.x}%, ${zone.y}%], Taille [${zone.width}% x ${zone.height}%]. Le numéro de série/compteur est visible ici.`
+          break
+        case 'unit':
+          instruction = `- ZONE UNITÉ: Position [${zone.x}%, ${zone.y}%], Taille [${zone.width}% x ${zone.height}%]. L'unité de mesure est affichée ici.`
+          break
+        default:
+          instruction = `- ZONE ${zone.name?.toUpperCase() || 'CUSTOM'}: Position [${zone.x}%, ${zone.y}%], Taille [${zone.width}% x ${zone.height}%].`
+      }
+      prompt += instruction + '\n'
+    }
+    
+    prompt += '\nConcentre ton analyse sur ces zones spécifiques.'
+  }
+  
+  // 3c. Caractéristiques visuelles / Config Index (généré automatiquement)
   if (configs.modelConfig?.visual_characteristics) {
     const vc = configs.modelConfig.visual_characteristics
-    prompt += `\n\nCARACTÉRISTIQUES DU MODÈLE:`
-    if (vc.display_type) prompt += `\n- Type d'affichage: ${vc.display_type}`
-    if (vc.num_digits) prompt += `\n- Nombre de chiffres entiers: ${vc.num_digits}`
-    if (vc.num_decimals) prompt += `\n- Nombre de décimales: ${vc.num_decimals}`
-    if (vc.decimal_color) prompt += `\n- Couleur des décimales: ${vc.decimal_color}`
+    prompt += '\n\n=== CARACTÉRISTIQUES DE L\'AFFICHAGE ===\n'
+    
+    if (vc.display_type) {
+      prompt += `- Type d'affichage: ${vc.display_type}\n`
+    }
+    if (vc.num_digits !== undefined) {
+      prompt += `- Nombre de chiffres ENTIERS attendus: ${vc.num_digits}\n`
+    }
+    if (vc.num_decimals !== undefined) {
+      prompt += `- Nombre de DÉCIMALES attendues: ${vc.num_decimals}\n`
+    }
+    if (vc.decimal_color) {
+      prompt += `- Couleur des décimales: ${vc.decimal_color}\n`
+    }
+    if (vc.format_regex) {
+      prompt += `- Format attendu (regex): ${vc.format_regex}\n`
+    }
+    
+    // Générer une instruction de validation
+    if (vc.num_digits !== undefined || vc.num_decimals !== undefined) {
+      const digits = vc.num_digits || 5
+      const decimals = vc.num_decimals || 3
+      prompt += `\nVÉRIFICATION: L'index doit avoir environ ${digits} chiffres entiers et ${decimals} décimales (format: XXXXX,XXX).`
+    }
+  }
+  
+  // 3d. Index config legacy (pour compatibilité avec l'ancien format)
+  if (configs.modelConfig?.index_config) {
+    const ic = configs.modelConfig.index_config
+    if (!configs.modelConfig?.visual_characteristics) {
+      prompt += '\n\n=== FORMAT INDEX ===\n'
+      if (ic.integerDigits) {
+        prompt += `- Chiffres entiers: ${ic.integerDigits}\n`
+      }
+      if (ic.decimalDigits) {
+        prompt += `- Décimales: ${ic.decimalDigits}\n`
+      }
+    }
+  }
+  
+  // 3e. Prétraitement appliqué (info pour Claude)
+  if (configs.modelConfig?.preprocessing_override) {
+    const pp = configs.modelConfig.preprocessing_override
+    const hasOverrides = pp.grayscale || pp.contrast !== 30 || pp.brightness !== 0 || pp.sharpness !== 20
+    
+    if (hasOverrides) {
+      prompt += '\n\n=== PRÉTRAITEMENT IMAGE ===\n'
+      prompt += 'L\'image a été prétraitée avec les paramètres suivants:\n'
+      if (pp.grayscale) prompt += '- Conversion en niveaux de gris\n'
+      if (pp.contrast && pp.contrast !== 30) prompt += `- Contraste ajusté: ${pp.contrast}%\n`
+      if (pp.brightness && pp.brightness !== 0) prompt += `- Luminosité ajustée: ${pp.brightness}\n`
+      if (pp.sharpness && pp.sharpness !== 20) prompt += `- Netteté: ${pp.sharpness}%\n`
+    }
   }
   
   return prompt
