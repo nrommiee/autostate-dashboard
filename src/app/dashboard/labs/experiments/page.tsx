@@ -177,13 +177,18 @@ export default function ExperimentsPage() {
         <Button variant="outline" onClick={handleRefresh} disabled={refreshing}><RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />Actualiser</Button>
       </div>
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid grid-cols-5 w-full max-w-3xl">
-          <TabsTrigger value="import"><Upload className="h-4 w-4 mr-2" />Import</TabsTrigger>
-          <TabsTrigger value="folders"><FolderOpen className="h-4 w-4 mr-2" />Dossiers</TabsTrigger>
-          <TabsTrigger value="configs"><Settings2 className="h-4 w-4 mr-2" />Configs</TabsTrigger>
-          <TabsTrigger value="tests"><FlaskConical className="h-4 w-4 mr-2" />Tests</TabsTrigger>
-          <TabsTrigger value="models"><CheckCircle2 className="h-4 w-4 mr-2" />Modèles</TabsTrigger>
-        </TabsList>
+        <div className="flex items-center gap-4 border-b pb-2 mb-4">
+          <TabsList>
+            <TabsTrigger value="import"><Upload className="h-4 w-4 mr-2" />Import</TabsTrigger>
+            <TabsTrigger value="folders"><FolderOpen className="h-4 w-4 mr-2" />Dossiers</TabsTrigger>
+            <TabsTrigger value="tests"><FlaskConical className="h-4 w-4 mr-2" />Tests</TabsTrigger>
+            <TabsTrigger value="models"><CheckCircle2 className="h-4 w-4 mr-2" />Modèles</TabsTrigger>
+          </TabsList>
+          <div className="h-6 w-px bg-gray-300" />
+          <TabsList>
+            <TabsTrigger value="configs" className="text-gray-500"><Settings2 className="h-4 w-4 mr-2" />Configs</TabsTrigger>
+          </TabsList>
+        </div>
         <TabsContent value="import" className="space-y-6">
           <Card className="p-8"><input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFileSelect} /><div className={`border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-colors ${uploading ? 'border-teal-500 bg-teal-50' : 'border-gray-300 hover:border-teal-500 hover:bg-teal-50/50'}`} onClick={() => !uploading && fileInputRef.current?.click()}>{uploading ? <div className="space-y-4"><Loader2 className="h-12 w-12 mx-auto text-teal-600 animate-spin" /><p className="text-lg font-medium">{uploadProgress.step} {uploadProgress.current}/{uploadProgress.total}</p><Progress value={(uploadProgress.current / uploadProgress.total) * 100} className="max-w-xs mx-auto" /></div> : <><Upload className="h-12 w-12 mx-auto text-gray-400 mb-4" /><p className="text-lg font-medium mb-2">Glissez vos photos ici</p><p className="text-sm text-muted-foreground mb-4">ou cliquez pour sélectionner (max 20 photos)</p><div className="flex items-center justify-center gap-4 text-xs text-muted-foreground"><span>🤖 Analyse IA automatique</span><span>📁 Classement intelligent</span></div></>}</div></Card>
           <div className="grid grid-cols-4 gap-4">{[{ icon: FolderOpen, bg: 'bg-gray-100', color: 'text-gray-600', value: regularFolders.length, label: 'Dossiers' }, { icon: AlertTriangle, bg: 'bg-orange-100', color: 'text-orange-600', value: unclassifiedFolder?.photo_count || 0, label: 'Non classées' }, { icon: Check, bg: 'bg-green-100', color: 'text-green-600', value: regularFolders.filter(f => f.status === 'ready').length, label: 'Prêts' }, { icon: CheckCircle2, bg: 'bg-teal-100', color: 'text-teal-600', value: regularFolders.filter(f => f.status === 'promoted').length, label: 'Promus' }].map((s, i) => <Card key={i} className="p-4"><div className="flex items-center gap-3"><div className={`w-10 h-10 ${s.bg} rounded-lg flex items-center justify-center`}><s.icon className={`h-5 w-5 ${s.color}`} /></div><div><p className="text-2xl font-bold">{s.value}</p><p className="text-xs text-muted-foreground">{s.label}</p></div></div></Card>)}</div>
