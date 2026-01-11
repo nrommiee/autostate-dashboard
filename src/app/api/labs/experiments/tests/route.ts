@@ -555,21 +555,23 @@ function buildCombinedPrompt(configs: any): string {
     prompt += 'Les zones suivantes ont été identifiées sur ce modèle de compteur:\n'
     
     for (const zone of configs.modelConfig.extraction_zones) {
-      const zoneType = zone.type || zone.name
       let instruction = ''
       
-      switch (zoneType) {
+      switch (zone.type) {
         case 'index':
           instruction = `- ZONE INDEX: Position [${zone.x}%, ${zone.y}%], Taille [${zone.width}% x ${zone.height}%]. C'est ici que se trouve l'affichage principal de l'index.`
           break
         case 'serial':
           instruction = `- ZONE NUMÉRO DE SÉRIE: Position [${zone.x}%, ${zone.y}%], Taille [${zone.width}% x ${zone.height}%]. Le numéro de série/compteur est visible ici.`
           break
-        case 'unit':
-          instruction = `- ZONE UNITÉ: Position [${zone.x}%, ${zone.y}%], Taille [${zone.width}% x ${zone.height}%]. L'unité de mesure est affichée ici.`
+        case 'ean':
+          instruction = `- ZONE CODE EAN: Position [${zone.x}%, ${zone.y}%], Taille [${zone.width}% x ${zone.height}%]. Le code EAN/code-barres est visible ici.`
+          break
+        case 'meter':
+          instruction = `- ZONE COMPTEUR: Position [${zone.x}%, ${zone.y}%], Taille [${zone.width}% x ${zone.height}%]. Zone globale du compteur.`
           break
         default:
-          instruction = `- ZONE ${zone.name?.toUpperCase() || 'CUSTOM'}: Position [${zone.x}%, ${zone.y}%], Taille [${zone.width}% x ${zone.height}%].`
+          instruction = `- ZONE ${zone.label?.toUpperCase() || 'CUSTOM'}: Position [${zone.x}%, ${zone.y}%], Taille [${zone.width}% x ${zone.height}%].`
       }
       prompt += instruction + '\n'
     }
