@@ -267,17 +267,231 @@ function FolderDetail({ folderId, folders, onBack, onDelete, onDeletePhotos, onU
 }
 
 function TestDetail({ test, onBack, onRefresh }: { test: Test; onBack: () => void; onRefresh: () => void }) {
-  const [loading, setLoading] = useState(false); const [fullTest, setFullTest] = useState<Test | null>(null)
-  useEffect(() => { (async () => { setLoading(true); const res = await fetch(`/api/labs/experiments/tests?id=${test.id}`); setFullTest((await res.json()).test); setLoading(false) })() }, [test.id])
+  const [loading, setLoading] = useState(false)
+  const [fullTest, setFullTest] = useState<Test | null>(null)
+  const [selectedPhoto, setSelectedPhoto] = useState<{ url: string; result: TestResult } | null>(null)
+  const [correctionValues, setCorrectionValues] = useState<Record<string, { reading: string; serial: string }>>({})
+  
+  useEffect(() => {
+    (async () => {
+      setLoading(true)
+      const res = await fetch(`/api/labs/experiments/tests?id=${test.id}`)
+      setFullTest((await res.json()).test)
+      setLoading(false)
+    })()
+  }, [test.id])
+  
   const results = fullTest?.experiment_test_results || []
-  const handleMark = async (rid: string, correct: boolean) => { await fetch('/api/labs/experiments/tests', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ result_id: rid, is_correct: correct }) }); const res = await fetch(`/api/labs/experiments/tests?id=${test.id}`); setFullTest((await res.json()).test); onRefresh() }
+  
+  const handleMark = async (rid: string, correct: boolean, correction?: { reading?: string; serial?: string }) => {
+    await fetch('/api/labs/experiments/tests', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ result_id: rid, is_correct: correct, corrected_result: correction })
+    })
+    const res = await fetch(`/api/labs/experiments/tests?id=${test.id}`)
+    setFullTest((await res.json()).test)
+    onRefresh()
+  }
+  
   const fmt = (v: number | null) => v == null ? '-' : `${(v * 100).toFixed(1)}%`
+  
+  // Calculer les stats de validation
+  const validated = results.filter(r => r.is_correct === true).length
+  const rejected = results.filter(r => r.is_correct === false).length
+  const pending = results.filter(r => r.is_correct === null).length
+  const precision = validated + rejected > 0 ? (validated / (validated + rejected) * 100).toFixed(1) : '-'
+  
   if (loading) return <div className="flex justify-center py-12"><Loader2 className="h-8 w-8 animate-spin" /></div>
+  
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-4"><Button variant="ghost" onClick={onBack}>← Retour</Button><div><h2 className="text-xl font-bold">{test.name}</h2><p className="text-sm text-muted-foreground">{test.total_photos} photos testées</p></div></div>
-      <div className="grid grid-cols-4 gap-4">{[{ l: 'Précision', v: fmt(fullTest?.accuracy_rate ?? test.accuracy_rate), big: true }, { l: 'Confiance', v: fmt(fullTest?.avg_confidence ?? test.avg_confidence) }, { l: 'Temps moy.', v: `${fullTest?.avg_processing_time_ms || test.avg_processing_time_ms || '-'}ms` }, { l: 'Coût', v: `$${(fullTest?.total_cost_usd ?? test.total_cost_usd ?? 0).toFixed(4)}` }].map((s, i) => <Card key={i} className="p-4 text-center"><p className={s.big ? 'text-3xl font-bold' : 'text-xl font-bold'}>{s.v}</p><p className="text-sm text-muted-foreground">{s.l}</p></Card>)}</div>
-      <div><h3 className="font-semibold mb-3">Résultats</h3><div className="space-y-3">{results.map(r => <Card key={r.id} className="p-4"><div className="flex items-start gap-4"><div className="w-20 h-20 bg-gray-100 rounded-lg overflow-hidden flex-shrink-0">{r.experiment_photos && <img src={r.experiment_photos.thumbnail_url || r.experiment_photos.image_url} alt="" className="w-full h-full object-cover" />}</div><div className="flex-1"><div className="flex items-center gap-2 mb-2">{r.is_correct === true && <Check className="h-5 w-5 text-green-600" />}{r.is_correct === false && <XCircle className="h-5 w-5 text-red-600" />}{r.is_correct === null && <AlertTriangle className="h-5 w-5 text-gray-400" />}<span className="font-medium">{(r.actual_result as { reading?: string })?.reading || 'Pas de lecture'}</span><Badge variant="outline">{(r.confidence_score * 100).toFixed(0)}%</Badge></div></div>{r.is_correct === null && <div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => handleMark(r.id, true)}><Check className="h-4 w-4 text-green-600" /></Button><Button size="sm" variant="outline" onClick={() => handleMark(r.id, false)}><XCircle className="h-4 w-4 text-red-600" /></Button></div>}</div></Card>)}</div></div>
+      {/* Header */}
+      <div className="flex items-center gap-4">
+        <Button variant="ghost" onClick={onBack}>← Retour</Button>
+        <div>
+          <h2 className="text-xl font-bold">{test.name}</h2>
+          <p className="text-sm text-muted-foreground">{test.total_photos} photos testées</p>
+        </div>
+      </div>
+      
+      {/* Stats */}
+      <div className="grid grid-cols-4 gap-4">
+        <Card className="p-4 text-center">
+          <p className="text-3xl font-bold">{precision}%</p>
+          <p className="text-sm text-muted-foreground">Précision</p>
+          <p className="text-xs text-gray-400 mt-1">{validated}✓ / {rejected}✗ / {pending}?</p>
+        </Card>
+        <Card className="p-4 text-center">
+          <p className="text-xl font-bold">{fmt(fullTest?.avg_confidence ?? test.avg_confidence)}</p>
+          <p className="text-sm text-muted-foreground">Confiance</p>
+        </Card>
+        <Card className="p-4 text-center">
+          <p className="text-xl font-bold">{fullTest?.avg_processing_time_ms || test.avg_processing_time_ms || '-'}ms</p>
+          <p className="text-sm text-muted-foreground">Temps moy.</p>
+        </Card>
+        <Card className="p-4 text-center">
+          <p className="text-xl font-bold">${(fullTest?.total_cost_usd ?? test.total_cost_usd ?? 0).toFixed(4)}</p>
+          <p className="text-sm text-muted-foreground">Coût</p>
+        </Card>
+      </div>
+      
+      {/* Results */}
+      <div>
+        <h3 className="font-semibold mb-3">Résultats ({results.length})</h3>
+        <div className="space-y-3">
+          {results.map(r => {
+            const actualResult = r.actual_result as { reading?: string; serial_number?: string; type?: string; explanation?: string }
+            const photoUrl = r.experiment_photos?.image_url || r.experiment_photos?.thumbnail_url
+            const correction = correctionValues[r.id] || { reading: actualResult?.reading || '', serial: actualResult?.serial_number || '' }
+            
+            return (
+              <Card key={r.id} className={`p-4 ${r.is_correct === true ? 'border-green-200 bg-green-50/30' : r.is_correct === false ? 'border-red-200 bg-red-50/30' : ''}`}>
+                <div className="flex items-start gap-4">
+                  {/* Photo thumbnail - cliquable */}
+                  <div 
+                    className="w-24 h-24 bg-gray-100 rounded-lg overflow-hidden flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-teal-500 transition-all"
+                    onClick={() => photoUrl && setSelectedPhoto({ url: photoUrl, result: r })}
+                  >
+                    {photoUrl ? (
+                      <img src={photoUrl} alt="" className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-gray-400">
+                        <Image className="h-8 w-8" />
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Infos */}
+                  <div className="flex-1 min-w-0">
+                    {/* Index */}
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-sm text-muted-foreground">Index:</span>
+                      <span className="font-mono font-bold text-lg">{actualResult?.reading || '-'}</span>
+                      <Badge variant="outline">{(r.confidence_score * 100).toFixed(0)}%</Badge>
+                    </div>
+                    
+                    {/* N° série */}
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-sm text-muted-foreground">N° série:</span>
+                      <span className="font-mono text-sm">{actualResult?.serial_number || 'Non détecté'}</span>
+                    </div>
+                    
+                    {/* Type */}
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-muted-foreground">Type:</span>
+                      <span className="text-sm capitalize">{actualResult?.type || '-'}</span>
+                    </div>
+                    
+                    {/* Correction inputs (si rejeté ou en attente) */}
+                    {r.is_correct !== true && (
+                      <div className="mt-3 pt-3 border-t grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-xs text-muted-foreground">Corriger index:</label>
+                          <Input
+                            size={1}
+                            className="h-8 text-sm font-mono"
+                            placeholder="00000,000"
+                            value={correction.reading}
+                            onChange={(e) => setCorrectionValues(prev => ({
+                              ...prev,
+                              [r.id]: { ...correction, reading: e.target.value }
+                            }))}
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs text-muted-foreground">Corriger n° série:</label>
+                          <Input
+                            size={1}
+                            className="h-8 text-sm font-mono"
+                            placeholder="ABC123"
+                            value={correction.serial}
+                            onChange={(e) => setCorrectionValues(prev => ({
+                              ...prev,
+                              [r.id]: { ...correction, serial: e.target.value }
+                            }))}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Actions */}
+                  <div className="flex flex-col gap-2">
+                    {r.is_correct === true ? (
+                      <Badge className="bg-green-100 text-green-700">✓ Validé</Badge>
+                    ) : r.is_correct === false ? (
+                      <Badge className="bg-red-100 text-red-700">✗ Rejeté</Badge>
+                    ) : (
+                      <>
+                        <Button 
+                          size="sm" 
+                          variant="outline" 
+                          className="border-green-300 hover:bg-green-50"
+                          onClick={() => handleMark(r.id, true)}
+                        >
+                          <Check className="h-4 w-4 text-green-600 mr-1" />
+                          Valider
+                        </Button>
+                        <Button 
+                          size="sm" 
+                          variant="outline"
+                          className="border-red-300 hover:bg-red-50"
+                          onClick={() => handleMark(r.id, false, {
+                            reading: correction.reading,
+                            serial: correction.serial
+                          })}
+                        >
+                          <XCircle className="h-4 w-4 text-red-600 mr-1" />
+                          Rejeter
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </Card>
+            )
+          })}
+        </div>
+      </div>
+      
+      {/* Modal agrandissement photo */}
+      <Dialog open={!!selectedPhoto} onOpenChange={() => setSelectedPhoto(null)}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>Photo du compteur</DialogTitle>
+          </DialogHeader>
+          {selectedPhoto && (
+            <div className="space-y-4">
+              <div className="bg-black rounded-lg overflow-hidden">
+                <img 
+                  src={selectedPhoto.url} 
+                  alt="Compteur" 
+                  className="w-full h-auto max-h-[70vh] object-contain"
+                />
+              </div>
+              <div className="grid grid-cols-3 gap-4 text-sm">
+                <div>
+                  <p className="text-muted-foreground">Index lu:</p>
+                  <p className="font-mono font-bold text-lg">
+                    {(selectedPhoto.result.actual_result as { reading?: string })?.reading || '-'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">N° série:</p>
+                  <p className="font-mono">
+                    {(selectedPhoto.result.actual_result as { serial_number?: string })?.serial_number || 'Non détecté'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Confiance:</p>
+                  <p className="font-bold">{(selectedPhoto.result.confidence_score * 100).toFixed(0)}%</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
