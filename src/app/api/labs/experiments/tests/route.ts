@@ -848,12 +848,14 @@ export async function PUT(request: NextRequest) {
     
     if (result?.test_id) {
       // Recalculer manuellement les stats
-      const { data: allResults } = await supabase
+      const { data: allResults, error: resultsError } = await supabase
         .from('experiment_test_results')
         .select('is_correct, confidence_score, processing_time_ms, api_cost_usd')
         .eq('test_id', result.test_id)
       
-      if (allResults) {
+      console.log('Recalculating stats for test:', result.test_id, 'Results:', allResults?.length, 'Error:', resultsError)
+      
+      if (allResults && allResults.length > 0) {
         const validated = allResults.filter(r => r.is_correct === true).length
         const rejected = allResults.filter(r => r.is_correct === false).length
         const total = validated + rejected
@@ -866,7 +868,9 @@ export async function PUT(request: NextRequest) {
           : null
         const totalCost = allResults.reduce((sum, r) => sum + (r.api_cost_usd || 0), 0)
         
-        await supabase
+        console.log('New stats:', { validated, rejected, accuracy, avgConfidence })
+        
+        const { error: updateError } = await supabase
           .from('experiment_tests')
           .update({
             successful_count: validated,
@@ -878,6 +882,10 @@ export async function PUT(request: NextRequest) {
             updated_at: new Date().toISOString()
           })
           .eq('id', result.test_id)
+        
+        if (updateError) {
+          console.error('Failed to update test stats:', updateError)
+        }
       }
     }
     
