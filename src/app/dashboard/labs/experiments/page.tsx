@@ -131,7 +131,27 @@ export default function ExperimentsPage() {
   const handleCreateFolderAndReturn = async (name: string, type: string): Promise<string | null> => { const res = await fetch('/api/labs/experiments/folders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, detected_type: type }) }); const data = await res.json(); return data.folder?.id || null }
   const handleUpdateFolder = async (id: string, updates: { name?: string; detected_type?: string }) => { await fetch('/api/labs/experiments/folders', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, ...updates }) }); await loadData() }
   const handleRunTest = async (folderId: string) => { setTestingFolderId(folderId) }
-  const handlePromote = async (folderId: string) => { const res = await fetch('/api/labs/experiments/promote', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ folder_id: folderId }) }); const data = await res.json(); if (data.meter_model) { await loadData(); alert(`Modèle ${data.action === 'created' ? 'créé' : 'mis à jour'}: ${data.meter_model.name}`) } }
+  const handlePromote = async (folderId: string) => { 
+    try {
+      const res = await fetch('/api/labs/experiments/promote', { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ folder_id: folderId }) 
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        alert(`Erreur: ${data.error || 'Impossible de promouvoir'}`)
+        return
+      }
+      if (data.meter_model) { 
+        await loadData()
+        alert(`✅ Modèle ${data.action === 'created' ? 'créé' : 'mis à jour'}: ${data.meter_model.name}`) 
+      }
+    } catch (error) {
+      console.error('Promote error:', error)
+      alert('Erreur lors de la promotion')
+    }
+  }
 
   const formatPercent = (v: number | null) => v == null ? '-' : `${(v * 100).toFixed(1)}%`
   const selectedFolder = folders.find(f => f.id === selectedFolderId) || null
@@ -259,10 +279,130 @@ function FolderDetail({ folderId, folders, onBack, onDelete, onDeletePhotos, onU
       <div className="flex items-center justify-between"><div className="flex items-center gap-4">{editing && !isUnclassified ? <div className="flex items-center gap-2"><Select value={editType} onValueChange={setEditType}><SelectTrigger className="w-28"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="gas">🔥 Gaz</SelectItem><SelectItem value="water">💧 Eau</SelectItem><SelectItem value="electricity">⚡ Élec</SelectItem><SelectItem value="unknown">❓</SelectItem></SelectContent></Select><Input value={editName} onChange={(e) => setEditName(e.target.value)} className="w-64" /><Button size="sm" onClick={handleSave}><Check className="h-4 w-4" /></Button><Button size="sm" variant="outline" onClick={() => setEditing(false)}><XCircle className="h-4 w-4" /></Button></div> : <div className="flex items-center gap-3">{isUnclassified ? <AlertTriangle className="h-5 w-5 text-orange-500" /> : TYPE_ICONS[folder.detected_type]}<div><h2 className="text-xl font-bold">{folder.name}</h2><p className="text-sm text-muted-foreground">{photos.length} photo(s)</p></div>{!isUnclassified && <Button variant="ghost" size="sm" onClick={() => setEditing(true)}><Pencil className="h-4 w-4" /></Button>}<Badge className={isUnclassified ? 'bg-orange-100 text-orange-700' : STATUS_COLORS[folder.status]}>{isUnclassified ? 'Pot commun' : STATUS_LABELS[folder.status]}</Badge>{folder.photos_since_last_test !== undefined && folder.photos_since_last_test > 0 && !isUnclassified && ['validated', 'promoted'].includes(folder.status) && <Badge variant="outline" className="bg-orange-50 text-orange-600 border-orange-200"><ImagePlus className="h-3 w-3 mr-1" />+{folder.photos_since_last_test}</Badge>}</div>}</div><div className="flex items-center gap-2">{!isUnclassified && folder.status === 'ready' && <Button onClick={() => onRunTest(folder.id)}><Play className="h-4 w-4 mr-2" />Tester</Button>}{!isUnclassified && folder.status !== 'ready' && folder.photos_since_last_test !== undefined && folder.photos_since_last_test > 0 && ['validated', 'promoted'].includes(folder.status) && <Button variant="outline" className="border-orange-300 text-orange-600 hover:bg-orange-50" onClick={() => onRunTest(folder.id)}><Play className="h-4 w-4 mr-2" />Relancer</Button>}{!isUnclassified && folder.status === 'validated' && <Button onClick={() => onPromote(folder.id)} className="bg-teal-600 hover:bg-teal-700"><ArrowRight className="h-4 w-4 mr-2" />Promouvoir</Button>}{!isUnclassified && <DropdownMenu><DropdownMenuTrigger asChild><Button variant="outline" size="icon"><MoreVertical className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent><DropdownMenuItem className="text-red-600" onClick={() => onDelete(folder.id, folder.name)}><Trash2 className="h-4 w-4 mr-2" />Supprimer</DropdownMenuItem></DropdownMenuContent></DropdownMenu>}</div></div>
       {!isUnclassified && folder.status === 'draft' && photos.length < 5 && <Card className="p-4 bg-orange-50 border-orange-200"><div className="flex items-center gap-4"><AlertTriangle className="h-5 w-5 text-orange-600" /><div className="flex-1"><p className="font-medium text-orange-800">{5 - photos.length} photo(s) manquante(s)</p><Progress value={(photos.length / 5) * 100} className="h-2 mt-2" /></div></div></Card>}
       {isUnclassified && <Card className="p-4 bg-orange-50 border-orange-200"><div className="flex items-center gap-4"><AlertTriangle className="h-5 w-5 text-orange-600" /><div><p className="font-medium text-orange-800">Photos à classer</p><p className="text-sm text-orange-600">Déplacez ces photos vers les dossiers appropriés.</p></div></div></Card>}
+      
+      {/* Preview des 3 niveaux de prompts pour les dossiers validés/promus */}
+      {!isUnclassified && ['validated', 'promoted', 'ready'].includes(folder.status) && <PromptPreview folderId={folderId} meterType={folder.detected_type} />}
+      
       <div className="flex items-center justify-between"><h3 className="font-semibold">Photos ({photos.length})</h3><div className="flex items-center gap-2">{selectionMode ? <><Button variant="outline" size="sm" onClick={selectAll} disabled={deleting}>{selectedPhotos.size === photos.length ? 'Désélectionner tout' : 'Tout sélectionner'}</Button><span className="text-sm text-muted-foreground">{selectedPhotos.size} sélectionnée(s)</span><Button variant="destructive" size="sm" onClick={deleteSelected} disabled={selectedPhotos.size === 0 || deleting}>{deleting ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Trash2 className="h-4 w-4 mr-1" />}{deleting ? 'Suppression...' : 'Supprimer'}</Button><Button variant="outline" size="sm" onClick={cancelSelection} disabled={deleting}>Annuler</Button></> : photos.length > 0 && <Button variant="outline" size="sm" onClick={() => setSelectionMode(true)}>Sélectionner</Button>}</div></div>
       {!isUnclassified && hasNewPhotos && <Card className="p-4 border-orange-200 bg-orange-50/50"><div className="flex items-center justify-between"><div className="flex items-center gap-3"><ImagePlus className="h-5 w-5 text-orange-600" /><div><p className="font-medium text-orange-800">{newPhotosCount} nouvelle(s) photo(s) ajoutée(s) depuis le dernier test</p><p className="text-sm text-orange-600">Relancez un test pour valider ces nouvelles photos</p></div></div><Button variant="outline" className="border-orange-300 text-orange-600 hover:bg-orange-100" onClick={() => onRunTest(folder.id)}><Play className="h-4 w-4 mr-2" />Relancer le test</Button></div></Card>}
       {photos.length === 0 ? <Card className="p-8 text-center"><Image className="h-12 w-12 mx-auto mb-4 text-gray-300" /><p className="text-muted-foreground">Aucune photo</p></Card> : !isUnclassified && referencePhoto ? <div className="grid grid-cols-1 lg:grid-cols-3 gap-6"><div className="lg:col-span-1"><p className="text-sm font-medium mb-2 flex items-center gap-2"><Star className="h-4 w-4 text-yellow-500" />Photo de référence</p><div className="relative group"><div className="aspect-square bg-gray-100 rounded-xl overflow-hidden border-2 border-yellow-400"><img src={referencePhoto.image_url} alt="" className="w-full h-full object-cover" /></div>{selectionMode && <div className="absolute top-2 left-2"><Checkbox checked={selectedPhotos.has(referencePhoto.id)} onCheckedChange={() => toggleSelect(referencePhoto.id)} className="h-6 w-6 bg-white" /></div>}{referencePhoto.ai_confidence !== null && <div className="absolute bottom-2 right-2 bg-black/60 text-white text-sm px-2 py-1 rounded">{referencePhoto.ai_confidence}%</div>}</div></div><div className="lg:col-span-2"><p className="text-sm font-medium mb-2">Autres photos ({otherPhotos.length})</p><div className="grid grid-cols-3 md:grid-cols-4 gap-3">{otherPhotos.map(photo => <div key={photo.id} className="relative group"><div className="aspect-square bg-gray-100 rounded-lg overflow-hidden"><img src={photo.thumbnail_url || photo.image_url} alt="" className="w-full h-full object-cover" /></div>{selectionMode ? <div className="absolute top-1 left-1"><Checkbox checked={selectedPhotos.has(photo.id)} onCheckedChange={() => toggleSelect(photo.id)} className="h-5 w-5 bg-white" /></div> : <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center gap-1"><Button size="sm" variant="secondary" onClick={() => onSetReferencePhoto(folder.id, photo.id)} title="Définir comme référence"><Star className="h-4 w-4" /></Button><DropdownMenu><DropdownMenuTrigger asChild><Button size="sm" variant="secondary"><MoveRight className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent>{folders.filter(f => f.id !== folder.id).map(f => <DropdownMenuItem key={f.id} onClick={() => handleMovePhoto(photo.id, f.id)}>{TYPE_ICONS[f.detected_type]}<span className="ml-2">{f.name}</span></DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu><Button size="sm" variant="destructive" onClick={() => onDeletePhotos([photo.id])}><Trash2 className="h-4 w-4" /></Button></div>}{photo.ai_confidence !== null && <div className="absolute bottom-1 right-1 bg-black/60 text-white text-xs px-1 rounded">{photo.ai_confidence}%</div>}</div>)}</div></div></div> : <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">{photos.map(photo => <div key={photo.id} className="relative group"><div className="aspect-square bg-gray-100 rounded-lg overflow-hidden"><img src={photo.thumbnail_url || photo.image_url} alt="" className="w-full h-full object-cover" /></div>{selectionMode ? <div className="absolute top-1 left-1"><Checkbox checked={selectedPhotos.has(photo.id)} onCheckedChange={() => toggleSelect(photo.id)} className="h-5 w-5 bg-white" /></div> : <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center gap-1"><DropdownMenu><DropdownMenuTrigger asChild><Button size="sm" variant="secondary"><MoveRight className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent>{folders.filter(f => f.id !== folder.id).map(f => <DropdownMenuItem key={f.id} onClick={() => handleMovePhoto(photo.id, f.id)}>{TYPE_ICONS[f.detected_type]}<span className="ml-2">{f.name}</span></DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu><Button size="sm" variant="destructive" onClick={() => onDeletePhotos([photo.id])}><Trash2 className="h-4 w-4" /></Button></div>}{photo.ai_confidence !== null && <div className="absolute bottom-1 right-1 bg-black/60 text-white text-xs px-1 rounded">{photo.ai_confidence}%</div>}</div>)}</div>}
     </div>
+  )
+}
+
+// Composant pour afficher la preview des 3 niveaux de prompts
+function PromptPreview({ folderId, meterType }: { folderId: string; meterType: string }) {
+  const [expanded, setExpanded] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [configs, setConfigs] = useState<{ universal: any; type: any; model: any } | null>(null)
+  
+  useEffect(() => {
+    if (expanded && !configs) {
+      setLoading(true)
+      fetch(`/api/labs/experiments/configs?folder_id=${folderId}`)
+        .then(res => res.json())
+        .then(data => {
+          setConfigs({
+            universal: data.universal,
+            type: data.type,
+            model: data.model
+          })
+        })
+        .finally(() => setLoading(false))
+    }
+  }, [expanded, folderId, configs])
+  
+  return (
+    <Card className="p-4">
+      <button 
+        onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-center justify-between text-left"
+      >
+        <div className="flex items-center gap-2">
+          <Settings2 className="h-4 w-4 text-teal-600" />
+          <span className="font-medium">Configuration des prompts</span>
+          <div className="flex gap-1 ml-2">
+            <Badge variant="outline" className="text-xs">Niveau 1</Badge>
+            <Badge variant="outline" className="text-xs">Niveau 2</Badge>
+            <Badge variant="outline" className="text-xs">Niveau 3</Badge>
+          </div>
+        </div>
+        <ChevronRight className={`h-4 w-4 transition-transform ${expanded ? 'rotate-90' : ''}`} />
+      </button>
+      
+      {expanded && (
+        <div className="mt-4 space-y-3">
+          {loading ? (
+            <div className="flex justify-center py-4">
+              <Loader2 className="h-5 w-5 animate-spin" />
+            </div>
+          ) : (
+            <>
+              {/* Niveau 1 - Universel */}
+              <div className="border rounded-lg p-3">
+                <div className="flex items-center gap-2 mb-2">
+                  <Badge variant="outline">Niveau 1 - Universel</Badge>
+                  {configs?.universal?.base_prompt && <CheckCircle2 className="h-4 w-4 text-blue-600" />}
+                </div>
+                <pre className="text-xs bg-gray-50 p-2 rounded max-h-24 overflow-y-auto whitespace-pre-wrap">
+                  {configs?.universal?.base_prompt || 'Non configuré'}
+                </pre>
+              </div>
+              
+              {/* Niveau 2 - Type */}
+              <div className="border rounded-lg p-3">
+                <div className="flex items-center gap-2 mb-2">
+                  <Badge variant="outline">Niveau 2 - Type</Badge>
+                  <span className="text-sm capitalize">{meterType}</span>
+                  {configs?.type?.additional_prompt && <CheckCircle2 className="h-4 w-4 text-green-600" />}
+                </div>
+                <pre className="text-xs bg-gray-50 p-2 rounded max-h-24 overflow-y-auto whitespace-pre-wrap">
+                  {configs?.type?.additional_prompt || 'Non configuré'}
+                </pre>
+              </div>
+              
+              {/* Niveau 3 - Modèle */}
+              <div className="border rounded-lg p-3 border-teal-200 bg-teal-50/30">
+                <div className="flex items-center gap-2 mb-2">
+                  <Badge className="bg-teal-600">Niveau 3 - Modèle</Badge>
+                  {(configs?.model?.specific_prompt || configs?.model?.extraction_zones?.length > 0) && 
+                    <CheckCircle2 className="h-4 w-4 text-teal-600" />}
+                </div>
+                {configs?.model ? (
+                  <div className="space-y-2">
+                    {configs.model.specific_prompt && (
+                      <pre className="text-xs bg-white p-2 rounded max-h-20 overflow-y-auto whitespace-pre-wrap border">
+                        {configs.model.specific_prompt}
+                      </pre>
+                    )}
+                    {configs.model.extraction_zones?.length > 0 && (
+                      <div className="text-xs">
+                        <span className="font-medium">Zones ROI:</span>
+                        {configs.model.extraction_zones.map((z: any, i: number) => (
+                          <span key={i} className="ml-2 px-1 py-0.5 bg-gray-100 rounded">
+                            {z.type || z.label}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {configs.model.visual_characteristics && (
+                      <div className="text-xs">
+                        <span className="font-medium">Format:</span>
+                        <span className="ml-2">
+                          {configs.model.visual_characteristics.num_digits || 5} chiffres + {configs.model.visual_characteristics.num_decimals || 3} décimales
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Non configuré - Allez dans Tester pour configurer</p>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </Card>
   )
 }
 
