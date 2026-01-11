@@ -254,17 +254,47 @@ function UnclassifiedSortingCenter({ folder, folders, onBack, onDeletePhotos, on
 
 function FolderDetail({ folderId, folders, onBack, onDelete, onDeletePhotos, onUpdateFolder, onMovePhotos, onSetReferencePhoto, onRunTest, onPromote, onRefresh }: { folderId: string; folders: Folder[]; onBack: () => void; onDelete: (id: string, name: string) => void; onDeletePhotos: (ids: string[]) => void; onUpdateFolder: (id: string, u: { name?: string; detected_type?: string }) => void; onMovePhotos: (ids: string[], fid: string) => void; onSetReferencePhoto: (fid: string, pid: string) => void; onRunTest: (id: string) => void; onPromote: (id: string) => void; onRefresh: () => void }) {
   const [loading, setLoading] = useState(true); const [folder, setFolder] = useState<Folder | null>(null); const [photos, setPhotos] = useState<Photo[]>([]); const [editing, setEditing] = useState(false); const [editName, setEditName] = useState(''); const [editType, setEditType] = useState(''); const [selectionMode, setSelectionMode] = useState(false); const [selectedPhotos, setSelectedPhotos] = useState<Set<string>>(new Set()); const [deleting, setDeleting] = useState(false); const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [testedPhotoIds, setTestedPhotoIds] = useState<Set<string>>(new Set())
+  const [photoFilter, setPhotoFilter] = useState<'all' | 'tested' | 'new'>('all')
   
   const loadFolderData = async () => {
     setLoading(true)
-    const res = await fetch(`/api/labs/experiments/folders?id=${folderId}`)
-    const data = await res.json()
-    if (data.folder) {
-      setFolder(data.folder)
-      setPhotos(data.folder.experiment_photos || [])
-      setEditName(data.folder.name)
-      setEditType(data.folder.detected_type)
+    const [folderRes, testsRes] = await Promise.all([
+      fetch(`/api/labs/experiments/folders?id=${folderId}`),
+      fetch(`/api/labs/experiments/tests?folder_id=${folderId}`)
+    ])
+    const [folderData, testsData] = await Promise.all([folderRes.json(), testsRes.json()])
+    
+    if (folderData.folder) {
+      setFolder(folderData.folder)
+      setPhotos(folderData.folder.experiment_photos || [])
+      setEditName(folderData.folder.name)
+      setEditType(folderData.folder.detected_type)
     }
+    
+    // Récupérer les IDs des photos testées
+    const testedIds = new Set<string>()
+    if (testsData.tests) {
+      for (const test of testsData.tests) {
+        if (test.experiment_test_results) {
+          for (const result of test.experiment_test_results) {
+            if (result.photo_id) testedIds.add(result.photo_id)
+          }
+        }
+      }
+    }
+    // Si pas de résultats dans les tests, charger le dernier test avec résultats
+    if (testedIds.size === 0 && testsData.tests?.length > 0) {
+      const lastTest = testsData.tests[0]
+      const testRes = await fetch(`/api/labs/experiments/tests?id=${lastTest.id}`)
+      const testData = await testRes.json()
+      if (testData.test?.experiment_test_results) {
+        for (const result of testData.test.experiment_test_results) {
+          if (result.photo_id) testedIds.add(result.photo_id)
+        }
+      }
+    }
+    setTestedPhotoIds(testedIds)
     setLoading(false)
   }
   
@@ -298,7 +328,29 @@ function FolderDetail({ folderId, folders, onBack, onDelete, onDeletePhotos, onU
   }
   if (loading) return <div className="flex justify-center py-12"><Loader2 className="h-8 w-8 animate-spin" /></div>
   if (!folder) return null
-  const isUnclassified = folder.is_unclassified; const newPhotosCount = folder.photos_since_last_test || 0; const hasNewPhotos = newPhotosCount > 0 && ['validated', 'promoted'].includes(folder.status); const referencePhoto = photos.find(p => p.id === folder.reference_photo_id) || photos[0]; const otherPhotos = referencePhoto ? photos.filter(p => p.id !== referencePhoto.id) : photos
+  const isUnclassified = folder.is_unclassified; const newPhotosCount = folder.photos_since_last_test || 0; const hasNewPhotos = newPhotosCount > 0 && ['validated', 'promoted'].includes(folder.status)
+  
+  // Filtrer les photos selon le filtre sélectionné
+  const filteredPhotos = photos.filter(p => {
+    if (photoFilter === 'tested') return testedPhotoIds.has(p.id)
+    if (photoFilter === 'new') return !testedPhotoIds.has(p.id)
+    return true
+  })
+  
+  const referencePhoto = filteredPhotos.find(p => p.id === folder.reference_photo_id) || filteredPhotos[0]
+  const otherPhotos = referencePhoto ? filteredPhotos.filter(p => p.id !== referencePhoto.id) : filteredPhotos
+  
+  // Helper pour afficher le badge sur une photo
+  const PhotoBadge = ({ photoId }: { photoId: string }) => {
+    if (testedPhotoIds.size === 0) return null
+    const isTested = testedPhotoIds.has(photoId)
+    return (
+      <div className={`absolute top-1 left-1 px-1.5 py-0.5 rounded text-xs font-medium ${isTested ? 'bg-green-500 text-white' : 'bg-orange-500 text-white'}`}>
+        {isTested ? <CheckCircle2 className="h-3 w-3" /> : <ImagePlus className="h-3 w-3" />}
+      </div>
+    )
+  }
+  
   return (
     <div className="space-y-6">
       {/* Breadcrumb */}
@@ -318,9 +370,21 @@ function FolderDetail({ folderId, folders, onBack, onDelete, onDeletePhotos, onU
       {/* Preview des 3 niveaux de prompts pour les dossiers validés/promus */}
       {!isUnclassified && ['validated', 'promoted', 'ready'].includes(folder.status) && <PromptPreview folderId={folderId} meterType={folder.detected_type} />}
       
-      <div className="flex items-center justify-between"><h3 className="font-semibold">Photos ({photos.length})</h3><div className="flex items-center gap-2">{selectionMode ? <><Button variant="outline" size="sm" onClick={selectAll} disabled={deleting}>{selectedPhotos.size === photos.length ? 'Désélectionner tout' : 'Tout sélectionner'}</Button><span className="text-sm text-muted-foreground">{selectedPhotos.size} sélectionnée(s)</span><Button variant="destructive" size="sm" onClick={() => setShowDeleteConfirm(true)} disabled={selectedPhotos.size === 0 || deleting}>{deleting ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Trash2 className="h-4 w-4 mr-1" />}{deleting ? 'Suppression...' : 'Supprimer'}</Button><Button variant="outline" size="sm" onClick={cancelSelection} disabled={deleting}>Annuler</Button></> : photos.length > 0 && <Button variant="outline" size="sm" onClick={() => setSelectionMode(true)}>Sélectionner</Button>}</div></div>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <h3 className="font-semibold">Photos ({photos.length})</h3>
+          {testedPhotoIds.size > 0 && (
+            <div className="flex gap-1">
+              <Button variant={photoFilter === 'all' ? 'default' : 'outline'} size="sm" onClick={() => setPhotoFilter('all')}>Toutes</Button>
+              <Button variant={photoFilter === 'tested' ? 'default' : 'outline'} size="sm" onClick={() => setPhotoFilter('tested')} className="gap-1"><CheckCircle2 className="h-3 w-3" />Testées ({testedPhotoIds.size})</Button>
+              <Button variant={photoFilter === 'new' ? 'default' : 'outline'} size="sm" onClick={() => setPhotoFilter('new')} className="gap-1"><ImagePlus className="h-3 w-3" />Nouvelles ({photos.length - testedPhotoIds.size})</Button>
+            </div>
+          )}
+        </div>
+        <div className="flex items-center gap-2">{selectionMode ? <><Button variant="outline" size="sm" onClick={selectAll} disabled={deleting}>{selectedPhotos.size === filteredPhotos.length ? 'Désélectionner tout' : 'Tout sélectionner'}</Button><span className="text-sm text-muted-foreground">{selectedPhotos.size} sélectionnée(s)</span><Button variant="destructive" size="sm" onClick={() => setShowDeleteConfirm(true)} disabled={selectedPhotos.size === 0 || deleting}>{deleting ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Trash2 className="h-4 w-4 mr-1" />}{deleting ? 'Suppression...' : 'Supprimer'}</Button><Button variant="outline" size="sm" onClick={cancelSelection} disabled={deleting}>Annuler</Button></> : photos.length > 0 && <Button variant="outline" size="sm" onClick={() => setSelectionMode(true)}>Sélectionner</Button>}</div>
+      </div>
       {!isUnclassified && hasNewPhotos && <Card className="p-4 border-orange-200 bg-orange-50/50"><div className="flex items-center justify-between"><div className="flex items-center gap-3"><ImagePlus className="h-5 w-5 text-orange-600" /><div><p className="font-medium text-orange-800">{newPhotosCount} nouvelle(s) photo(s) ajoutée(s) depuis le dernier test</p><p className="text-sm text-orange-600">Relancez un test pour valider ces nouvelles photos</p></div></div><Button variant="outline" className="border-orange-300 text-orange-600 hover:bg-orange-100" onClick={() => onRunTest(folder.id)}><Play className="h-4 w-4 mr-2" />Relancer le test</Button></div></Card>}
-      {photos.length === 0 ? <Card className="p-8 text-center"><Image className="h-12 w-12 mx-auto mb-4 text-gray-300" /><p className="text-muted-foreground">Aucune photo</p></Card> : !isUnclassified && referencePhoto ? <div className="grid grid-cols-1 lg:grid-cols-3 gap-6"><div className="lg:col-span-1"><p className="text-sm font-medium mb-2 flex items-center gap-2"><Star className="h-4 w-4 text-yellow-500" />Photo de référence</p><div className="relative group"><div className="aspect-square bg-gray-100 rounded-xl overflow-hidden border-2 border-yellow-400"><img src={referencePhoto.image_url} alt="" className="w-full h-full object-cover" /></div>{selectionMode && <div className="absolute top-2 left-2"><Checkbox checked={selectedPhotos.has(referencePhoto.id)} onCheckedChange={() => toggleSelect(referencePhoto.id)} className="h-6 w-6 bg-white" /></div>}{referencePhoto.ai_confidence !== null && <div className="absolute bottom-2 right-2 bg-black/60 text-white text-sm px-2 py-1 rounded">{referencePhoto.ai_confidence}%</div>}</div></div><div className="lg:col-span-2"><p className="text-sm font-medium mb-2">Autres photos ({otherPhotos.length})</p><div className="grid grid-cols-3 md:grid-cols-4 gap-3">{otherPhotos.map(photo => <div key={photo.id} className="relative group"><div className="aspect-square bg-gray-100 rounded-lg overflow-hidden"><img src={photo.thumbnail_url || photo.image_url} alt="" className="w-full h-full object-cover" /></div>{selectionMode ? <div className="absolute top-1 left-1"><Checkbox checked={selectedPhotos.has(photo.id)} onCheckedChange={() => toggleSelect(photo.id)} className="h-5 w-5 bg-white" /></div> : <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center gap-1"><Button size="sm" variant="secondary" onClick={() => handleSetReference(photo.id)} title="Définir comme référence"><Star className="h-4 w-4" /></Button><DropdownMenu><DropdownMenuTrigger asChild><Button size="sm" variant="secondary"><MoveRight className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent>{folders.filter(f => f.id !== folder.id).map(f => <DropdownMenuItem key={f.id} onClick={() => handleMovePhoto(photo.id, f.id)}>{TYPE_ICONS[f.detected_type]}<span className="ml-2">{f.name}</span></DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu><Button size="sm" variant="destructive" onClick={() => onDeletePhotos([photo.id])}><Trash2 className="h-4 w-4" /></Button></div>}{photo.ai_confidence !== null && <div className="absolute bottom-1 right-1 bg-black/60 text-white text-xs px-1 rounded">{photo.ai_confidence}%</div>}</div>)}</div></div></div> : <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">{photos.map(photo => <div key={photo.id} className="relative group"><div className="aspect-square bg-gray-100 rounded-lg overflow-hidden"><img src={photo.thumbnail_url || photo.image_url} alt="" className="w-full h-full object-cover" /></div>{selectionMode ? <div className="absolute top-1 left-1"><Checkbox checked={selectedPhotos.has(photo.id)} onCheckedChange={() => toggleSelect(photo.id)} className="h-5 w-5 bg-white" /></div> : <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center gap-1"><DropdownMenu><DropdownMenuTrigger asChild><Button size="sm" variant="secondary"><MoveRight className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent>{folders.filter(f => f.id !== folder.id).map(f => <DropdownMenuItem key={f.id} onClick={() => handleMovePhoto(photo.id, f.id)}>{TYPE_ICONS[f.detected_type]}<span className="ml-2">{f.name}</span></DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu><Button size="sm" variant="destructive" onClick={() => onDeletePhotos([photo.id])}><Trash2 className="h-4 w-4" /></Button></div>}{photo.ai_confidence !== null && <div className="absolute bottom-1 right-1 bg-black/60 text-white text-xs px-1 rounded">{photo.ai_confidence}%</div>}</div>)}</div>}
+      {filteredPhotos.length === 0 ? <Card className="p-8 text-center"><Image className="h-12 w-12 mx-auto mb-4 text-gray-300" /><p className="text-muted-foreground">{photoFilter !== 'all' ? 'Aucune photo dans ce filtre' : 'Aucune photo'}</p></Card> : !isUnclassified && referencePhoto ? <div className="grid grid-cols-1 lg:grid-cols-3 gap-6"><div className="lg:col-span-1"><p className="text-sm font-medium mb-2 flex items-center gap-2"><Star className="h-4 w-4 text-yellow-500" />Photo de référence</p><div className="relative group"><div className="aspect-square bg-gray-100 rounded-xl overflow-hidden border-2 border-yellow-400"><img src={referencePhoto.image_url} alt="" className="w-full h-full object-cover" /></div><PhotoBadge photoId={referencePhoto.id} />{selectionMode && <div className="absolute top-2 left-8"><Checkbox checked={selectedPhotos.has(referencePhoto.id)} onCheckedChange={() => toggleSelect(referencePhoto.id)} className="h-6 w-6 bg-white" /></div>}{referencePhoto.ai_confidence !== null && <div className="absolute bottom-2 right-2 bg-black/60 text-white text-sm px-2 py-1 rounded">{referencePhoto.ai_confidence}%</div>}</div></div><div className="lg:col-span-2"><p className="text-sm font-medium mb-2">Autres photos ({otherPhotos.length})</p><div className="grid grid-cols-3 md:grid-cols-4 gap-3">{otherPhotos.map(photo => <div key={photo.id} className="relative group"><div className="aspect-square bg-gray-100 rounded-lg overflow-hidden"><img src={photo.thumbnail_url || photo.image_url} alt="" className="w-full h-full object-cover" /></div><PhotoBadge photoId={photo.id} />{selectionMode ? <div className="absolute top-1 left-8"><Checkbox checked={selectedPhotos.has(photo.id)} onCheckedChange={() => toggleSelect(photo.id)} className="h-5 w-5 bg-white" /></div> : <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center gap-1"><Button size="sm" variant="secondary" onClick={() => handleSetReference(photo.id)} title="Définir comme référence"><Star className="h-4 w-4" /></Button><DropdownMenu><DropdownMenuTrigger asChild><Button size="sm" variant="secondary"><MoveRight className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent>{folders.filter(f => f.id !== folder.id).map(f => <DropdownMenuItem key={f.id} onClick={() => handleMovePhoto(photo.id, f.id)}>{TYPE_ICONS[f.detected_type]}<span className="ml-2">{f.name}</span></DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu><Button size="sm" variant="destructive" onClick={() => onDeletePhotos([photo.id])}><Trash2 className="h-4 w-4" /></Button></div>}{photo.ai_confidence !== null && <div className="absolute bottom-1 right-1 bg-black/60 text-white text-xs px-1 rounded">{photo.ai_confidence}%</div>}</div>)}</div></div></div> : <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">{filteredPhotos.map(photo => <div key={photo.id} className="relative group"><div className="aspect-square bg-gray-100 rounded-lg overflow-hidden"><img src={photo.thumbnail_url || photo.image_url} alt="" className="w-full h-full object-cover" /></div><PhotoBadge photoId={photo.id} />{selectionMode ? <div className="absolute top-1 left-8"><Checkbox checked={selectedPhotos.has(photo.id)} onCheckedChange={() => toggleSelect(photo.id)} className="h-5 w-5 bg-white" /></div> : <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center gap-1"><DropdownMenu><DropdownMenuTrigger asChild><Button size="sm" variant="secondary"><MoveRight className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent>{folders.filter(f => f.id !== folder.id).map(f => <DropdownMenuItem key={f.id} onClick={() => handleMovePhoto(photo.id, f.id)}>{TYPE_ICONS[f.detected_type]}<span className="ml-2">{f.name}</span></DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu><Button size="sm" variant="destructive" onClick={() => onDeletePhotos([photo.id])}><Trash2 className="h-4 w-4" /></Button></div>}{photo.ai_confidence !== null && <div className="absolute bottom-1 right-1 bg-black/60 text-white text-xs px-1 rounded">{photo.ai_confidence}%</div>}</div>)}</div>}
       
       {/* Dialog confirmation suppression */}
       <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
